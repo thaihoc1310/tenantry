@@ -1,0 +1,33 @@
+apiVersion: crd.projectcalico.org/v1
+kind: IPPool
+metadata:
+  name: solar-ippool
+  labels:
+    app.kubernetes.io/part-of: capsule-lab
+spec:
+  allowedUses:
+    - Workload
+  assignmentMode: Manual
+  blockSize: 26
+  cidr: 10.240.0.0/18
+  ipipMode: Never
+  natOutgoing: true
+  nodeSelector: capsule.clastix.io/tenant == "solar"
+  vxlanMode: CrossSubnet
+---
+apiVersion: crd.projectcalico.org/v1
+kind: IPPool
+metadata:
+  name: water-ippool
+  labels:
+    app.kubernetes.io/part-of: capsule-lab
+spec:
+  allowedUses:
+    - Workload
+  assignmentMode: Manual
+  blockSize: 26
+  cidr: 10.240.64.0/18
+  ipipMode: Never
+  natOutgoing: true
+  nodeSelector: capsule.clastix.io/tenant == "water"
+  vxlanMode: CrossSubnet

@@ -1,0 +1,127 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: capsule-lab-apiserver-patcher
+  namespace: kube-system
+data:
+  patch.py: |
+    import os
+    import shutil
+    import time
+
+    host = "/host/etc/kubernetes"
+    manifest = f"{host}/manifests/kube-apiserver.yaml"
+    auth_src = "/config/authentication-config.yaml"
+    auth_dst = f"{host}/pki/capsule-lab-authentication-config.yaml"
+    backup_dir = f"{host}/backups/capsule-lab"
+    flag = "--authentication-config=/etc/kubernetes/pki/capsule-lab-authentication-config.yaml"
+    admission_plugin = "PodNodeSelector"
+
+    os.makedirs(backup_dir, exist_ok=True)
+    shutil.copyfile(auth_src, auth_dst)
+    os.chmod(auth_dst, 0o600)
+
+    with open(manifest, encoding="utf-8") as stream:
+        original = stream.read()
+
+    lines = original.splitlines(keepends=True)
+    insert_at = None
+    indent = None
+    for index, line in enumerate(lines):
+        if line.strip() == "- kube-apiserver":
+            insert_at = index + 1
+            indent = line[: len(line) - len(line.lstrip())]
+            break
+    if insert_at is None:
+        raise RuntimeError("Cannot find kube-apiserver command in static manifest")
+
+    changed = False
+    if flag not in original:
+        lines.insert(insert_at, f"{indent}- {flag}\n")
+        changed = True
+
+    admission_prefix = "- --enable-admission-plugins="
+    admission_found = False
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped.startswith(admission_prefix):
+            continue
+        admission_found = True
+        plugins = [item for item in stripped[len(admission_prefix):].split(",") if item]
+        if admission_plugin not in plugins:
+            plugins.append(admission_plugin)
+            line_indent = line[: len(line) - len(line.lstrip())]
+            lines[index] = f"{line_indent}{admission_prefix}{','.join(plugins)}\n"
+            changed = True
+        break
+
+    if not admission_found:
+        lines.insert(insert_at, f"{indent}{admission_prefix}{admission_plugin}\n")
+        changed = True
+
+    if not changed:
+        print("OIDC authentication and PodNodeSelector are already configured")
+        raise SystemExit(0)
+
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    shutil.copy2(manifest, f"{backup_dir}/kube-apiserver.yaml.{stamp}")
+
+    temporary = f"{manifest}.capsule-lab.tmp"
+    with open(temporary, "w", encoding="utf-8") as stream:
+        stream.writelines(lines)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, manifest)
+    print("OIDC authentication and PodNodeSelector configured; kubelet will restart kube-apiserver")
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: capsule-lab-enable-oidc
+  namespace: kube-system
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: capsule-lab-apiserver-patcher
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: fdp-k8s-cp1
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: patch
+          image: python:3.13-alpine
+          command: ["python", "/scripts/patch.py"]
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: host-kubernetes
+              mountPath: /host/etc/kubernetes
+            - name: patcher
+              mountPath: /scripts
+              readOnly: true
+            - name: auth-config
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: host-kubernetes
+          hostPath:
+            path: /etc/kubernetes
+            type: Directory
+        - name: patcher
+          configMap:
+            name: capsule-lab-apiserver-patcher
+        - name: auth-config
+          configMap:
+            name: capsule-lab-apiserver-auth

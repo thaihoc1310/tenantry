@@ -1,0 +1,31 @@
+crds:
+  install: true
+
+rbac:
+  resourcepoolclaims:
+    create: true
+
+manager:
+  options:
+    capsuleConfiguration: default
+    users:
+      - kind: Group
+        name: projectcapsule.dev
+    protectedNamespaceRegex: "^(kube-.*|calico-.*|tigera-operator|capsule-system|identity-system|monitoring-system|atlas-system|default)$"
+    generateCertificates: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+certManager:
+  generateCertificates: true
+
+monitoring:
+  dashboards:
+    enabled: false
+  serviceMonitor:
+    enabled: false

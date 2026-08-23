@@ -1,0 +1,115 @@
+fullnameOverride: headlamp
+
+config:
+  inCluster: true
+  oidc:
+    secret:
+      create: true
+      name: headlamp-oidc
+    clientID: headlamp
+    clientSecret: capsule-headlamp-demo-secret
+    issuerURL: https://keycloak.127.0.0.1.nip.io:8443/realms/capsule
+    scopes: openid profile email
+    callbackURL: http://headlamp.127.0.0.1.nip.io:8444/oidc-callback
+    useAccessToken: false
+    usePKCE: true
+  enableHelm: false
+
+clusterRoleBinding:
+  create: false
+
+automountServiceAccountToken: false
+
+env:
+  - name: KUBERNETES_SERVICE_HOST
+    value: capsule-proxy.capsule-system.svc
+  - name: KUBERNETES_SERVICE_PORT
+    value: "9001"
+  - name: SSL_CERT_FILE
+    value: /etc/ssl/certs/ca-certificates.crt
+
+hostAliases:
+  - ip: "10.96.200.10"
+    hostnames:
+      - keycloak.127.0.0.1.nip.io
+
+initContainers:
+  - name: build-ca-store
+    image: alpine:3.23
+    command: ["/bin/sh", "-ec"]
+    args:
+      - |
+        cp -R /etc/ssl/* /work/
+        cat /lab-ca/tls.crt >> /work/certs/ca-certificates.crt
+        printf '\n' >> /work/certs/ca-certificates.crt
+        cat /proxy-ca/ca.crt >> /work/certs/ca-certificates.crt
+        printf '\n' >> /work/certs/ca-certificates.crt
+    securityContext:
+      runAsUser: 0
+      runAsNonRoot: false
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+    volumeMounts:
+      - name: ca-store
+        mountPath: /work
+      - name: lab-ca
+        mountPath: /lab-ca
+        readOnly: true
+      - name: proxy-ca
+        mountPath: /proxy-ca
+        readOnly: true
+
+volumeMounts:
+  - name: ca-store
+    mountPath: /etc/ssl
+  - name: token-ca
+    mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+    readOnly: true
+
+volumes:
+  - name: ca-store
+    emptyDir: {}
+  - name: lab-ca
+    secret:
+      secretName: capsule-lab-root-ca
+  - name: proxy-ca
+    secret:
+      secretName: capsule-proxy
+  - name: token-ca
+    projected:
+      sources:
+        - serviceAccountToken:
+            path: token
+        - secret:
+            name: capsule-proxy
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - downwardAPI:
+            items:
+              - path: namespace
+                fieldRef:
+                  fieldPath: metadata.namespace
+
+service:
+  type: ClusterIP
+  port: 80
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 100
+  runAsGroup: 101
+  privileged: false
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

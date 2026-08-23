@@ -1,0 +1,96 @@
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    retention: 24h
+    storage:
+      volumeClaimTemplate: null
+
+grafana:
+  enabled: true
+  adminUser: admin
+  adminPassword: CapsuleGrafana!2026
+  defaultDashboardsTimezone: browser
+  persistence:
+    enabled: false
+  sidecar:
+    dashboards:
+      enabled: true
+      searchNamespace: ALL
+      label: grafana_dashboard
+      labelValue: "1"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+prometheus:
+  prometheusSpec:
+    retention: 6h
+    retentionSize: 4GB
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector: {}
+    podMonitorNamespaceSelector: {}
+    ruleNamespaceSelector: {}
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 2Gi
+    storageSpec: {}
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+
+kube-state-metrics:
+  rbac:
+    extraRules:
+      - apiGroups: ["capsule.clastix.io"]
+        resources: ["tenants", "resourcepools", "resourcepoolclaims"]
+        verbs: ["list", "watch"]
+  customResourceState:
+    enabled: true
+    config:
+      spec:
+        resources:
+          - groupVersionKind:
+              group: capsule.clastix.io
+              version: v1beta2
+              kind: Tenant
+            labelsFromPath:
+              tenant: [metadata, name]
+            metrics:
+              - name: capsule_tenant_size
+                help: Number of namespaces in a Capsule tenant
+                each:
+                  type: Gauge
+                  gauge:
+                    path: [status, size]
+              - name: capsule_tenant_state
+                help: Capsule tenant state
+                each:
+                  type: StateSet
+                  stateSet:
+                    labelName: state
+                    path: [status, state]
+                    list: [Active, Cordoned]
+

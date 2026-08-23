@@ -1,0 +1,27 @@
+apiVersion: capsule.clastix.io/v1beta2
+kind: ResourcePoolClaim
+metadata:
+  name: namespace-budget
+  namespace: water-dev
+spec:
+  pool: water-compute
+  claim:
+    pods: "5"
+    requests.cpu: "1"
+    requests.memory: 2Gi
+    limits.cpu: "1"
+    limits.memory: 2Gi
+---
+apiVersion: capsule.clastix.io/v1beta2
+kind: ResourcePoolClaim
+metadata:
+  name: namespace-budget
+  namespace: water-prod
+spec:
+  pool: water-compute
+  claim:
+    pods: "5"
+    requests.cpu: "1"
+    requests.memory: 2Gi
+    limits.cpu: "1"
+    limits.memory: 2Gi
