@@ -6,7 +6,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 for script in \
   00-preflight.sh \
   10-cert-manager.sh \
-  15-capsule-core.sh \
   20-monitoring.sh \
   30-capsule.sh \
   40-platform.sh \

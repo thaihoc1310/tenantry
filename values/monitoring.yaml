@@ -60,37 +60,3 @@ kubeControllerManager:
   enabled: false
 kubeScheduler:
   enabled: false
-
-kube-state-metrics:
-  rbac:
-    extraRules:
-      - apiGroups: ["capsule.clastix.io"]
-        resources: ["tenants", "resourcepools", "resourcepoolclaims"]
-        verbs: ["list", "watch"]
-  customResourceState:
-    enabled: true
-    config:
-      spec:
-        resources:
-          - groupVersionKind:
-              group: capsule.clastix.io
-              version: v1beta2
-              kind: Tenant
-            labelsFromPath:
-              tenant: [metadata, name]
-            metrics:
-              - name: capsule_tenant_size
-                help: Number of namespaces in a Capsule tenant
-                each:
-                  type: Gauge
-                  gauge:
-                    path: [status, size]
-              - name: capsule_tenant_state
-                help: Capsule tenant state
-                each:
-                  type: StateSet
-                  stateSet:
-                    labelName: state
-                    path: [status, state]
-                    list: [Active, Cordoned]
-

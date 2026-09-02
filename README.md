@@ -46,7 +46,6 @@ Hoặc chạy từng bước:
 ```bash
 ./scripts/00-preflight.sh
 ./scripts/10-cert-manager.sh
-./scripts/15-capsule-core.sh
 ./scripts/20-monitoring.sh
 ./scripts/30-capsule.sh
 ./scripts/40-platform.sh

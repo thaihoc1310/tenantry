@@ -31,7 +31,7 @@ Lab bổ sung:
 - Calico cấp IP pool riêng và thực thi NetworkPolicy.
 - `PodNodeSelector` buộc Pod chạy trên compute pool đúng tenant.
 - ResourcePool chia CPU, RAM và số Pod giữa các namespace.
-- Prometheus/Grafana quan sát Operator, Proxy và Capsule CRD.
+- Prometheus/Grafana quan sát metrics do Operator và Proxy expose.
 
 ## 2. Kiến trúc tổng thể
 
@@ -49,7 +49,6 @@ flowchart LR
     A --> S["Scheduler + PodNodeSelector"]
     M["Prometheus"] --> C
     M --> P
-    M --> KSM["kube-state-metrics"]
     G["Grafana"] --> M
 ```
 
@@ -274,9 +273,8 @@ tests/                            manifest cố tình vi phạm policy
 ```text
 preflight
   -> cert-manager
-  -> Capsule/Proxy bootstrap
   -> Prometheus Operator
-  -> Capsule/Proxy monitoring-enabled
+  -> Capsule Operator + Capsule Proxy
   -> Calico/Tenant/ResourcePool
   -> Keycloak
   -> API server OIDC + PodNodeSelector
@@ -285,14 +283,16 @@ preflight
   -> verification
 ```
 
-Hai pha bootstrap/final của Capsule tồn tại vì `ServiceMonitor` và dashboard chỉ
-nên bật sau khi kube-prometheus-stack đã cài CRD monitoring.
+Monitoring được cài trước Capsule để CRD `ServiceMonitor` và namespace
+`monitoring-system` đã tồn tại. Capsule sau đó được cài đúng một lần, tạo luôn
+ServiceMonitor và dashboard; Prometheus tự discover các ServiceMonitor đó.
+Monitoring không cần biết hay đọc Capsule CRD.
 
 ---
 
 ## 9. Giải thích từng file `values/`
 
-### 9.1 `values/capsule-bootstrap.yaml`
+### 9.1 `values/capsule.yaml`
 
 - `crds.install: true`: chart cài các CRD như Tenant, ResourcePool,
   GlobalTenantResource.
@@ -305,19 +305,13 @@ nên bật sau khi kube-prometheus-stack đã cài CRD monitoring.
 - `protectedNamespaceRegex`: bảo vệ namespace hệ thống khỏi tenant assignment.
 - `generateCertificates` và `certManager.generateCertificates`: dùng cert-manager
   phát TLS certificate cho Capsule webhook.
-- `monitoring.*: false`: pha đầu chưa tạo ServiceMonitor/dashboard.
 - `resources`: giữ lab nhẹ nhưng có limit rõ.
-
-### 9.2 `values/capsule.yaml`
-
-Giống bootstrap nhưng bật:
-
 - dashboard ConfigMap trong `monitoring-system` với label `grafana_dashboard=1`;
 - ServiceMonitor trong `monitoring-system`.
 
 Grafana sidecar sẽ thấy label và tự nạp dashboard.
 
-### 9.3 `values/capsule-proxy-bootstrap.yaml`
+### 9.2 `values/capsule-proxy.yaml`
 
 - `capsuleConfigurationName: default`: Proxy đọc cùng tenancy config với Operator.
 - `authPreferredTypes: BearerToken,TLSCertificate`: ưu tiên OIDC bearer token,
@@ -326,15 +320,11 @@ Grafana sidecar sẽ thấy label và tự nạp dashboard.
 - `roleBindingReflector: true`: Proxy quan sát RoleBinding để developer nhìn thấy
   namespace được cấp quyền, không chỉ namespace do chính họ sở hữu.
 - Service là ClusterIP port `9001`.
-- ServiceMonitor tắt trong bootstrap.
-
-### 9.4 `values/capsule-proxy.yaml`
-
-Giống bootstrap nhưng bật ServiceMonitor, scrape mỗi 15 giây. Runtime metrics gồm
+- ServiceMonitor scrape mỗi 15 giây. Runtime metrics gồm
 Go/controller-runtime và health của Proxy; `up{job="capsule-proxy"}` đã được kiểm
 tra bằng Prometheus.
 
-### 9.5 `values/headlamp.yaml`
+### 9.3 `values/headlamp.yaml`
 
 **OIDC**
 
@@ -379,7 +369,7 @@ Service IP cố định từ bên trong Pod, giữ hostname/issuer nhất quán.
 - không privilege escalation;
 - requests/limits rõ ràng.
 
-### 9.6 `values/monitoring.yaml`
+### 9.4 `values/monitoring.yaml`
 
 **Alertmanager/Grafana/Prometheus** dùng storage tạm thời vì cluster không có
 StorageClass. Prometheus giữ 6 giờ/tối đa 4 GB; Alertmanager giữ 24 giờ.
@@ -398,9 +388,9 @@ Prometheus:
 - không scrape etcd, controller-manager, scheduler vì lab chưa cấu hình endpoint
   và certificate cho các control-plane component đó.
 
-`kube-state-metrics` được cấp `list/watch` Capsule CRD. `customResourceState`
-chuyển `Tenant.status.size/state` thành metrics, ví dụ
-`kube_customresource_capsule_tenant_size`.
+File này hoàn toàn không tham chiếu Capsule CRD. Prometheus chỉ cần CRD
+`ServiceMonitor`; sau khi Capsule tạo ServiceMonitor, Prometheus Operator tự cấu
+hình scrape endpoint tương ứng.
 
 ---
 
@@ -577,23 +567,20 @@ pipeline đều dừng triển khai thay vì tiếp tục ở trạng thái nử
 Cài cert-manager `v1.21.1` từ OCI chart, bật CRD, chờ controller và webhook
 Available. Capsule/Keycloak certificate phụ thuộc bước này.
 
-### 11.3 `scripts/15-capsule-core.sh`
-
-Cài Capsule Operator `0.13.10` và Proxy `0.13.9` bằng official Helm charts với
-bootstrap values. Helm là phương thức cài Operator; workload sinh ra là
-`capsule-controller-manager`, CRD và admission webhooks.
-
-### 11.4 `scripts/20-monitoring.sh`
+### 11.3 `scripts/20-monitoring.sh`
 
 Cài kube-prometheus-stack `88.3.0`. Sau bước này cluster có Prometheus Operator và
-CRD `ServiceMonitor`, nên Capsule có thể được upgrade để tạo monitoring objects.
+CRD `ServiceMonitor`, nên Capsule có thể tạo monitoring objects ngay khi được cài.
+Monitoring không phụ thuộc vào Capsule CRD.
 
-### 11.5 `scripts/30-capsule.sh`
+### 11.4 `scripts/30-capsule.sh`
 
-Upgrade cùng hai release sang final values, bật dashboard/ServiceMonitor rồi chờ
-Operator và Proxy Available.
+Cài Capsule Operator `0.13.10` và Proxy `0.13.9` bằng official Helm charts, bật
+dashboard/ServiceMonitor rồi chờ Operator và Proxy Available. Helm là phương thức
+cài Operator; workload sinh ra là `capsule-controller-manager`, CRD và admission
+webhooks.
 
-### 11.6 `scripts/40-platform.sh`
+### 11.5 `scripts/40-platform.sh`
 
 1. Label worker theo biến `SOLAR_NODES`/`WATER_NODES`; default phù hợp cluster này.
 2. Hàm migration xử lý Tenant đã tồn tại:
@@ -607,7 +594,7 @@ vào namespace cũ. Fresh install không cần nhánh đó.
 3. Server-side apply IPPool, Tenant, GlobalTenantResource và ResourcePool.
 4. Chờ Tenant Ready.
 
-### 11.7 `scripts/50-keycloak.sh`
+### 11.6 `scripts/50-keycloak.sh`
 
 - apply PKI/realm/Deployment/Service;
 - chờ hai Certificate Ready và Deployment rollout;
@@ -616,7 +603,7 @@ vào namespace cũ. Fresh install không cần nhánh đó.
 
 Test bằng IP nội bộ chứng minh API server cũng có đường backchannel dùng được.
 
-### 11.8 `scripts/60-enable-oidc.sh`
+### 11.7 `scripts/60-enable-oidc.sh`
 
 Script lấy Root CA và dựng `AuthenticationConfiguration`:
 
@@ -633,13 +620,13 @@ Capsule Operator có thể crash/backoff nếu start đúng lúc API down. Scrip
 rollout; nếu quá 2 phút thì xóa đúng controller Pod để Deployment tạo Pod mới,
 rồi chờ tối đa 5 phút.
 
-### 11.9 `scripts/70-headlamp.sh`
+### 11.8 `scripts/70-headlamp.sh`
 
 - copy Lab Root CA sang `capsule-system` vì Secret không cross-namespace;
 - cài Headlamp chart `0.44.0` với custom CA/proxy/OIDC values;
 - chờ rollout.
 
-### 11.10 `scripts/80-demo-namespaces.sh`
+### 11.9 `scripts/80-demo-namespaces.sh`
 
 Hàm tạo namespace chạy `kubectl --as/--as-group`, nghĩa là cluster admin giả lập
 đúng identity claims để test RBAC/admission mà không cần interactive browser.
@@ -650,7 +637,7 @@ Hàm tạo namespace chạy `kubectl --as/--as-group`, nghĩa là cluster admin 
 - Workload được apply rồi rollout restart để Pod mới nhận node selector/pool policy
   mới nhất.
 
-### 11.11 `scripts/90-verify.sh`
+### 11.10 `scripts/90-verify.sh`
 
 Hai helper `assert_allowed`/`assert_denied` biến expected behavior thành test.
 
@@ -670,7 +657,7 @@ Script kiểm tra:
 - ba replicated objects tồn tại trong cả bốn namespace;
 - Tenant, ResourcePool và IPPool tồn tại/Ready.
 
-### 11.12 `scripts/access.sh`
+### 11.11 `scripts/access.sh`
 
 Mở ba port-forward song song:
 
@@ -680,12 +667,12 @@ Mở ba port-forward song song:
 
 Trap dọn background jobs khi Ctrl+C. Script cũng in Keycloak SSO logout URL.
 
-### 11.13 `scripts/deploy.sh`
+### 11.12 `scripts/deploy.sh`
 
 Orchestrator tuyến tính gọi toàn bộ step. Các bước dùng Helm upgrade/install,
 server-side apply và conditional creation nên phần lớn idempotent.
 
-### 11.14 `scripts/rollback-oidc.sh`
+### 11.13 `scripts/rollback-oidc.sh`
 
 Dùng `kubectl debug node/... --profile=sysadmin` để mount host filesystem và xóa
 đúng flag AuthenticationConfiguration khỏi static manifest, sau đó chờ API Ready.
@@ -754,17 +741,15 @@ ResourcePool hoặc GlobalTenantResource, rồi để Operator reconcile.
 flowchart LR
     SM1["Capsule ServiceMonitor"] --> P["Prometheus"]
     SM2["Proxy ServiceMonitor"] --> P
-    KSM["kube-state-metrics + Capsule CRD config"] --> P
     P --> G["Grafana"]
     D["Dashboard ConfigMap label"] --> GS["Grafana sidecar"]
     GS --> G
 ```
 
-Ba loại signal:
+Hai loại signal:
 
 1. Operator/controller metrics như tenant condition và reconciliation.
 2. Proxy runtime/availability metrics; target hiện `up=1`.
-3. CRD state metrics từ kube-state-metrics như số namespace trong Tenant.
 
 Dashboard Capsule/ResourcePool được chart đặt vào ConfigMap và Grafana sidecar tự
 nạp. Không có persistence nên lịch sử mất khi Prometheus Pod/PVC-less storage bị
