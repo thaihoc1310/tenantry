@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {Presentation,PresentationFile} from '@oai/artifact-tool';
-const ROOT='/home/thaihoc/Workspace/capsule';
+const ROOT=new URL('../../',import.meta.url).pathname.slice(0,-1);
 const B=path.join(ROOT,'.slide-build/tenantry');
 const P=Presentation.create({slideSize:{width:1920,height:1080}});
 const C={navy:'#12325B',blue:'#2563CB',cyan:'#208AA5',ink:'#172B43',muted:'#576B82',light:'#F0F5FC',line:'#CAD7E7',white:'#FFFFFF',amber:'#956221'};
@@ -323,5 +323,6 @@ text(s,'TENANTRY',69,94,1400,46,25,C.blue,true);text(s,'Cảm ơn',64,277,804,15
 for(let i=0;i<P.slides.items.length;i++){const slide=P.slides.items[i];let n=notes[i+1]??'';if(i===23)n='';if(i===0)n+='\nHình: Minh họa hạ tầng được tạo bằng Imagegen.';if(i===25)n+='\nHình: Minh họa Workspace được tạo bằng Imagegen.';const map={3:['kubernetes'],4:['rocket','timer','graduation-cap'],5:['flask-conical','presentation','users','database'],7:['key-round','sliders-horizontal','terminal','refresh-cw'],8:['amazon','google','azure'],9:['server','laptop']};for(const a of map[i+1]??[])n+='\nHình: '+assets[a];slide.speakerNotes.textFrame.setText(n);}
 await (await PresentationFile.exportPptx(P)).save(path.join(B,'candidate-v6.pptx'));
 await fs.writeFile(path.join(B,'deck.proto.json'),JSON.stringify(P.toProto()));
+await fs.mkdir(path.join(B,'previews'),{recursive:true});
 for(let i=0;i<P.slides.items.length;i++){const sl=P.slides.items[i];const png=await P.export({slide:sl,format:'png',scale:0.833333});await fs.writeFile(path.join(B,'previews',`slide-${String(i+1).padStart(2,'0')}.png`),new Uint8Array(await png.arrayBuffer()));console.log('Rendered',i+1);}
 console.log('Wrote candidate with',P.slides.items.length,'slides');

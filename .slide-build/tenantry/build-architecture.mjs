@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {Presentation,PresentationFile} from '@oai/artifact-tool';
-const ROOT='/home/thaihoc/Workspace/capsule';
+const ROOT=new URL('../../',import.meta.url).pathname.slice(0,-1);
 const B=path.join(ROOT,'.slide-build/tenantry');
 const P=Presentation.create({slideSize:{width:1920,height:1080}});
 const C={navy:'#12325B',blue:'#2563CB',cyan:'#208AA5',ink:'#172B43',muted:'#576B82',light:'#F0F5FC',line:'#CAD7E7',white:'#FFFFFF',amber:'#956221'};

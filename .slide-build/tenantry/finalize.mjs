@@ -1,7 +1,7 @@
-process.env.RUNTIME_NODE_MODULES??='/home/thaihoc/Workspace/capsule/.slide-build/tenantry/node_modules';
+process.env.RUNTIME_NODE_MODULES??=new URL('node_modules',import.meta.url).pathname;
 import path from 'node:path';
 import {finalizePresentation} from '/home/thaihoc/.codex/plugins/cache/openai-primary-runtime/presentations/26.909.11809/skills/presentations/container_tools/artifact_tool_utils.mjs';
-const root='/home/thaihoc/Workspace/capsule';
+const root=new URL('../../',import.meta.url).pathname.slice(0,-1);
 const skill='/home/thaihoc/.codex/plugins/cache/openai-primary-runtime/presentations/26.909.11809/skills/presentations';
 const result=await finalizePresentation({workspaceDir:root,candidatePath:path.join(root,'.slide-build/tenantry/candidate-v6.pptx'),finalPath:path.join(root,'output/tenantry/Tenantry-v6.pptx'),pythonExecutable:'/home/thaihoc/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3',integrityValidatorPath:path.join(skill,'container_tools/inspect_presentation_package_integrity.py'),layoutValidatorPath:path.join(skill,'container_tools/inspect_presentation_layout_geometry.py'),layoutArgs:['--expected-slide-size-emu','18288000,10287000','--validate-bullet-geometry','--validate-heading-fit','--require-native-table-slide','10','--require-native-table-slide','13','--require-native-table-slide','16','--require-native-table-slide','19','--require-native-table-slide','23'],explicitTotalSlideCount:26,requiredNativeTableOwnerSlides:[10,13,16,19,23],requiredNativeChartOwnerSlides:[],fontPolicy:{basis:'design',families:['Arimo']},verifyArtifactToolImport:true,receiptPath:path.join(root,'.slide-build/tenantry/validation-v6.json')});
 console.log(JSON.stringify(result,null,2));
