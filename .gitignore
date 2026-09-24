@@ -1,0 +1,17 @@
+# Go
+bin/
+dist/
+*.test
+*.out
+coverage*.html
+# Node
+node_modules/
+web/dist/
+# env
+.env
+.env.local
+*.local.yaml
+# IDE
+.idea/
+.vscode/
+*.tsbuildinfo

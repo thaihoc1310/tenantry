@@ -1,0 +1,18 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: false   # no go.sum yet; re-enable once backend has dependencies
+      - run: make vet
+      - uses: golangci/golangci-lint-action@v6
+        with: { working-directory: backend, args: --timeout=5m }
+      - run: make test
+      - run: make build
