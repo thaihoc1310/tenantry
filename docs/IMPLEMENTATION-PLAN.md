@@ -24,13 +24,13 @@ Tài liệu này trả lời bốn câu hỏi: code đặt ở đâu (mục 2), 
 ## 2. Cấu trúc repository đề xuất
 
 ```text
-tenantry/
-├── go.work                      # workspace gộp hai module Go: api/ và controller/
+<repo root>
+├── go.work                      # workspace gộp hai module Go: backend/ và operator/
 ├── Makefile                     # entry point duy nhất cho dev/test/deploy
-├── api/                         # Platform API + Provisioning Worker + Group Sync Worker (một module Go, modular monolith)
+├── backend/                     # central plane: mọi thứ chạm PostgreSQL (một module Go, modular monolith)
 │   ├── cmd/
 │   │   ├── tenantry-api/        # HTTP server /api/v1 + BFF/OIDC
-│   │   ├── tenantry-worker/     # chạy provisioning worker và group sync worker (flag chọn loop)
+│   │   ├── tenantry-worker/     # provisioning loop + group sync loop (--loops chọn loop nào chạy)
 │   │   ├── tenantry-migrate/    # chạy migrations
 │   │   └── tenantry-seed/       # seed dev: Cluster A, onboarding policy, shared pool, NetworkPool
 │   ├── internal/
@@ -48,11 +48,11 @@ tenantry/
 │   │   └── store/               # pgx pool, transaction helper, sqlc-generated queries (đề xuất)
 │   ├── migrations/              # SQL migrations (goose, đề xuất)
 │   └── openapi/                 # tenantry.v1.yaml + config sinh code Go/TS
-├── controller/                  # Workspace Controller per Cluster (module Go riêng, kubebuilder layout)
+├── operator/                    # Workspace Operator per Cluster (module Go riêng, kubebuilder layout)
 │   ├── cmd/manager/
-│   ├── api/v1alpha1/            # PlatformWorkspace types + deepcopy + CRD gen (api/ import package này)
+│   ├── api/v1alpha1/            # PlatformWorkspace types + deepcopy + CRD gen (backend/ import package này)
 │   ├── internal/
-│   │   ├── reconciler/          # PlatformWorkspaceReconciler + finalizer + status
+│   │   ├── controller/          # PlatformWorkspaceReconciler + finalizer + status
 │   │   ├── subreconciler/       # compute, network, tenant, namespaces, policy, rbac, ingresscert, proxyaccess
 │   │   ├── render/              # pure functions: spec → object mong muốn (unit test được, không cần cluster)
 │   │   └── observe/             # Namespace watch → status.namespaces, node/cert/IPPool observation
@@ -61,25 +61,28 @@ tenantry/
 │   ├── src/{app,features,components,api}/   # api/ = TS client generated từ OpenAPI
 │   └── e2e/                     # Playwright
 ├── deploy/
-│   ├── charts/tenantry-api/     # Helm: api + worker + migrate job
-│   ├── charts/tenantry-controller/
+│   ├── Dockerfile.backend       # một image, 4 binary; Deployment chọn binary bằng command
+│   ├── Dockerfile.operator
+│   ├── Dockerfile.web
+│   ├── charts/tenantry-backend/ # Helm: api + 2 worker Deployment + migrate job
+│   ├── charts/tenantry-operator/
 │   ├── charts/tenantry-web/
 │   ├── keycloak/                # realm export tenantry (3 client: portal, headlamp-{clusterId}, kubectl)
 │   └── kustomize/lab/           # overlay lab: ingress host, CA, PostgreSQL, Keycloak, values
-├── lab/                         # scripts/, values/, manifests/, tests/ hiện tại chuyển vào đây nguyên trạng
+├── lab/                         # cluster, DNS, TLS, Capsule, PostgreSQL, Keycloak, OIDC — nền để chạy 3 thành phần trên
 ├── test/
 │   ├── e2e/                     # Go test chạy trên lab cluster thật (persona §24.3, isolation §24.4, concurrency §24.5)
 │   └── bench/                   # script benchmark §24.6 + baseline kind/vcluster
-└── docs/                        # PRODUCT-PLAN.md, IMPLEMENTATION-PLAN.md, adr/, report/
+└── docs/                        # PRODUCT-PLAN.md, IMPLEMENTATION-PLAN.md, architecture/, adr/, report/
 ```
 
 Một câu cho mỗi thư mục cấp một:
 
-- `api/`: toàn bộ central plane bằng Go — HTTP API, BFF, hai worker, migrations; một module, nhiều package nội bộ tách theo domain.
-- `controller/`: thứ chạy **trong** Cluster, chỉ biết CRD và các resource Kubernetes/Capsule/Calico, không biết PostgreSQL.
+- `backend/`: toàn bộ central plane bằng Go — HTTP API, BFF, hai worker loop, migrations, seed; một module, nhiều package nội bộ tách theo domain. Tên là `backend/` chứ không phải `api/` vì chỉ một trong bốn binary là HTTP server.
+- `operator/`: thứ chạy **trong** Cluster, chỉ biết CRD và các resource Kubernetes/Capsule/Calico, không biết PostgreSQL.
 - `web/`: portal SPA gọi API qua session cookie, không giữ token.
 - `deploy/`: mọi thứ để cài platform lên một Cluster đã có Capsule (Helm chart per component + realm Keycloak + overlay lab).
-- `lab/`: bash lab hiện tại (Capsule/Proxy/Keycloak/Headlamp/Calico/monitoring/verify) được giữ nguyên làm nền M1 và regression.
+- `lab/`: script dựng nền (Capsule/Proxy/Keycloak/Headlamp/Calico/monitoring/verify) làm nền M1 và regression; dựng lại ở M1, tham chiếu bản đã chạy được ở nhánh `feat/tenantry-scaffold`.
 - `test/`: test cần cluster thật hoặc nhiều tiến trình; unit/integration test nằm cạnh code.
 - `docs/`: spec, kế hoạch, ADR, báo cáo test/benchmark cho luận văn.
 
@@ -92,10 +95,10 @@ internal/<domain>/service.go → repo cùng domain + interface của domain khá
 internal/<domain>/repo.go    → internal/store        (SQL của domain nằm trong domain đó)
 internal/outbox, internal/keycloak, internal/k8s     → adapter; domain định nghĩa interface, adapter implement, app nối lại
 internal/store   → không import bất kỳ domain nào
-controller/api/v1alpha1 → được api/internal/k8s import để build CR; ngược lại controller không import gì từ api/
+operator/api/v1alpha1 → được backend/internal/k8s import để build CR; ngược lại operator không import gì từ backend/
 ```
 
-Kiểm tra bằng `go vet` + một test `depguard`/`go list -deps` đơn giản trong CI để phát hiện import ngược. Hai module Go riêng (`api`, `controller`) để controller-runtime không kéo dependency vào API và ngược lại; `go.work` cho dev local.
+Kiểm tra bằng `go vet` + một test `depguard`/`go list -deps` đơn giản trong CI để phát hiện import ngược. Hai module Go riêng (`backend`, `operator`) để controller-runtime không kéo dependency vào backend và ngược lại; `go.work` cho dev local.
 
 ---
 
@@ -161,7 +164,7 @@ COMMIT;
 
 ### 3.6 OpenAPI-first
 
-- File nguồn `api/openapi/tenantry.v1.yaml` viết tay theo spec §16; sinh server stub Go bằng **oapi-codegen** (đề xuất; std `net/http` router Go 1.22+, strict-server mode để handler nhận struct đã validate) và TS client bằng **openapi-typescript + openapi-fetch** (đề xuất, không runtime nặng).
+- File nguồn `backend/openapi/tenantry.v1.yaml` viết tay theo spec §16; sinh server stub Go bằng **oapi-codegen** (đề xuất; std `net/http` router Go 1.22+, strict-server mode để handler nhận struct đã validate) và TS client bằng **openapi-typescript + openapi-fetch** (đề xuất, không runtime nặng).
 - CI fail nếu `git diff` sau `make generate` khác rỗng.
 - Contract test: request/response mẫu trong `openapi/examples/` validate bằng `kin-openapi` (spec §24.1 "OpenAPI request/response").
 
@@ -262,7 +265,14 @@ loop mỗi 1s (đề xuất):
 
 ### 5.3 Deploy
 
-Hai worker chạy trong một Deployment `tenantry-worker` (một tiến trình, hai goroutine loop; flag để tắt từng loop khi debug). Cùng image với API để giảm số artefact.
+Một binary `tenantry-worker`, hai vòng lặp, chọn bằng flag `--loops=provisioning|groupsync|all`. Deploy thành **hai** Deployment từ cùng image để tách credential:
+
+| Deployment | `--loops` | ServiceAccount / Secret |
+|---|---|---|
+| `tenantry-worker-provisioning` | `provisioning` | SA `tenantry-worker`: Role trên `platformworkspaces` (+ `nodes get/list` từ M5). Không thấy credential Keycloak. |
+| `tenantry-worker-groupsync` | `groupsync` | Chỉ mount Secret client `tenantry-sync` (`manage-users`, `query-groups`). Không có quyền nào trên Cluster. |
+
+Hai loop không liên quan nghiệp vụ — chúng chỉ chung một hình dạng (poll PostgreSQL → gọi hệ thống ngoài → ghi trạng thái) nên dùng chung DB pool, backoff, metric, graceful shutdown. Gộp ở mức code, tách ở mức deploy: một tiến trình không cầm đồng thời quyền apply CR và quyền quản trị user Keycloak. `--loops=all` dành cho chạy local.
 
 ---
 
@@ -308,7 +318,7 @@ Hai worker chạy trong một Deployment `tenantry-worker` (một tiến trình,
   1. Chốt 10 quyết định ở mục 12 và ghi vào spec/ADR.
   2. Viết ADR 1, 2, 4, 5, 7, 8, 9, 10, 16, 17, 18 (những cái không cần code để quyết).
   3. Tạo monorepo theo mục 2, `go.work`, `Makefile`, CI (lint, test, generate-check).
-  4. Viết `api/openapi/tenantry.v1.yaml` bản đầu cho §16.1–16.2, error schema.
+  4. Viết `backend/openapi/tenantry.v1.yaml` bản đầu cho §16.1–16.2, error schema.
   5. Vẽ lại architecture diagram + threat model (spec §20.3) thành checklist test.
   6. Kiểm tra version Kubernetes của lab và pin controller-runtime/client-go tương ứng.
 - **Đầu ra kiểm chứng**: repo build rỗng xanh CI; spec + ADR được review.
@@ -347,7 +357,7 @@ Hai worker chạy trong một Deployment `tenantry-worker` (một tiến trình,
   4. `org` service: get/patch Organization, list members; repo + unit test.
   5. `outbox` repo + worker loop khung (chưa apply CR, chỉ log).
   6. `operations` service: create/get/retry state machine `Pending → Running → Succeeded|Failed|Blocked`.
-  7. Healthz/readyz, config bằng env, Dockerfile multi-stage, chart `tenantry-api` tối thiểu.
+  7. Healthz/readyz, config bằng env, Dockerfile multi-stage, chart `tenantry-backend` tối thiểu.
   8. Test harness: testcontainers-go PostgreSQL, fixture migrate.
 - **Đầu ra kiểm chứng**: `GET /healthz`, `GET /api/v1/organizations/{id}` với auth giả (dev header) trả dữ liệu seed; chart cài lên lab.
 - **Test bắt buộc**: integration test repo/outbox với PostgreSQL thật; contract test OpenAPI examples.
@@ -410,7 +420,7 @@ Hai worker chạy trong một Deployment `tenantry-worker` (một tiến trình,
 
 - **Mục tiêu**: outbox → CR → Capsule Tenant Ready; Namespace từ portal xuất hiện trong cluster.
 - **Công việc**:
-  1. kubebuilder scaffold `controller/`, types `PlatformWorkspace` theo §14.2, CRD gen, chart `tenantry-controller` (RBAC controller: tenants/resourcepools/ippools/certificates/namespaces/nodes...).
+  1. kubebuilder scaffold `operator/`, types `PlatformWorkspace` theo §14.2, CRD gen, chart `tenantry-operator` (RBAC operator: tenants/resourcepools/ippools/certificates/namespaces/nodes...).
   2. ClusterRole `tenantry:tenant-developer`, `tenantry:tenant-viewer` (spec §10.5) trong chart, permission matrix `kubectl auth can-i` test.
   3. `render/` + sub-reconciler `tenant`, `namespaces`, `rbac`; conditions `CapsuleTenantReady`, `IdentityBindingsReady`; `status.namespaces` observation.
   4. Finalizer khung (xóa Namespace → Tenant), chưa network/node.
@@ -601,20 +611,20 @@ gantt
 
 | Vùng | Nội dung | Vị trí |
 |---|---|---|
-| Quota math | cộng/trừ Kubernetes quantity, Σ allocation ≤ grant, không giảm dưới usage | `api/internal/reservation` |
-| Capacity math | `reservable/reserved/remaining`, capacity state, soft ratio Shared, `Overcommitted` drift, `requests = limits` Dedicated | `api/internal/reservation` |
-| CIDR | containment, overlap, next-free block theo prefix, quarantine transition | `api/internal/ipam` |
-| Authz matrix | bảng role × endpoint × kỳ vọng (200/403/404), bao gồm realm role admin | `api/internal/httpapi` |
-| State machine | Workspace, Operation, Reservation, NetworkAllocation transitions hợp lệ/không hợp lệ | `api/internal/workspace` |
-| Render | spec → Tenant/IPPool/Certificate/NetworkPolicy golden files | `controller/internal/render` |
-| Keycloak mapping | machine name, group claim → subject `oidc:` | `api/internal/keycloak` |
-| OpenAPI contract | examples validate theo schema | `api/openapi` |
+| Quota math | cộng/trừ Kubernetes quantity, Σ allocation ≤ grant, không giảm dưới usage | `backend/internal/reservation` |
+| Capacity math | `reservable/reserved/remaining`, capacity state, soft ratio Shared, `Overcommitted` drift, `requests = limits` Dedicated | `backend/internal/reservation` |
+| CIDR | containment, overlap, next-free block theo prefix, quarantine transition | `backend/internal/ipam` |
+| Authz matrix | bảng role × endpoint × kỳ vọng (200/403/404), bao gồm realm role admin | `backend/internal/httpapi` |
+| State machine | Workspace, Operation, Reservation, NetworkAllocation transitions hợp lệ/không hợp lệ | `backend/internal/workspace` |
+| Render | spec → Tenant/IPPool/Certificate/NetworkPolicy golden files | `operator/internal/render` |
+| Keycloak mapping | machine name, group claim → subject `oidc:` | `backend/internal/keycloak` |
+| OpenAPI contract | examples validate theo schema | `backend/openapi` |
 | Frontend | wizard reducer, error code map, form validation | `web/src` (Vitest) |
 
 ### 9.2 Integration (chạy trên PR, vài phút)
 
 - **PostgreSQL** qua testcontainers-go (đề xuất; fallback `docker-compose.test.yml`): reservation transaction, exclusion constraint CIDR, outbox `FOR UPDATE SKIP LOCKED`, idempotency key, session store.
-- **envtest** cho controller: reconcile tạo đúng object, idempotent, finalizer thứ tự, status.namespaces từ Namespace fake; không cần Capsule thật (CRD Capsule/Calico/cert-manager load vào envtest từ `controller/config/crd/external/`).
+- **envtest** cho controller: reconcile tạo đúng object, idempotent, finalizer thứ tự, status.namespaces từ Namespace fake; không cần Capsule thật (CRD Capsule/Calico/cert-manager load vào envtest từ `operator/config/crd/external/`).
 - **Keycloak container** (image 26.x cùng lab): tạo group, add/remove member, logout session, token có group claim.
 - **Worker apply CR** với envtest apiserver + scoped RBAC: xác nhận credential không làm được gì ngoài `platformworkspaces`.
 
@@ -641,7 +651,7 @@ gantt
 
 ## 10. Môi trường dev
 
-- **Chạy local trỏ vào lab cluster**: `tenantry-api` và `tenantry-worker` chạy trên máy dev với `KUBECONFIG` admin của lab (dev only), PostgreSQL và Keycloak dùng của lab qua `kubectl port-forward` hoặc `docker compose up postgres keycloak` local; controller chạy `make run-controller` (controller-runtime ngoài cluster). Web chạy Vite dev server proxy `/api` và `/auth` về API local.
+- **Chạy local trỏ vào lab cluster**: `tenantry-api` và `tenantry-worker` chạy trên máy dev với `KUBECONFIG` admin của lab (dev only), PostgreSQL và Keycloak dùng của lab qua `kubectl port-forward` hoặc `docker compose up postgres keycloak` local; operator chạy `make run-operator` (controller-runtime ngoài cluster). Web chạy Vite dev server proxy `/api` và `/auth` về API local.
 - **Host name dev**: thêm `portal.tenantry.example` → 127.0.0.1 vào `/etc/hosts`, cert dev cấp từ `capsule-lab-ca.crt` (mkcert-style) để cookie `Secure` hoạt động.
 - **`make` targets (đề xuất)**:
 
@@ -650,7 +660,7 @@ make lab-up / lab-verify        # chạy lab/scripts/deploy.sh và 90-verify.sh
 make generate                   # oapi-codegen, sqlc, openapi-typescript, controller-gen
 make migrate-up / migrate-new NAME=...
 make seed                       # Cluster A, onboarding policy, shared-general, onboarding-pod-network, admin role
-make run-api / run-worker / run-controller / run-web
+make run-api / run-worker / run-operator / run-web
 make test / test-integration / test-e2e / bench
 make deploy                     # helm upgrade --install 3 chart lên lab với deploy/kustomize/lab values
 make realm-export / realm-import
@@ -695,6 +705,6 @@ make realm-export / realm-import
 | 7 | Push trạng thái operation | SSE `GET /operations/{id}/events`, fallback polling 2s; không WebSocket |
 | 8 | Outbox tuning | poll 1s, batch 10, backoff 1s→5m, 10 lỗi liên tiếp → Operation `Failed`; resync CR status 5 phút; CIDR quarantine 10 phút |
 | 9 | Cách gắn label/taint dedicated node và đọc allocatable | (a) worker được thêm quyền `nodes get/list/patch` — đơn giản nhưng nới spec §20.2; **(b) đề xuất**: CRD phụ `PlatformNodeGrant` (`tenantry.io/v1alpha1`) do controller reconcile label/taint và báo allocatable về status; worker vẫn chỉ đụng CRD `tenantry.io` |
-| 10 | Deploy artefact | 3 Helm chart riêng (`tenantry-api`, `tenantry-controller`, `tenantry-web`) + overlay kustomize lab; một image cho api+worker, một cho controller, một cho web (nginx static) |
+| 10 | Deploy artefact | 3 Helm chart riêng (`tenantry-backend`, `tenantry-operator`, `tenantry-web`) + overlay kustomize lab; 3 image: một cho cả 4 binary của `backend/` (Deployment chọn binary bằng `command`), một cho operator, một cho web (nginx static) |
 
 Sau khi chốt 10 mục này (ghi vào spec §31 hoặc ADR), bắt đầu M0 → M1 → M2 theo mục 7.
