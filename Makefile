@@ -8,6 +8,9 @@ COMPOSE := $(ROOT)/deploy/compose/docker-compose.dev.yml
 
 DATABASE_URL ?= postgres://tenantry:tenantry@localhost:5432/tenantry?sslmode=disable
 export DATABASE_URL
+# Tests create and drop their own database on this server; they never touch DATABASE_URL's data.
+TEST_DATABASE_URL ?= $(DATABASE_URL)
+export TEST_DATABASE_URL
 
 .PHONY: help
 help: ## Show targets
@@ -18,6 +21,14 @@ dev-up: ## Start local PostgreSQL
 	docker compose -f $(COMPOSE) up -d
 dev-down: ## Stop local PostgreSQL and delete its volume
 	docker compose -f $(COMPOSE) down -v
+
+.PHONY: migrate-up migrate-down migrate-status
+migrate-up: ## Apply every pending migration
+	cd $(BACKEND) && go run ./cmd/tenantry-migrate up
+migrate-down: ## Roll back the last migration
+	cd $(BACKEND) && go run ./cmd/tenantry-migrate down
+migrate-status: ## Show which migrations are applied
+	cd $(BACKEND) && go run ./cmd/tenantry-migrate status
 
 .PHONY: run-api
 run-api: ## Run the Platform API locally
@@ -32,5 +43,5 @@ vet: ## go vet
 	cd $(BACKEND) && go vet ./...
 lint: vet ## golangci-lint if installed, else just vet
 	@if command -v golangci-lint >/dev/null; then cd $(BACKEND) && golangci-lint run ./...; else echo "golangci-lint not installed; ran go vet only"; fi
-test: ## Unit tests
+test: ## Tests (migration tests need PostgreSQL: make dev-up)
 	cd $(BACKEND) && go test -race -count=1 ./...

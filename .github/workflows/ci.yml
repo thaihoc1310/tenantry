@@ -5,12 +5,18 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: tenantry, POSTGRES_PASSWORD: tenantry, POSTGRES_DB: tenantry }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U tenantry" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
-          cache: false   # no go.sum yet; re-enable once backend has dependencies
+          cache-dependency-path: backend/go.sum
       - run: make vet
       - uses: golangci/golangci-lint-action@v6
         with: { working-directory: backend, args: --timeout=5m }
