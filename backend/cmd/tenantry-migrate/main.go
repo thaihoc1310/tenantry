@@ -30,8 +30,13 @@ func main() {
 
 var commands = map[string]func(context.Context, *goose.Provider) error{
 	"up": func(ctx context.Context, p *goose.Provider) error {
-		// On failure Up still returns the migrations applied before it.
+		// On failure Up returns nil results; the migrations applied before the
+		// failing one are inside the *goose.PartialError.
 		results, err := p.Up(ctx)
+		var partial *goose.PartialError
+		if errors.As(err, &partial) {
+			results = partial.Applied
+		}
 		logResults(results)
 		if err == nil && len(results) == 0 {
 			slog.Info("nothing to migrate")
