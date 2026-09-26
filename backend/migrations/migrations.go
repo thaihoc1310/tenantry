@@ -3,21 +3,25 @@
 package migrations
 
 import (
-	"context"
 	"database/sql"
 	"embed"
 
 	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
 )
 
 //go:embed *.sql
 var files embed.FS
 
-// Run executes a goose command ("up", "down", "status", ...) against db.
-func Run(ctx context.Context, db *sql.DB, command string, args ...string) error {
-	goose.SetBaseFS(files)
-	if err := goose.SetDialect("postgres"); err != nil {
-		return err
+// NewProvider returns a goose provider over the embedded migrations.
+//
+// A Postgres session-level advisory lock serialises concurrent runs, e.g. two
+// migrate jobs racing during overlapping helm upgrades. Postgres releases the
+// lock itself if the connection drops, so a killed pod cannot leave it held.
+func NewProvider(db *sql.DB) (*goose.Provider, error) {
+	locker, err := lock.NewPostgresSessionLocker()
+	if err != nil {
+		return nil, err
 	}
-	return goose.RunContext(ctx, command, db, ".", args...)
+	return goose.NewProvider(goose.DialectPostgres, db, files, goose.WithSessionLocker(locker))
 }
