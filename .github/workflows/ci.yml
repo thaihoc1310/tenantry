@@ -17,6 +17,8 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
+      - name: generated code matches the spec
+        run: make generate && git diff --exit-code
       - run: make vet
       - uses: golangci/golangci-lint-action@v6
         with: { working-directory: backend, args: --timeout=5m }

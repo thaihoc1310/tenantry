@@ -1,0 +1,115 @@
+openapi: 3.0.3
+info:
+  title: Tenantry Platform API
+  version: 1.0.0-alpha.1
+  description: |
+    Contract between the portal and the Platform API (PRODUCT-PLAN §16).
+    Only implemented endpoints are listed; paths are added as they are built.
+    Request bodies are validated against this file before reaching a handler.
+    Every error body is `ErrorResponse` with a stable `code`.
+servers:
+  - url: /api/v1
+
+paths:
+  /organizations/{orgId}:
+    parameters:
+      - $ref: "#/components/parameters/orgId"
+    get:
+      operationId: getOrganization
+      summary: Organization detail (any member)
+      description: A non-member gets 404, so ids and slugs cannot be probed.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Organization" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: patchOrganization
+      summary: Update display name or description (OrgOwner or OrgAdmin). Slug is immutable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrganizationPatch" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Organization" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+components:
+  parameters:
+    orgId:
+      name: orgId
+      in: path
+      required: true
+      description: |
+        Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+        characters), so the two can never be confused.
+      schema: { type: string }
+
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  schemas:
+    ErrorCode:
+      type: string
+      description: Stable error codes the UI switches on (IMPLEMENTATION-PLAN §3.3). Grows with the endpoints.
+      enum:
+        - VALIDATION_FAILED
+        - UNAUTHENTICATED
+        - FORBIDDEN
+        - NOT_FOUND
+        - INTERNAL
+
+    ErrorResponse:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code: { $ref: "#/components/schemas/ErrorCode" }
+        message: { type: string }
+        details:
+          type: object
+          description: Machine-readable context, e.g. the offending field or the exceeded quota.
+          additionalProperties: true
+        requestId: { type: string }
+
+    OrgRole:
+      type: string
+      enum: [OrgOwner, OrgAdmin, OrgMember]
+
+    Organization:
+      type: object
+      required: [id, slug, displayName, description, ownerUserId, status, reviewNote, createdAt]
+      properties:
+        id: { type: string }
+        slug: { type: string, description: Immutable; prefix of every Kubernetes name }
+        displayName: { type: string }
+        description: { type: string }
+        ownerUserId: { type: string }
+        status:
+          type: string
+          description: Deleted organizations are not returned.
+          enum: [Pending, Active, Rejected]
+        reviewNote: { type: string, description: Why the request was rejected; empty otherwise }
+        createdAt: { type: string, format: date-time }
+        myRole: { $ref: "#/components/schemas/OrgRole" }
+
+    OrganizationPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 80 }
+        description: { type: string, maxLength: 500 }

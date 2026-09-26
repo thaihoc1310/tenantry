@@ -164,7 +164,7 @@ COMMIT;
 
 ### 3.6 OpenAPI-first
 
-- File nguồn `backend/openapi/tenantry.v1.yaml` viết tay theo spec §16; sinh server stub Go bằng **oapi-codegen** (đề xuất; std `net/http` router Go 1.22+, strict-server mode để handler nhận struct đã validate) và TS client bằng **openapi-typescript + openapi-fetch** (đề xuất, không runtime nặng).
+- File nguồn `backend/openapi/tenantry.v1.yaml` viết tay theo spec §16; sinh server stub Go bằng **oapi-codegen** (std `net/http` router Go 1.22+, strict-server: handler nhận struct có kiểu; strict-server chỉ decode JSON, ràng buộc schema như `maxLength`/`additionalProperties` do middleware `oapi-codegen/nethttp-middleware` kiểm theo spec embed) và TS client bằng **openapi-typescript + openapi-fetch** (đề xuất, không runtime nặng).
 - CI fail nếu `git diff` sau `make generate` khác rỗng.
 - Contract test: request/response mẫu trong `openapi/examples/` validate bằng `kin-openapi` (spec §24.1 "OpenAPI request/response").
 

@@ -34,7 +34,9 @@ migrate-status: ## Show which migrations are applied
 run-api: ## Run the Platform API locally
 	cd $(BACKEND) && go run ./cmd/tenantry-api
 
-.PHONY: build fmt vet lint test
+.PHONY: generate build fmt vet lint test
+generate: ## Regenerate code from openapi/tenantry.v1.yaml (commit the result)
+	cd $(BACKEND) && go generate ./...
 build: ## Build every backend binary into bin/
 	cd $(BACKEND) && go build -o $(ROOT)/bin/ ./cmd/...
 fmt: ## gofmt
