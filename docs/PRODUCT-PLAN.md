@@ -1,11 +1,21 @@
 # Tenantry — Kế hoạch đồ án Kubernetes Tenant as a Service
 
-> Phiên bản: 0.6 — chốt các quyết định nghiệp vụ còn hở
-> Ngày: 2026-09-02
+> Phiên bản: 0.7 — Organization do user xin, Platform Admin duyệt; bỏ personal Organization
+> Ngày: 2026-09-26
 > Tên sản phẩm: **Tenantry** (API group `tenantry.io`, label prefix `tenantry.io/`, domain demo `*.tenantry.example`)
 > Mục tiêu: xây một platform self-service cấp Kubernetes Tenant nhanh, rẻ trên cluster có sẵn, với Capsule là tenancy engine.
 
 ## 0. Changelog
+
+### v0.6 → v0.7
+
+1. **Bỏ personal Organization.** First login chỉ upsert user, không tự tạo Organization nào. User chưa thuộc Organization nào thấy màn trống với hai lối ra: gửi yêu cầu tạo Organization, hoặc chờ được mời.
+2. **User xin tạo Organization, Platform Admin duyệt.** Yêu cầu tạo ra Organization ở trạng thái `Pending` (giữ chỗ slug, người xin là OrgOwner). Admin duyệt kèm ClusterGrant → `Active`; hoặc từ chối kèm lý do → `Rejected` (nhả slug). Mỗi user có tối đa một yêu cầu `Pending` cùng lúc. Admin vẫn tạo thẳng Organization `Active` cho khách như v0.6.
+3. **Onboarding policy đổi vai trò:** từ auto-grant lúc first login thành **grant mặc định điền sẵn khi Admin duyệt** một yêu cầu; Admin sửa được trước khi duyệt.
+4. Mọi quy tắc riêng của personal Org (không xóa, không transfer, không rời được) biến mất: Organization nào cũng transfer/xóa được theo luật chung, member nào không phải Owner cũng rời được.
+5. `users.status` (`Active`/`Disabled`): Admin disable user thì backend disable account trên Keycloak **và** set status; status chặn thêm vào group/transfer và từ chối session portal ngay.
+
+Chưa cập nhật theo v0.7 (còn nói về personal Organization, đọc theo các mục trên): `docs/architecture/*` (flow first login, data model, wireflow, REVIEW-CHECKLIST).
 
 ### v0.5 → v0.6
 
@@ -88,8 +98,8 @@ Luận điểm của đồ án:
 - một portal/API/Keycloak/PostgreSQL trung tâm, chạy trên system pool của chính Cluster;
 - Capsule, Capsule Proxy, Headlamp, Calico per Cluster;
 - Platform Admin cấp ClusterGrant cho Organization, có một Cluster mặc định;
-- onboarding policy tự cấp ClusterGrant mặc định quota nhỏ cho personal Organization;
-- đăng ký/đăng nhập qua Keycloak; tự tạo personal Organization khi login lần đầu;
+- user gửi yêu cầu tạo Organization, Platform Admin duyệt kèm ClusterGrant (điền sẵn từ onboarding policy);
+- đăng ký/đăng nhập qua Keycloak; first login chỉ tạo user record;
 - Organization owner mời user (invite link), tạo group, quản lý membership;
 - Platform Admin tạo Organization bổ sung cho khách hàng/team, gán OrgOwner và ClusterGrant ban đầu; user không tự tạo thêm Organization;
 - Platform Admin cấp/điều chỉnh resource entitlement cho Organization;
@@ -209,7 +219,7 @@ Account là danh tính đăng nhập. Password, MFA và session do Keycloak qu�
 - internal user ID;
 - Keycloak issuer và immutable `sub`;
 - email/display name snapshot;
-- trạng thái và timestamps.
+- trạng thái `Active`/`Disabled` và timestamps.
 
 Email/username không được dùng làm primary identity vì có thể đổi.
 
@@ -217,21 +227,22 @@ Email/username không được dùng làm primary identity vì có thể đổi.
 
 ### 4.2 Organization
 
-Organization là boundary quản lý của người dùng. Khi user đăng nhập lần đầu:
+Organization là boundary quản lý của người dùng. Đăng nhập lần đầu **chỉ tạo user record**; user có Organization theo một trong ba cách:
 
-1. portal tạo user record;
-2. portal tự tạo một personal Organization;
-3. user trở thành `OrgOwner`;
-4. portal tạo các group mặc định `admins`, `developers`, `viewers`;
-5. owner được đưa vào group `admins`;
-6. onboarding policy tự cấp một ClusterGrant mặc định (xem 5.2.1).
+1. **Xin tạo**: user gửi slug, display name, mô tả → Organization `Pending`, user là `OrgOwner`. Platform Admin duyệt kèm ClusterGrant (điền sẵn từ onboarding policy, xem 5.2.1) → `Active`; hoặc từ chối kèm lý do → `Rejected`.
+2. **Admin tạo thẳng** cho khách: Organization `Active` ngay, gán OrgOwner và ClusterGrant trong cùng thao tác.
+3. **Được mời** vào Organization đã có.
+
+Khi Organization chuyển sang `Active` (duyệt hoặc admin tạo): portal tạo các group mặc định `admins`, `developers`, `viewers` và đưa OrgOwner vào `admins`.
 
 Một Organization có thể có nhiều user và nhiều Workspace. Platform Admin quyết định Organization được cấp bao nhiêu tài nguyên.
 
 Quy tắc về Organization:
 
-- mỗi account có đúng **một personal Organization** (`is_personal = true`), được tạo tự động và auto-grant; personal Org không xóa được và không transfer ownership được;
-- **user không tự tạo thêm Organization**. Organization bổ sung (team, khách hàng) do Platform Admin tạo trong admin UI, chỉ định OrgOwner và ClusterGrant ban đầu trong cùng một thao tác. Luồng "user gửi request tạo Org/xin nâng quota" là stretch;
+- trạng thái Organization: `Pending` → `Active` → `Deleted`, hoặc `Pending` → `Rejected`. Organization `Pending`/`Rejected` chỉ hiện với người xin (kèm lý do từ chối), không mời member, không tạo group/Workspace được;
+- mỗi user có **tối đa một yêu cầu `Pending`** cùng lúc; bị từ chối thì gửi yêu cầu mới được. Slug của yêu cầu bị từ chối được nhả ra cho người khác;
+- xóa Organization chỉ được khi không còn Workspace nào, nên là thao tác đồng bộ, không có trạng thái `Deleting`;
+- luồng xin nâng quota cho Organization đã `Active` vẫn là stretch;
 - mỗi Organization có **đúng một OrgOwner** và có thể có nhiều OrgAdmin. Owner chuyển quyền cho một OrgAdmin bằng luồng transfer hai bước (Owner đề nghị, người nhận xác nhận); sau khi transfer, Owner cũ trở thành OrgAdmin;
 - Organization slug là **immutable** sau khi tạo vì được dùng làm tiền tố tên Kubernetes (xem 4.4); display name đổi tự do.
 
@@ -349,9 +360,9 @@ allowedIngressClasses:
 
 Một Organization có một hoặc nhiều ClusterGrant; đúng một grant được đánh dấu mặc định. Nếu chỉ có một grant, portal preselect Cluster đó (trường hợp mặc định của MVP). Nếu có nhiều grant, OrgOwner chọn Cluster khi tạo Workspace.
 
-#### 5.2.1 Onboarding auto-grant
+#### 5.2.1 Onboarding policy — grant mặc định khi duyệt
 
-Khi personal Organization được tạo lúc first login, một **onboarding policy** (cấu hình của Platform Admin, không hard-code) tự cấp ClusterGrant mặc định trên default Cluster, ví dụ:
+**Onboarding policy** (cấu hình của Platform Admin, không hard-code) là mẫu ClusterGrant **điền sẵn** vào form duyệt yêu cầu tạo Organization, trên default Cluster, ví dụ:
 
 ```yaml
 maxWorkspaces: 2
@@ -368,7 +379,7 @@ sharedPoolRefs: [shared-general]
 allowedNetworkPoolRefs: [onboarding-pod-network]
 ```
 
-User mới vì vậy tự trải nghiệm được ngay flow tạo Workspace như một free tier. Platform Admin nâng quota, cấp thêm Cluster/compute mode/dedicated node qua admin UI — đây chỉ là automation của cùng data model, không phải một luồng cấp phát riêng.
+Admin duyệt nguyên mẫu hoặc sửa trước khi bấm duyệt; grant đã cấp là snapshot, đổi policy sau đó không ảnh hưởng. Nâng quota, cấp thêm Cluster/compute mode/dedicated node về sau vẫn qua admin UI — policy chỉ là giá trị mặc định của cùng data model, không phải một luồng cấp phát riêng.
 
 ### 5.3 Reservation invariant
 
@@ -730,8 +741,7 @@ sequenceDiagram
   P->>K: Exchange code
   K->>P: ID/access token
   P->>D: Upsert user by issuer + sub
-  P->>D: Create personal org + onboarding grant if first login
-  P->>U: Organization dashboard
+  P->>U: Organization dashboard, hoặc màn trống "xin tạo Organization" nếu chưa thuộc org nào
 ```
 
 Keycloak chịu trách nhiệm:
@@ -765,15 +775,11 @@ Authorization Code Flow + PKCE và BFF/session cookie:
 
 Với đồ án dùng một session store trong PostgreSQL để tránh thêm Redis.
 
-### 8.3 Personal Organization
+### 8.3 User chưa có Organization
 
-Một user mới tự động có một Organization và một onboarding grant (5.2.1). Sau đó:
+User mới login xong chưa thuộc Organization nào. Portal hiện màn trống với hai lối ra: gửi yêu cầu tạo Organization (4.2), hoặc chờ lời mời. Trong lúc yêu cầu `Pending`, màn này hiện trạng thái yêu cầu; bị từ chối thì hiện lý do và cho gửi lại.
 
-- Platform Admin nâng quota hoặc cấp thêm ClusterGrant/node/network cho Organization;
-- user là OrgOwner, có thể mời thêm người;
-- nếu user được mời vào Organization khác, account vẫn là một nhưng membership có nhiều Organization.
-
-Không ép invariant "một account chỉ có đúng một Organization", vì invitation sẽ phá invariant này. Nên hiểu là **mỗi account có một personal Organization mặc định và có thể là member của Organization khác**.
+Một account là member của bao nhiêu Organization cũng được, với role khác nhau ở mỗi org; portal cho chuyển qua lại giữa các org.
 
 ### 8.4 OIDC clients và audience
 
@@ -808,13 +814,13 @@ Không tạo membership chỉ dựa trên một email chưa được xác minh.
 
 | Role | Quyền portal |
 |---|---|
-| `OrgOwner` | **Đúng một mỗi Organization.** Quản lý member, group, Workspace, allocation trong entitlement; transfer ownership; xóa Organization (không áp dụng cho personal Org) |
+| `OrgOwner` | **Đúng một mỗi Organization.** Quản lý member, group, Workspace, allocation trong entitlement; transfer ownership; xóa Organization (khi không còn Workspace) |
 | `OrgAdmin` | Như Owner về member/group/Workspace nhưng không transfer ownership, không xóa Organization, không đổi role của Owner |
-| `OrgMember` | Xem Organization và Workspace mình được group cấp quyền; tự rời Organization (trừ personal Org) |
+| `OrgMember` | Xem Organization và Workspace mình được group cấp quyền; tự rời Organization |
 
 Đây là platform role, không tự động đồng nghĩa với Kubernetes role.
 
-Transfer ownership: Owner chọn một OrgAdmin làm người nhận → portal tạo yêu cầu có expiry → người nhận xác nhận trong portal → trong một transaction đổi role hai bên (người nhận thành Owner, Owner cũ thành OrgAdmin) và ghi audit. Personal Organization không có luồng này.
+Transfer ownership: Owner chọn một OrgAdmin làm người nhận → portal tạo yêu cầu có expiry → người nhận xác nhận trong portal → trong một transaction đổi role hai bên (người nhận thành Owner, Owner cũ thành OrgAdmin) và ghi audit.
 
 ### 9.3 Group membership sync
 
@@ -842,7 +848,7 @@ Group claim chỉ có hiệu lực với token mới. Kubernetes tự kiểm tra
 Xóa member:
 
 - không thể remove OrgOwner; phải transfer ownership trước;
-- member tự rời Organization đi qua đúng luồng này (self-service), trừ Owner và trừ personal Org của chính họ;
+- member tự rời Organization đi qua đúng luồng này (self-service), trừ Owner;
 - xóa khỏi mọi Organization group;
 - sync Keycloak;
 - revoke session;
@@ -1219,14 +1225,14 @@ Khi API tạo Workspace:
 
 | Table | Nội dung chính |
 |---|---|
-| `users` | id, issuer, subject, email, display_name, status |
-| `organizations` | id, slug (immutable), name, is_personal, owner_user_id, status |
+| `users` | id, issuer, subject, email, display_name, status (`Active`/`Disabled`) |
+| `organizations` | id, slug (immutable), display_name, description, owner_user_id, status (`Pending`/`Active`/`Rejected`/`Deleted`), review_note |
 | `organization_members` | org_id, user_id, role, status |
 | `invitations` | org_id, email, token_hash, role, expiry, accepted_by |
 | `groups` | id, org_id, display_name, machine_name, keycloak_group_id, sync_status |
 | `group_members` | group_id, user_id, sync_status |
 | `organization_entitlements` | max member/group/Workspace toàn platform |
-| `onboarding_policies` | default grant template cho personal Organization |
+| `onboarding_policies` | grant mặc định điền sẵn khi Admin duyệt yêu cầu tạo Organization |
 | `clusters` | id, display_name, status, capabilities, proxy/console/ingress endpoints, wildcard domain, last_health_check |
 | `organization_cluster_grants` | org_id, cluster_id, default flag, resource/Workspace/Namespace limits, allowed modes/storage classes/ingress classes |
 | `shared_compute_pools` | id, cluster_id, node selector, allocation_overcommit_ratio, system reserve, capacity snapshot, status |
@@ -1248,7 +1254,8 @@ Bảng dành cho Phase 2: `cluster_agents` (cluster_id, identity fingerprint, ve
 Constraints quan trọng:
 
 - unique `(issuer, subject)`;
-- unique Organization slug, immutable sau khi tạo;
+- unique Organization slug trừ Organization `Rejected`, immutable sau khi tạo;
+- mỗi user tối đa một Organization `Pending` (partial unique index trên `owner_user_id`);
 - đúng một OrgOwner mỗi Organization (`organizations.owner_user_id` + partial unique index trên `organization_members` với role Owner);
 - unique group display name trong Organization, machine name global unique;
 - unique Workspace slug theo Organization, immutable; `k8s_name = <org-slug>-<ws-slug>` global-unique và là tên Tenant/tiền tố Namespace/vùng hostname; label vẫn mang immutable ID;
@@ -1270,17 +1277,18 @@ Constraints quan trọng:
 
 ```text
 GET    /api/v1/me
-GET    /api/v1/organizations                       # các Org user là member
+GET    /api/v1/organizations                       # các Org user là member, kể cả yêu cầu Pending/Rejected của chính họ
+POST   /api/v1/organizations                       # xin tạo Org: slug, displayName, description → Pending
 GET    /api/v1/organizations/{orgId}
 PATCH  /api/v1/organizations/{orgId}               # display name/description; slug immutable
 GET    /api/v1/organizations/{orgId}/entitlement
 GET    /api/v1/organizations/{orgId}/usage
 POST   /api/v1/organizations/{orgId}:transfer-ownership     # Owner đề nghị cho một OrgAdmin
 POST   /api/v1/ownership-transfers/{token}:accept           # người nhận xác nhận
-POST   /api/v1/organizations/{orgId}/members/me:leave       # tự rời Org (không áp dụng Owner/personal)
+POST   /api/v1/organizations/{orgId}/members/me:leave       # tự rời Org (không áp dụng Owner)
 ```
 
-Không có `POST /organizations` phía user: Organization bổ sung do Platform Admin tạo (16.5).
+`POST /organizations` phía user chỉ tạo yêu cầu `Pending`; duyệt/từ chối ở 16.5.
 
 ### 16.2 Invitation/member/group
 
@@ -1374,7 +1382,9 @@ Với Dedicated mode, API coi `requestsCpu`/`requestsMemory` là phần capacity
 GET    /api/v1/operations/{operationId}
 POST   /api/v1/operations/{operationId}:retry
 
-GET    /api/v1/admin/organizations
+GET    /api/v1/admin/organizations                 # ?status=Pending cho hàng đợi duyệt
+POST   /api/v1/admin/organizations/{orgId}:approve # kèm ClusterGrant (mặc định từ onboarding policy)
+POST   /api/v1/admin/organizations/{orgId}:reject  # kèm lý do → review_note
 POST   /api/v1/admin/organizations                 # tạo Org cho khách: slug, owner (email/user), entitlement, ClusterGrant ban đầu
 PUT    /api/v1/admin/organizations/{orgId}/entitlement
 POST   /api/v1/operations/{operationId}:force      # admin only: bỏ qua finalizer/PVC kẹt khi delete
@@ -1747,11 +1757,11 @@ Ghi tối thiểu:
 ### FR-01 Account và Organization
 
 - user đăng ký/login qua Keycloak;
-- first login tạo personal Organization + onboarding grant;
+- first login chỉ tạo user record; user chưa có org thấy màn xin tạo Organization;
 - user switch Organization nếu thuộc nhiều org;
 - OrgOwner quản lý Organization profile (display name; slug immutable);
-- Organization có đúng một OrgOwner; transfer ownership hai bước; personal Org không transfer/xóa;
-- user không tự tạo thêm Organization; Platform Admin tạo Org kèm Owner + grant.
+- Organization có đúng một OrgOwner; transfer ownership hai bước;
+- user xin tạo Organization (`Pending`), Platform Admin duyệt kèm grant hoặc từ chối kèm lý do; Admin cũng tạo thẳng Org kèm Owner + grant.
 
 ### FR-02 Member và invitation
 
@@ -1759,7 +1769,7 @@ Ghi tối thiểu:
 - invitation có expiry và one-time token;
 - accept tạo membership;
 - owner remove/change Organization role;
-- member tự rời Organization (trừ Owner và personal Org).
+- member tự rời Organization (trừ Owner).
 
 ### FR-03 Group
 
@@ -1772,7 +1782,7 @@ Ghi tối thiểu:
 
 - PlatformAdmin cấp max member/group/Workspace toàn platform;
 - PlatformAdmin cấp một hoặc nhiều ClusterGrant, có một default;
-- onboarding policy tự cấp grant mặc định cho personal Organization;
+- onboarding policy là grant mặc định điền sẵn khi duyệt yêu cầu tạo Organization;
 - mỗi grant có CPU/RAM/Pod/storage/Workspace/Namespace quota;
 - mỗi grant chứa allowed shared pool, Organization-dedicated nodes, NetworkPool, StorageClass và IngressClass;
 - Organization xem allocated/remaining theo Cluster.
@@ -1876,7 +1886,7 @@ Các con số là target để đo trong đồ án, không phải SLA thương m
 ### 24.3 E2E personas
 
 - **PlatformAdmin** đăng ký Cluster A, cấu hình onboarding policy, shared pool, một dedicated node 8 CPU, NetworkPool và wildcard ingress domain.
-- **Alice** login, có personal Organization + onboarding grant, mời Joe/Bob qua invite link.
+- **Alice** login, xin tạo Organization `acme`; PlatformAdmin duyệt với grant mặc định; Alice mời Joe/Bob qua invite link.
 - Alice tạo `backend`, `qa`, `admins` group và add member.
 - Alice tạo Shared Workspace Solar qua wizard (Cluster auto-select, network auto-allocate).
 - Joe tải kubeconfig, deploy app có PVC và Ingress; QA chỉ xem.
@@ -1943,7 +1953,7 @@ Thời gian thực hiện linh hoạt (một người làm, quỹ thời gian ~1
 - **M0 — Chốt spec/ADR**: use case/persona, capability/non-goal, data model, threat model, các ADR ở mục 29. *Deliverable: specification và architecture diagram được chốt.*
 - **M1 — Lab foundation**: chuẩn hóa Cluster demo với system pool, NFS subdir provisioner (`standard`), ingress-nginx + wildcard DNS, cert-manager với ClusterIssuer từ CA lab, PostgreSQL/Keycloak persistent, giữ verification suite hiện tại chạy được. *Deliverable: cluster nền reproducible.*
 - **M2 — Backend skeleton**: Go API, migrations, OpenAPI/error model, user/org/membership tables, operation/outbox framework. *Deliverable: API health + basic Organization CRUD.*
-- **M3 — Portal auth + onboarding**: OIDC client, signup/login/logout, BFF/session, first-login upsert, personal org + auto-grant, Organization dashboard skeleton. *Deliverable: user mới login là có org và quota dùng được ngay.*
+- **M3 — Portal auth + onboarding**: OIDC client, signup/login/logout, BFF/session, first-login upsert, xin tạo Organization + màn duyệt của Admin, Organization dashboard skeleton. *Deliverable: user mới login xin được org, Admin duyệt, org có quota dùng được.*
 - **M4 — Invitation/member/group**: invite link flow, group CRUD/membership, Keycloak sync worker, group claim mapper, role enforcement. *Deliverable: Alice mời Joe, tạo group, token Joe có group claim.*
 - **M5 — Admin & entitlement**: admin UI/API (realm role), Cluster registry, onboarding policy, ClusterGrant, shared pool/dedicated node/NetworkPool assignment, usage/remaining. *Deliverable: admin cấp và điều chỉnh tài nguyên qua UI.*
 - **M6 — CRD + Controller**: CRD PlatformWorkspace, per-Cluster controller render Capsule Tenant (tên `<org>-<ws>`), `spec.namespaces` → Namespace, owner/developer/viewer binding, custom ClusterRoles, observed `status.namespaces`; provisioning worker apply CR qua scoped credential. *Deliverable: outbox → CR → Capsule Tenant Ready, Namespace từ portal xuất hiện trong cluster.*
@@ -1977,7 +1987,7 @@ Thời gian thực hiện linh hoạt (một người làm, quỹ thời gian ~1
 
 ### 26.1 MVP bắt buộc (Phase 1)
 
-- Keycloak login + personal Organization + onboarding auto-grant;
+- Keycloak login + xin tạo Organization + Admin duyệt kèm grant mặc định;
 - entitlement/ClusterGrant do PlatformAdmin quản lý qua admin UI;
 - invitation link/member/group + Keycloak group claim;
 - Workspace create qua portal wizard;
@@ -2036,9 +2046,9 @@ Demo được toàn bộ flow không sửa YAML thủ công:
 
 ### Phần 2 — Self-service onboarding
 
-- Alice đăng ký mới, login và lập tức có Organization + quota mặc định;
-- mời Joe/Bob qua invite link;
-- tạo `admins`, `developers`, `viewers`.
+- Alice đăng ký mới, login, thấy màn trống và xin tạo Organization `acme`;
+- PlatformAdmin duyệt với grant mặc định từ onboarding policy; `acme` chuyển `Active` kèm group `admins`, `developers`, `viewers`;
+- Alice mời Joe/Bob qua invite link.
 
 ### Phần 3 — Workspace Shared
 
@@ -2087,7 +2097,7 @@ Demo được toàn bộ flow không sửa YAML thủ công:
 11. Vì sao Dedicated node thuộc Organization và dùng per-Workspace capacity reservation?
 12. Vì sao per-Workspace Calico IPPool và cách chống CIDR overlap?
 13. Vì sao kubeconfig dùng kubelogin exec OIDC và per-Cluster Capsule Proxy?
-14. Vì sao personal Organization được auto-grant quota mặc định?
+14. Vì sao Organization phải xin và được Admin duyệt thay vì tự tạo kèm quota mặc định?
 15. Vì sao Platform Admin dùng cùng realm với realm role thay vì identity plane riêng?
 16. Vì sao tên Kubernetes-visible là `<org-slug>-<ws-slug>` immutable thay cho ID hoặc slug global-unique?
 17. Vì sao Shared là soft allocation có overcommit ratio còn Dedicated là hard reservation?
@@ -2113,7 +2123,7 @@ Mỗi ADR ghi context, decision, alternatives, consequences và validation/test.
 
 ## 31. Bộ quyết định mặc định để bắt đầu code
 
-1. một account có personal Organization mặc định và có thể join org khác;
+1. first login chỉ tạo user record; user có Organization bằng cách xin (Admin duyệt), được Admin tạo thẳng, hoặc được mời; một account thuộc nhiều Organization;
 2. Keycloak giữ account/password; portal dùng OIDC và không lưu password; admin dùng realm role `platform-admin`;
 3. PostgreSQL giữ Organization/group/membership/quota/Workspace;
 4. group sync sang Keycloak bằng machine name immutable;
@@ -2123,7 +2133,7 @@ Mỗi ADR ghi context, decision, alternatives, consequences và validation/test.
 8. Platform Admin đăng ký Cluster có sẵn; platform không tạo Kubernetes cluster;
 9. tên gọi thống nhất `Cluster` ở mọi nơi (code/DB/API/UI);
 10. MVP một Cluster; data model/API multi-cluster từ đầu; Organization có một hoặc nhiều ClusterGrant và đúng một default;
-11. personal Organization được onboarding policy auto-grant quota nhỏ trên default Cluster;
+11. onboarding policy là grant mặc định điền sẵn khi Admin duyệt yêu cầu tạo Organization, trên default Cluster;
 12. ClusterGrant giới hạn resource/Workspace/shared pool/dedicated node/network/StorageClass/IngressClass theo Cluster;
 13. Dedicated Workspace chọn đúng một granted node trong MVP và reserve CPU/RAM/Pod; nhiều Workspace cùng org có thể dùng node nếu còn capacity;
 14. mỗi Workspace có Calico IPPool cấp từ NetworkPool, auto-allocate mặc định;
@@ -2138,7 +2148,7 @@ Mỗi ADR ghi context, decision, alternatives, consequences và validation/test.
 23. Go + React + PostgreSQL + controller-runtime;
 24. roadmap theo milestone M0–M12 (Phase 1) rồi M13–M15 (Phase 2 multi-cluster);
 25. tên sản phẩm `Tenantry`; API group/label prefix `tenantry.io`;
-26. user không tự tạo thêm Organization; Admin tạo Org kèm Owner + grant; personal Org không xóa/không transfer;
+26. user xin tạo Organization (`Pending`, tối đa một yêu cầu mỗi user), Admin duyệt kèm grant hoặc từ chối kèm lý do; Admin cũng tạo thẳng Org kèm Owner + grant;
 27. mỗi Organization đúng một OrgOwner, transfer hai bước; nhiều OrgAdmin;
 28. tên Kubernetes-visible `<org-slug>-<ws-slug>`; cả hai slug immutable; label mang immutable ID;
 29. Ingress hostname `<app>.<org>-<ws>.apps.<cluster>.<domain>`, wildcard Certificate per Workspace từ CA lab;

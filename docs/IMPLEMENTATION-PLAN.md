@@ -36,7 +36,7 @@ Tài liệu này trả lời bốn câu hỏi: code đặt ở đâu (mục 2), 
 │   ├── internal/
 │   │   ├── app/                 # wiring/DI: build services từ config, không chứa business logic
 │   │   ├── httpapi/             # handler generated từ OpenAPI + middleware (session, authz, idempotency, CSRF)
-│   │   ├── auth/                # OIDC (Authorization Code + PKCE), session store PostgreSQL, upsert user, first-login onboarding
+│   │   ├── auth/                # OIDC (Authorization Code + PKCE), session store PostgreSQL, upsert user theo (issuer, subject)
 │   │   ├── org/                 # organizations, members, invitations, groups, ownership_transfers, entitlement
 │   │   ├── workspace/           # workspaces, workspace_namespaces, bindings, state machine, operations
 │   │   ├── reservation/         # cluster registry, cluster grants, shared pools, dedicated node grants, capacity math, reservation tx
@@ -367,16 +367,16 @@ Hai loop không liên quan nghiệp vụ — chúng chỉ chung một hình dạ
 
 ### M3 — Portal auth + onboarding
 
-- **Mục tiêu**: user mới login là có personal Organization + onboarding grant dùng được.
+- **Mục tiêu**: user mới login xin được Organization, Platform Admin duyệt, Organization có grant dùng được.
 - **Công việc**:
   1. `auth`: OIDC discovery, Authorization Code + PKCE với client `portal`, callback, session PostgreSQL, cookie HttpOnly/Secure/SameSite=Lax, CSRF double-submit, logout (+ Keycloak end-session tùy chọn).
-  2. First login: upsert `users` theo `(issuer, subject)`; tạo personal Organization (`is_personal`, slug từ username + kiểm tra unique), OrgOwner membership, 3 group mặc định `admins/developers/viewers` (chưa sync Keycloak — M4), gọi onboarding policy tạo ClusterGrant mặc định (bảng `clusters`, `onboarding_policies`, `organization_cluster_grants` migration ở đây, seed Cluster A).
+  2. First login chỉ upsert `users` theo `(issuer, subject)`. `POST /organizations` tạo yêu cầu `Pending` + OrgOwner membership. `RequirePlatformAdmin` tối thiểu (kéo từ M5) + `POST /admin/organizations/{id}:approve|reject`: duyệt → `Active`, 3 group mặc định `admins/developers/viewers` (chưa sync Keycloak — M4), ClusterGrant từ onboarding policy (bảng `clusters`, `onboarding_policies`, `organization_cluster_grants` migration ở đây, seed Cluster A); từ chối → `Rejected` + `review_note`.
   3. `GET /me`, `GET /organizations`, `/entitlement`, `/usage` (usage = 0 lúc này).
-  4. Web: Vite scaffold, Mantine, layout, login redirect, org switcher, Overview skeleton hiển thị grant/quota.
+  4. Web: Vite scaffold, Mantine, layout, login redirect, màn trống "xin tạo Organization" + trạng thái yêu cầu, org switcher, Overview skeleton hiển thị grant/quota, trang Admin duyệt yêu cầu.
   5. Rate limit endpoint auth.
   6. Realm export dev + `tenantry-seed`.
-- **Đầu ra kiểm chứng**: đăng ký user mới trên Keycloak → quay lại portal thấy Organization + quota mặc định; refresh trang vẫn login; logout xóa session.
-- **Test bắt buộc**: unit first-login idempotent (login hai lần không tạo hai org); integration OIDC với Keycloak container (testcontainers) hoặc mock issuer; Playwright login/logout.
+- **Đầu ra kiểm chứng**: đăng ký user mới trên Keycloak → portal hiện màn xin tạo Organization → Admin duyệt → user thấy Organization + quota mặc định; refresh trang vẫn login; logout xóa session.
+- **Test bắt buộc**: first login idempotent (login hai lần không tạo hai user); yêu cầu `Pending` thứ hai của cùng user bị chặn; duyệt tạo đúng group + grant trong một transaction; từ chối nhả slug; integration OIDC với Keycloak container (testcontainers) hoặc mock issuer; Playwright login/logout.
 - **Phụ thuộc**: M1 (Keycloak realm), M2.
 - **Rủi ro chính**: cookie/redirect trên domain lab (`*.tenantry.example` + CA tự ký) — chốt host và HTTPS local sớm.
 - **Ước lượng**: M.
@@ -387,7 +387,7 @@ Hai loop không liên quan nghiệp vụ — chúng chỉ chung một hình dạ
 - **Công việc**:
   1. Migrations `invitations`, `groups`, `group_members`, `ownership_transfers`.
   2. Invitation: tạo token (hash + expiry + one-time), hiển thị link, accept chỉ khi email verified khớp (spec §9.1).
-  3. Member: patch role, remove (chặn Owner), `members/me:leave` (chặn Owner/personal), transfer ownership hai bước trong một transaction.
+  3. Member: patch role, remove (chặn Owner), `members/me:leave` (chặn Owner), transfer ownership hai bước trong một transaction.
   4. Group CRUD, add/remove member, chặn delete khi còn binding (bảng `workspace_group_bindings` migration tạo trước, dùng ở M6).
   5. Group Sync Worker (mục 5.2) + group `tenantry:tenant-users`; `sync_status` hiển thị trên UI.
   6. Realm: group mapper cho `kubectl`/`headlamp-cluster-a`; Capsule config `userGroups` = `oidc:tenantry:tenant-users` thay `projectcapsule.dev` hard-code.
@@ -405,7 +405,7 @@ Hai loop không liên quan nghiệp vụ — chúng chỉ chung một hình dạ
 - **Mục tiêu**: Platform Admin cấp và điều chỉnh tài nguyên qua UI; capacity math có test.
 - **Công việc**:
   1. Migrations `shared_compute_pools`, `cluster_grant_shared_pools`, `dedicated_node_grants`, `network_pools`.
-  2. `RequirePlatformAdmin`; endpoint §16.5 admin: organizations (tạo Org + Owner + grant ban đầu), entitlement, clusters (register/patch trạng thái `Registered/Ready/Maintenance/Unavailable`), onboarding-policy, cluster-grants PUT/DELETE (chặn giảm dưới allocation, chặn delete khi còn Workspace), dedicated-nodes, shared-pools, network-pools.
+  2. `RequirePlatformAdmin`; endpoint §16.5 admin: organizations (tạo thẳng Org + Owner + grant ban đầu; approve/reject đã có từ M3), entitlement, clusters (register/patch trạng thái `Registered/Ready/Maintenance/Unavailable`), onboarding-policy, cluster-grants PUT/DELETE (chặn giảm dưới allocation, chặn delete khi còn Workspace), dedicated-nodes, shared-pools, network-pools.
   3. `reservation` capacity math: `reservable/reserved/remaining`, capacity state, soft ratio Shared; snapshot allocatable của node/pool bằng scoped credential đọc Node (worker cần thêm quyền `get/list nodes` — đề xuất chấp nhận cho MVP).
   4. Grant dedicated node: kiểm tra Pod lạ trên node (spec §6.3) và từ chối kèm danh sách.
   5. Catalog endpoint §16.3 phía Org (filter theo grant, sanitize node).
