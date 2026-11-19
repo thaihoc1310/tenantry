@@ -11,6 +11,21 @@ servers:
   - url: /api/v1
 
 paths:
+  /me:
+    get:
+      operationId: getMe
+      summary: The signed-in user
+      description: |
+        Who the portal is talking to and whether to show the Admin area. The
+        caller's organizations come from `GET /organizations`.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "401": { $ref: "#/components/responses/Error" }
+
   /organizations:
     get:
       operationId: listOrganizations
@@ -152,6 +167,17 @@ components:
           description: Machine-readable context, e.g. the offending field or the exceeded quota.
           additionalProperties: true
         requestId: { type: string }
+
+    Me:
+      type: object
+      required: [id, displayName, isPlatformAdmin]
+      properties:
+        id: { type: string }
+        email: { type: string, description: Absent when the identity provider has none }
+        displayName: { type: string }
+        isPlatformAdmin:
+          type: boolean
+          description: The Keycloak realm role `platform-admin`; every admin endpoint checks it again server-side.
 
     OrgRole:
       type: string

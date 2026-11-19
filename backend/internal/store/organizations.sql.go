@@ -63,17 +63,6 @@ func (q *Queries) CreateOrganizationRequest(ctx context.Context, arg CreateOrgan
 	return i, err
 }
 
-const getActiveUserID = `-- name: GetActiveUserID :one
-SELECT id FROM users WHERE id = $1 AND status = 'Active'
-`
-
-func (q *Queries) GetActiveUserID(ctx context.Context, id string) (string, error) {
-	row := q.db.QueryRow(ctx, getActiveUserID, id)
-	var id_2 string
-	err := row.Scan(&id_2)
-	return id_2, err
-}
-
 const getOrganizationForMember = `-- name: GetOrganizationForMember :one
 SELECT o.id, o.slug, o.display_name, o.description, o.owner_user_id, o.status, o.review_note, o.created_at, o.updated_at, m.role
 FROM organizations o

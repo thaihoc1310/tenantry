@@ -8,10 +8,10 @@ import (
 	"crypto/rand"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	validator "github.com/oapi-codegen/nethttp-middleware"
 
@@ -19,11 +19,20 @@ import (
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi/oapi"
 	"github.com/thaihoc1310/tenantry/backend/internal/org"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
+	"github.com/thaihoc1310/tenantry/backend/internal/user"
 )
 
-// DevUserHeader names the caller by user id. It is the only way to log in
-// until the OIDC session arrives in M3, and only works when Options.DevAuth is set.
-const DevUserHeader = "X-Tenantry-Dev-User"
+// Dev auth stands in for the OIDC session until M3 and only works when
+// Options.DevAuth is set. DevUserHeader names the caller by user id;
+// DevRolesHeader lists the Keycloak realm roles a token would carry,
+// comma-separated (e.g. "platform-admin").
+const (
+	DevUserHeader  = "X-Tenantry-Dev-User"
+	DevRolesHeader = "X-Tenantry-Dev-Roles"
+)
+
+// RolePlatformAdmin is the Keycloak realm role of Platform Admins (PRODUCT-PLAN §4.1).
+const RolePlatformAdmin = "platform-admin"
 
 type Options struct {
 	DevAuth bool // TENANTRY_AUTH_DEV_HEADER=true; never on outside local dev
@@ -47,7 +56,7 @@ func Register(mux *http.ServeMux, db *pgxpool.Pool, opts Options) {
 		BaseURL:    "/api/v1",
 		BaseRouter: mux,
 		// The last entry runs first: an anonymous caller gets 401 before any 400.
-		Middlewares:      []oapi.MiddlewareFunc{validate(), authenticate(store.New(db), opts)},
+		Middlewares:      []oapi.MiddlewareFunc{validate(), authenticate(user.NewService(store.New(db)), opts)},
 		ErrorHandlerFunc: badRequest,
 	})
 }
@@ -75,6 +84,16 @@ func validate() oapi.MiddlewareFunc {
 			}
 		},
 	})
+}
+
+func (s server) GetMe(ctx context.Context, _ oapi.GetMeRequestObject) (oapi.GetMeResponseObject, error) {
+	c := caller(ctx)
+	return oapi.GetMe200JSONResponse{
+		Id:              c.user.ID,
+		Email:           c.user.Email,
+		DisplayName:     c.user.DisplayName,
+		IsPlatformAdmin: c.platformAdmin,
+	}, nil
 }
 
 func (s server) ListOrganizations(ctx context.Context, req oapi.ListOrganizationsRequestObject) (oapi.ListOrganizationsResponseObject, error) {
@@ -155,8 +174,15 @@ type ctxKey int
 
 const (
 	requestIDKey ctxKey = iota
-	userIDKey
+	principalKey
 )
+
+// principal is the authenticated caller. Only authenticate builds it, so
+// swapping dev auth for OIDC in M3 changes nothing downstream.
+type principal struct {
+	user          store.User
+	platformAdmin bool
+}
 
 // WithRequestID tags every request with an id that is echoed in the
 // X-Request-Id header and in error bodies, so a user report can be matched to logs.
@@ -172,11 +198,12 @@ func WithRequestID(next http.Handler) http.Handler {
 }
 
 func requestID(ctx context.Context) string { s, _ := ctx.Value(requestIDKey).(string); return s }
-func userID(ctx context.Context) string    { s, _ := ctx.Value(userIDKey).(string); return s }
+func caller(ctx context.Context) principal { p, _ := ctx.Value(principalKey).(principal); return p }
+func userID(ctx context.Context) string    { return caller(ctx).user.ID }
 
-// authenticate puts the caller's user id in the context or answers 401. The
-// user must already exist and be Active: a disabled account loses access at once.
-func authenticate(q *store.Queries, opts Options) oapi.MiddlewareFunc {
+// authenticate puts the caller in the context or answers 401. The user must
+// already exist and be Active: a disabled account loses access at once.
+func authenticate(users *user.Service, opts Options) oapi.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id := r.Header.Get(DevUserHeader)
@@ -184,14 +211,17 @@ func authenticate(q *store.Queries, opts Options) oapi.MiddlewareFunc {
 				writeError(w, r, apperr.New(apperr.Unauthenticated, "login required"))
 				return
 			}
-			if _, err := q.GetActiveUserID(r.Context(), id); err != nil {
-				if errors.Is(err, pgx.ErrNoRows) {
-					err = apperr.New(apperr.Unauthenticated, "unknown or disabled user")
-				}
+			u, err := users.Active(r.Context(), id)
+			if err != nil {
 				writeError(w, r, err)
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userIDKey, id)))
+			roles := strings.Split(r.Header.Get(DevRolesHeader), ",")
+			for i := range roles {
+				roles[i] = strings.TrimSpace(roles[i])
+			}
+			p := principal{user: u, platformAdmin: slices.Contains(roles, RolePlatformAdmin)}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey, p)))
 		})
 	}
 }

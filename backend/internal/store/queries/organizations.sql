@@ -1,6 +1,3 @@
--- name: GetActiveUserID :one
-SELECT id FROM users WHERE id = $1 AND status = 'Active';
-
 -- name: GetOrganizationForMember :one
 -- Joining on the caller's membership means a non-member gets no row, so a
 -- missing org and someone else's org look the same (404, threat case §20.3).

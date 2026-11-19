@@ -35,7 +35,7 @@ func main() {
 
 	opts := httpapi.Options{DevAuth: os.Getenv("TENANTRY_AUTH_DEV_HEADER") == "true"}
 	if opts.DevAuth {
-		slog.Warn("dev auth enabled: any client can act as any user via " + httpapi.DevUserHeader)
+		slog.Warn("dev auth enabled: any client can act as any user, Platform Admin included, via " + httpapi.DevUserHeader + " and " + httpapi.DevRolesHeader)
 	}
 
 	srv := &http.Server{Addr: addr, Handler: routes(pool, opts), ReadHeaderTimeout: 10 * time.Second}
