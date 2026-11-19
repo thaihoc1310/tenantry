@@ -9,6 +9,10 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/thaihoc1310/tenantry/backend/internal/httpapi"
 )
 
 func main() {
@@ -17,7 +21,24 @@ func main() {
 		addr = ":8080"
 	}
 
-	srv := &http.Server{Addr: addr, Handler: routes(), ReadHeaderTimeout: 10 * time.Second}
+	// pgxpool connects lazily; Ping makes a wrong DATABASE_URL fail at start
+	// instead of on the first request.
+	pool, err := pgxpool.New(context.Background(), os.Getenv("DATABASE_URL"))
+	if err == nil {
+		err = pool.Ping(context.Background())
+	}
+	if err != nil {
+		slog.Error("database unreachable", "err", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+
+	opts := httpapi.Options{DevAuth: os.Getenv("TENANTRY_AUTH_DEV_HEADER") == "true"}
+	if opts.DevAuth {
+		slog.Warn("dev auth enabled: any client can act as any user via " + httpapi.DevUserHeader)
+	}
+
+	srv := &http.Server{Addr: addr, Handler: routes(pool, opts), ReadHeaderTimeout: 10 * time.Second}
 
 	// SIGTERM is how Kubernetes asks for a shutdown; without this the pod drops
 	// in-flight requests on every rollout.
@@ -42,10 +63,11 @@ func main() {
 	}
 }
 
-func routes() http.Handler {
+func routes(db *pgxpool.Pool, opts httpapi.Options) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
-	return mux
+	httpapi.Register(mux, db, opts)
+	return httpapi.WithRequestID(mux)
 }

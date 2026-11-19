@@ -2,61 +2,22 @@ package migrations_test
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
-	"net/url"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
 
+	"github.com/thaihoc1310/tenantry/backend/internal/testdb"
 	"github.com/thaihoc1310/tenantry/backend/migrations"
 )
 
-// freshDB creates a throwaway database on TEST_DATABASE_URL's server, so the
-// test never touches the dev database, and drops it when the test ends.
-func freshDB(t *testing.T) *sql.DB {
-	t.Helper()
-	base := os.Getenv("TEST_DATABASE_URL")
-	if base == "" {
-		t.Skip("TEST_DATABASE_URL not set")
-	}
-	admin, err := sql.Open("pgx", base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = admin.Close() })
-
-	b := make([]byte, 6)
-	_, _ = rand.Read(b)
-	name := "tenantry_test_" + hex.EncodeToString(b)
-	if _, err := admin.Exec("CREATE DATABASE " + name); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _, _ = admin.Exec("DROP DATABASE " + name + " WITH (FORCE)") })
-
-	u, err := url.Parse(base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	u.Path = "/" + name
-	db, err := sql.Open("pgx", u.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	return db
-}
-
 // Every Down must undo its Up, or rollbacks in production break.
 func TestUpDownUp(t *testing.T) {
-	p := provider(t, freshDB(t))
+	p := provider(t, testdb.Open(t))
 	ctx := context.Background()
 	if _, err := p.Up(ctx); err != nil {
 		t.Fatalf("up: %v", err)
@@ -73,7 +34,7 @@ func TestUpDownUp(t *testing.T) {
 // before the old one died). While one holds the migration lock, the other must
 // wait instead of running the same DDL.
 func TestUpWaitsForMigrationLock(t *testing.T) {
-	db := freshDB(t)
+	db := testdb.Open(t)
 	ctx := context.Background()
 
 	holder, err := db.Conn(ctx)
@@ -103,7 +64,7 @@ func TestUpWaitsForMigrationLock(t *testing.T) {
 }
 
 func TestConstraints(t *testing.T) {
-	db := freshDB(t)
+	db := testdb.Open(t)
 	if _, err := provider(t, db).Up(context.Background()); err != nil {
 		t.Fatal(err)
 	}
