@@ -24,3 +24,24 @@ SET display_name = COALESCE(sqlc.narg(display_name), display_name),
     updated_at   = now()
 WHERE id = @id AND status IN ('Pending', 'Active')
 RETURNING *;
+
+-- name: ListOrganizationsForMember :many
+-- Keyset pagination on the id: ULIDs sort by creation time, so id DESC is
+-- newest first and a page boundary stays stable while rows are added.
+SELECT sqlc.embed(o), m.role
+FROM organizations o
+JOIN organization_members m ON m.org_id = o.id AND m.user_id = @user_id
+WHERE o.status <> 'Deleted'
+  AND (sqlc.narg(cursor)::text IS NULL OR o.id < sqlc.narg(cursor))
+ORDER BY o.id DESC
+LIMIT @page_size;
+
+-- name: CreateOrganizationRequest :one
+-- The partial unique indexes enforce "slug free" and "one Pending request per
+-- user" even under concurrent requests; the service maps their violations.
+INSERT INTO organizations (id, slug, display_name, description, owner_user_id, status)
+VALUES (@id, @slug, @display_name, @description, @owner_user_id, 'Pending')
+RETURNING *;
+
+-- name: AddOrganizationMember :exec
+INSERT INTO organization_members (org_id, user_id, role) VALUES (@org_id, @user_id, @role);

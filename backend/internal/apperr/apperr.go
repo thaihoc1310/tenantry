@@ -17,6 +17,10 @@ const (
 	Forbidden       Code = "FORBIDDEN"
 	NotFound        Code = "NOT_FOUND"
 	Conflict        Code = "CONFLICT"
+
+	// Specific conflicts the UI handles differently from a generic CONFLICT.
+	SlugTaken         Code = "SLUG_TAKEN"
+	OrgRequestPending Code = "ORG_REQUEST_PENDING"
 )
 
 type Error struct {

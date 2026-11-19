@@ -11,6 +11,62 @@ servers:
   - url: /api/v1
 
 paths:
+  /organizations:
+    get:
+      operationId: listOrganizations
+      summary: Organizations the caller belongs to, including their own Pending and Rejected requests
+      description: Newest first. Deleted organizations are not returned.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          description: Opaque; pass `nextCursor` from the previous page.
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationList" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createOrganization
+      summary: Request a new organization (PRODUCT-PLAN §4.2)
+      description: |
+        Creates the organization as `Pending` with the caller as OrgOwner; a
+        Platform Admin approves or rejects it. Values are trimmed.
+        `slug` is permanent and prefixes every Kubernetes name the
+        organization will own, so reserved words and the `kube-` prefix are refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrganizationCreate" }
+      responses:
+        "201":
+          description: Created
+          headers:
+            Location:
+              description: URL of the new organization
+              required: true
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Organization" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "409":
+          description: |
+            `SLUG_TAKEN`: another organization holds the slug (a rejected
+            request releases it, a deleted organization does not).
+            `ORG_REQUEST_PENDING`: the caller already has a request waiting for review.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
   /organizations/{orgId}:
     parameters:
       - $ref: "#/components/parameters/orgId"
@@ -81,6 +137,8 @@ components:
         - FORBIDDEN
         - NOT_FOUND
         - CONFLICT
+        - SLUG_TAKEN
+        - ORG_REQUEST_PENDING
         - INTERNAL
 
     ErrorResponse:
@@ -115,6 +173,28 @@ components:
         reviewNote: { type: string, description: Why the request was rejected; empty otherwise }
         createdAt: { type: string, format: date-time }
         myRole: { $ref: "#/components/schemas/OrgRole" }
+
+    OrganizationList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Organization" }
+        nextCursor: { type: string, description: Absent on the last page }
+
+    OrganizationCreate:
+      type: object
+      required: [slug, displayName]
+      additionalProperties: false
+      properties:
+        slug:
+          type: string
+          minLength: 3
+          maxLength: 20
+          pattern: "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+        displayName: { type: string, minLength: 1, maxLength: 80 }
+        description: { type: string, maxLength: 500 }
 
     OrganizationPatch:
       type: object

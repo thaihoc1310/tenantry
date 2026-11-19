@@ -9,6 +9,60 @@ import (
 	"context"
 )
 
+const addOrganizationMember = `-- name: AddOrganizationMember :exec
+INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, $3)
+`
+
+type AddOrganizationMemberParams struct {
+	OrgID  string
+	UserID string
+	Role   string
+}
+
+func (q *Queries) AddOrganizationMember(ctx context.Context, arg AddOrganizationMemberParams) error {
+	_, err := q.db.Exec(ctx, addOrganizationMember, arg.OrgID, arg.UserID, arg.Role)
+	return err
+}
+
+const createOrganizationRequest = `-- name: CreateOrganizationRequest :one
+INSERT INTO organizations (id, slug, display_name, description, owner_user_id, status)
+VALUES ($1, $2, $3, $4, $5, 'Pending')
+RETURNING id, slug, display_name, description, owner_user_id, status, review_note, created_at, updated_at
+`
+
+type CreateOrganizationRequestParams struct {
+	ID          string
+	Slug        string
+	DisplayName string
+	Description string
+	OwnerUserID string
+}
+
+// The partial unique indexes enforce "slug free" and "one Pending request per
+// user" even under concurrent requests; the service maps their violations.
+func (q *Queries) CreateOrganizationRequest(ctx context.Context, arg CreateOrganizationRequestParams) (Organization, error) {
+	row := q.db.QueryRow(ctx, createOrganizationRequest,
+		arg.ID,
+		arg.Slug,
+		arg.DisplayName,
+		arg.Description,
+		arg.OwnerUserID,
+	)
+	var i Organization
+	err := row.Scan(
+		&i.ID,
+		&i.Slug,
+		&i.DisplayName,
+		&i.Description,
+		&i.OwnerUserID,
+		&i.Status,
+		&i.ReviewNote,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getActiveUserID = `-- name: GetActiveUserID :one
 SELECT id FROM users WHERE id = $1 AND status = 'Active'
 `
@@ -61,6 +115,60 @@ func (q *Queries) GetOrganizationForMember(ctx context.Context, arg GetOrganizat
 		&i.Role,
 	)
 	return i, err
+}
+
+const listOrganizationsForMember = `-- name: ListOrganizationsForMember :many
+SELECT o.id, o.slug, o.display_name, o.description, o.owner_user_id, o.status, o.review_note, o.created_at, o.updated_at, m.role
+FROM organizations o
+JOIN organization_members m ON m.org_id = o.id AND m.user_id = $1
+WHERE o.status <> 'Deleted'
+  AND ($2::text IS NULL OR o.id < $2)
+ORDER BY o.id DESC
+LIMIT $3
+`
+
+type ListOrganizationsForMemberParams struct {
+	UserID   string
+	Cursor   *string
+	PageSize int32
+}
+
+type ListOrganizationsForMemberRow struct {
+	Organization Organization
+	Role         string
+}
+
+// Keyset pagination on the id: ULIDs sort by creation time, so id DESC is
+// newest first and a page boundary stays stable while rows are added.
+func (q *Queries) ListOrganizationsForMember(ctx context.Context, arg ListOrganizationsForMemberParams) ([]ListOrganizationsForMemberRow, error) {
+	rows, err := q.db.Query(ctx, listOrganizationsForMember, arg.UserID, arg.Cursor, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrganizationsForMemberRow
+	for rows.Next() {
+		var i ListOrganizationsForMemberRow
+		if err := rows.Scan(
+			&i.Organization.ID,
+			&i.Organization.Slug,
+			&i.Organization.DisplayName,
+			&i.Organization.Description,
+			&i.Organization.OwnerUserID,
+			&i.Organization.Status,
+			&i.Organization.ReviewNote,
+			&i.Organization.CreatedAt,
+			&i.Organization.UpdatedAt,
+			&i.Role,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateOrganization = `-- name: UpdateOrganization :one

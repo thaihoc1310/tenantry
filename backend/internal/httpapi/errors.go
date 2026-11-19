@@ -16,6 +16,9 @@ var statusOf = map[apperr.Code]int{
 	apperr.Forbidden:       http.StatusForbidden,
 	apperr.NotFound:        http.StatusNotFound,
 	apperr.Conflict:        http.StatusConflict,
+
+	apperr.SlugTaken:         http.StatusConflict,
+	apperr.OrgRequestPending: http.StatusConflict,
 }
 
 // writeError answers with an ErrorResponse. An *apperr.Error is the caller's

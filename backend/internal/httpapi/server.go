@@ -12,6 +12,7 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	validator "github.com/oapi-codegen/nethttp-middleware"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/apperr"
@@ -33,12 +34,11 @@ type server struct {
 }
 
 // Register mounts every /api/v1 operation on mux.
-func Register(mux *http.ServeMux, db store.DBTX, opts Options) {
-	q := store.New(db)
+func Register(mux *http.ServeMux, db *pgxpool.Pool, opts Options) {
 	badRequest := func(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, apperr.New(apperr.Validation, err.Error()))
 	}
-	api := oapi.NewStrictHandlerWithOptions(server{orgs: org.NewService(q)}, nil, oapi.StrictHTTPServerOptions{
+	api := oapi.NewStrictHandlerWithOptions(server{orgs: org.NewService(db)}, nil, oapi.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: badRequest,
 		// Handlers return errors as-is; writeError turns them into responses.
 		ResponseErrorHandlerFunc: writeError,
@@ -47,7 +47,7 @@ func Register(mux *http.ServeMux, db store.DBTX, opts Options) {
 		BaseURL:    "/api/v1",
 		BaseRouter: mux,
 		// The last entry runs first: an anonymous caller gets 401 before any 400.
-		Middlewares:      []oapi.MiddlewareFunc{validate(), authenticate(q, opts)},
+		Middlewares:      []oapi.MiddlewareFunc{validate(), authenticate(store.New(db), opts)},
 		ErrorHandlerFunc: badRequest,
 	})
 }
@@ -75,6 +75,44 @@ func validate() oapi.MiddlewareFunc {
 			}
 		},
 	})
+}
+
+func (s server) ListOrganizations(ctx context.Context, req oapi.ListOrganizationsRequestObject) (oapi.ListOrganizationsResponseObject, error) {
+	var cursor string
+	if req.Params.Cursor != nil {
+		cursor = *req.Params.Cursor
+	}
+	var limit int
+	if req.Params.Limit != nil {
+		limit = *req.Params.Limit
+	}
+	page, err := s.orgs.List(ctx, userID(ctx), cursor, limit)
+	if err != nil {
+		return nil, err
+	}
+	resp := oapi.OrganizationList{Items: make([]oapi.Organization, 0, len(page.Items))} // [] rather than null when empty
+	for _, o := range page.Items {
+		resp.Items = append(resp.Items, toOrganization(o))
+	}
+	if page.NextCursor != "" {
+		resp.NextCursor = &page.NextCursor
+	}
+	return oapi.ListOrganizations200JSONResponse(resp), nil
+}
+
+func (s server) CreateOrganization(ctx context.Context, req oapi.CreateOrganizationRequestObject) (oapi.CreateOrganizationResponseObject, error) {
+	r := org.Request{Slug: req.Body.Slug, DisplayName: req.Body.DisplayName}
+	if req.Body.Description != nil {
+		r.Description = *req.Body.Description
+	}
+	o, err := s.orgs.Create(ctx, userID(ctx), r)
+	if err != nil {
+		return nil, err
+	}
+	return oapi.CreateOrganization201JSONResponse{
+		Body:    toOrganization(o),
+		Headers: oapi.CreateOrganization201ResponseHeaders{Location: "/api/v1/organizations/" + o.ID},
+	}, nil
 }
 
 func (s server) GetOrganization(ctx context.Context, req oapi.GetOrganizationRequestObject) (oapi.GetOrganizationResponseObject, error) {

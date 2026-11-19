@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,8 +20,9 @@ import (
 )
 
 // Seed: alice owns acme (Active), erin is its OrgAdmin and bob a member. bob's request "beta"
-// was Rejected and he asked again under the same slug (now Pending).
-// carol is disabled. "gone" is a Deleted org alice still belongs to.
+// was Rejected and he asked again under the same slug (now Pending). erin's
+// request "oldco" was Rejected. carol is disabled. "gone" is a Deleted org alice
+// still belongs to. dave belongs to nothing.
 const seed = `
 INSERT INTO users (id, issuer, subject, status) VALUES
   ('usr-alice', 'iss', 'a', 'Active'), ('usr-bob', 'iss', 'b', 'Active'),
@@ -29,14 +32,18 @@ INSERT INTO organizations (id, slug, display_name, owner_user_id, status, review
   ('org-acme', 'acme', 'ACME', 'usr-alice', 'Active', '', now()),
   ('org-gone', 'gone', 'Gone', 'usr-alice', 'Deleted', '', now()),
   ('org-beta1', 'beta', 'Beta', 'usr-bob', 'Rejected', 'no reason given', now() - interval '1 day'),
-  ('org-beta2', 'beta', 'Beta', 'usr-bob', 'Pending', '', now());
+  ('org-beta2', 'beta', 'Beta', 'usr-bob', 'Pending', '', now()),
+  ('org-old', 'oldco', 'Old Co', 'usr-erin', 'Rejected', 'duplicate', now());
 INSERT INTO organization_members (org_id, user_id, role) VALUES
   ('org-acme', 'usr-alice', 'OrgOwner'), ('org-acme', 'usr-bob', 'OrgMember'), ('org-acme', 'usr-erin', 'OrgAdmin'),
   ('org-gone', 'usr-alice', 'OrgOwner'),
-  ('org-beta1', 'usr-bob', 'OrgOwner'), ('org-beta2', 'usr-bob', 'OrgOwner');
+  ('org-beta1', 'usr-bob', 'OrgOwner'), ('org-beta2', 'usr-bob', 'OrgOwner'),
+  ('org-old', 'usr-erin', 'OrgOwner');
 `
 
-func newAPI(t *testing.T, opts httpapi.Options) http.Handler {
+// newAPI serves the API on a fresh, migrated and seeded database; the pool is
+// returned for tests that need extra rows.
+func newAPI(t *testing.T, opts httpapi.Options) (http.Handler, *pgxpool.Pool) {
 	t.Helper()
 	url := testdb.New(t)
 	ctx := context.Background()
@@ -64,7 +71,7 @@ func newAPI(t *testing.T, opts httpapi.Options) http.Handler {
 	t.Cleanup(pool.Close)
 	mux := http.NewServeMux()
 	httpapi.Register(mux, pool, opts)
-	return httpapi.WithRequestID(mux)
+	return httpapi.WithRequestID(mux), pool
 }
 
 func call(h http.Handler, method, path, user string) *httptest.ResponseRecorder {
@@ -85,7 +92,7 @@ func callBody(h http.Handler, method, path, user, body string) *httptest.Respons
 }
 
 func TestGetOrganization(t *testing.T) {
-	h := newAPI(t, httpapi.Options{DevAuth: true})
+	h, _ := newAPI(t, httpapi.Options{DevAuth: true})
 
 	cases := []struct {
 		name, user, path string
@@ -134,14 +141,14 @@ func TestGetOrganization(t *testing.T) {
 
 // The dev header must be inert unless explicitly enabled.
 func TestDevHeaderIgnoredWhenDisabled(t *testing.T) {
-	h := newAPI(t, httpapi.Options{DevAuth: false})
+	h, _ := newAPI(t, httpapi.Options{DevAuth: false})
 	if rec := call(h, http.MethodGet, "/api/v1/organizations/org-acme", "usr-alice"); rec.Code != 401 {
 		t.Fatalf("status %d, want 401", rec.Code)
 	}
 }
 
 func TestPatchOrganization(t *testing.T) {
-	h := newAPI(t, httpapi.Options{DevAuth: true})
+	h, _ := newAPI(t, httpapi.Options{DevAuth: true})
 
 	cases := []struct {
 		name, user, path, body string
@@ -196,5 +203,179 @@ func TestPatchOrganization(t *testing.T) {
 	_ = json.Unmarshal(call(h, http.MethodGet, "/api/v1/organizations/acme", "usr-bob").Body.Bytes(), &o)
 	if o.DisplayName != "ACME Inc" || o.Description != "robots" {
 		t.Fatalf("not persisted: %+v", o)
+	}
+}
+
+// errorBody decodes an ErrorResponse and checks the fields every error carries.
+func errorBody(t *testing.T, rec *httptest.ResponseRecorder) oapi.ErrorResponse {
+	t.Helper()
+	var e oapi.ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &e); err != nil {
+		t.Fatalf("%v: %s", err, rec.Body)
+	}
+	if e.RequestId == "" || strings.Contains(e.Message, "Schema:") {
+		t.Fatalf("malformed error body: %+v", e)
+	}
+	return e
+}
+
+func TestListOrganizations(t *testing.T) {
+	h, _ := newAPI(t, httpapi.Options{DevAuth: true})
+
+	cases := []struct {
+		name, user, query string
+		status            int
+		wantIDs           []string // newest first
+		wantNext          string
+	}{
+		{"deleted org left out", "usr-alice", "", 200, []string{"org-acme"}, ""},
+		{"own pending and rejected requests included", "usr-bob", "", 200, []string{"org-beta2", "org-beta1", "org-acme"}, ""},
+		{"first page", "usr-bob", "?limit=2", 200, []string{"org-beta2", "org-beta1"}, "org-beta1"},
+		{"last page", "usr-bob", "?limit=2&cursor=org-beta1", 200, []string{"org-acme"}, ""},
+		{"page exactly full has no next", "usr-bob", "?limit=3", 200, []string{"org-beta2", "org-beta1", "org-acme"}, ""},
+		{"member of nothing", "usr-dave", "", 200, []string{}, ""},
+		{"limit 0", "usr-bob", "?limit=0", 400, nil, ""},
+		{"limit over 200", "usr-bob", "?limit=201", 400, nil, ""},
+		{"limit not a number", "usr-bob", "?limit=ten", 400, nil, ""},
+		{"no login", "", "", 401, nil, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec := call(h, http.MethodGet, "/api/v1/organizations"+c.query, c.user)
+			if rec.Code != c.status {
+				t.Fatalf("status %d, want %d: %s", rec.Code, c.status, rec.Body)
+			}
+			if c.status != 200 {
+				errorBody(t, rec)
+				return
+			}
+			if !strings.Contains(rec.Body.String(), `"items":[`) {
+				t.Fatalf("items must be an array, even when empty: %s", rec.Body)
+			}
+			var l oapi.OrganizationList
+			if err := json.Unmarshal(rec.Body.Bytes(), &l); err != nil {
+				t.Fatal(err)
+			}
+			ids := []string{}
+			for _, o := range l.Items {
+				ids = append(ids, o.Id)
+			}
+			next := ""
+			if l.NextCursor != nil {
+				next = *l.NextCursor
+			}
+			if strings.Join(ids, ",") != strings.Join(c.wantIDs, ",") || next != c.wantNext {
+				t.Fatalf("got %v next=%q, want %v next=%q", ids, next, c.wantIDs, c.wantNext)
+			}
+		})
+	}
+}
+
+func TestCreateOrganization(t *testing.T) {
+	h, _ := newAPI(t, httpapi.Options{DevAuth: true})
+	const path = "/api/v1/organizations"
+
+	// The happy path, checked in full.
+	rec := callBody(h, http.MethodPost, path, "usr-dave", `{"slug":"dave-co","displayName":"  Dave Co  "}`)
+	if rec.Code != 201 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var o oapi.Organization
+	if err := json.Unmarshal(rec.Body.Bytes(), &o); err != nil {
+		t.Fatal(err)
+	}
+	if len(o.Id) != 30 || !strings.HasPrefix(o.Id, "org-") || o.Slug != "dave-co" || o.DisplayName != "Dave Co" ||
+		o.Description != "" || o.Status != "Pending" || o.OwnerUserId != "usr-dave" || o.MyRole == nil || *o.MyRole != "OrgOwner" {
+		t.Fatalf("unexpected organization: %+v", o)
+	}
+	if loc := rec.Header().Get("Location"); loc != path+"/"+o.Id {
+		t.Fatalf("Location %q", loc)
+	}
+	if rec := call(h, http.MethodGet, path+"/dave-co", "usr-dave"); rec.Code != 200 {
+		t.Fatalf("new request not readable by its owner: %d %s", rec.Code, rec.Body)
+	}
+
+	long := strings.Repeat("a", 501)
+	cases := []struct {
+		name, user, body string
+		status           int
+		wantCode         oapi.ErrorCode
+		wantField        string
+	}{
+		{"one pending request per user", "usr-dave", `{"slug":"dave-two","displayName":"Dave Two"}`, 409, oapi.ORGREQUESTPENDING, ""},
+		{"slug of an active org", "usr-alice", `{"slug":"acme","displayName":"x"}`, 409, oapi.SLUGTAKEN, "slug"},
+		{"slug of a deleted org stays taken", "usr-alice", `{"slug":"gone","displayName":"x"}`, 409, oapi.SLUGTAKEN, "slug"},
+		{"slug of a pending request", "usr-alice", `{"slug":"dave-co","displayName":"x"}`, 409, oapi.SLUGTAKEN, "slug"},
+		{"reserved slug", "usr-alice", `{"slug":"admin","displayName":"x"}`, 400, oapi.VALIDATIONFAILED, "slug"},
+		{"kube- prefix", "usr-alice", `{"slug":"kube-team","displayName":"x"}`, 400, oapi.VALIDATIONFAILED, "slug"},
+		{"slug with uppercase", "usr-alice", `{"slug":"Acme2","displayName":"x"}`, 400, oapi.VALIDATIONFAILED, "slug"},
+		{"slug too short", "usr-alice", `{"slug":"ab","displayName":"x"}`, 400, oapi.VALIDATIONFAILED, "slug"},
+		{"blank display name", "usr-alice", `{"slug":"alice-co","displayName":"   "}`, 400, oapi.VALIDATIONFAILED, "displayName"},
+		{"missing display name", "usr-alice", `{"slug":"alice-co"}`, 400, oapi.VALIDATIONFAILED, ""},
+		{"description too long", "usr-alice", `{"slug":"alice-co","displayName":"x","description":"` + long + `"}`, 400, oapi.VALIDATIONFAILED, "description"},
+		{"unknown field", "usr-alice", `{"slug":"alice-co","displayName":"x","status":"Active"}`, 400, oapi.VALIDATIONFAILED, ""},
+		{"no login", "", `{"slug":"anon-co","displayName":"x"}`, 401, oapi.UNAUTHENTICATED, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec := callBody(h, http.MethodPost, path, c.user, c.body)
+			if rec.Code != c.status {
+				t.Fatalf("status %d, want %d: %s", rec.Code, c.status, rec.Body)
+			}
+			e := errorBody(t, rec)
+			if e.Code != c.wantCode {
+				t.Fatalf("code %s, want %s", e.Code, c.wantCode)
+			}
+			if c.wantField != "" && (e.Details == nil || (*e.Details)["field"] != c.wantField) {
+				t.Fatalf("details %v, want field %q", e.Details, c.wantField)
+			}
+		})
+	}
+
+	// A rejected request gives its slug back, so erin can ask again under it.
+	rec = callBody(h, http.MethodPost, path, "usr-erin", `{"slug":"oldco","displayName":"Old Co","description":"second try"}`)
+	if rec.Code != 201 {
+		t.Fatalf("re-request of a rejected slug: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// Concurrent requests must not slip past the rules; the database decides.
+func TestCreateOrganizationRace(t *testing.T) {
+	h, db := newAPI(t, httpapi.Options{DevAuth: true})
+	const n = 10
+	if _, err := db.Exec(context.Background(),
+		`INSERT INTO users (id, issuer, subject) SELECT 'usr-r' || i, 'iss', 'r' || i FROM generate_series(1, $1) i`, n); err != nil {
+		t.Fatal(err)
+	}
+
+	race := func(user func(i int) string, body func(i int) string) map[int]int {
+		codes := make(chan int, n)
+		var wg sync.WaitGroup
+		for i := 1; i <= n; i++ {
+			wg.Go(func() {
+				codes <- callBody(h, http.MethodPost, "/api/v1/organizations", user(i), body(i)).Code
+			})
+		}
+		wg.Wait()
+		close(codes)
+		count := map[int]int{}
+		for c := range codes {
+			count[c]++
+		}
+		return count
+	}
+
+	// Ten users, one slug.
+	got := race(func(i int) string { return fmt.Sprint("usr-r", i) },
+		func(int) string { return `{"slug":"race","displayName":"Race"}` })
+	if got[201] != 1 || got[409] != n-1 {
+		t.Fatalf("same slug: %v, want one 201 and %d 409", got, n-1)
+	}
+
+	// One user, ten slugs. usr-r1..r10 may already own "race", so use alice.
+	got = race(func(int) string { return "usr-alice" },
+		func(i int) string { return fmt.Sprintf(`{"slug":"alice-%d","displayName":"A"}`, i) })
+	if got[201] != 1 || got[409] != n-1 {
+		t.Fatalf("same user: %v, want one 201 and %d 409", got, n-1)
 	}
 }

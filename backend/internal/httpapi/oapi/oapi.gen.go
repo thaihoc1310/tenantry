@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -24,12 +25,14 @@ import (
 
 // Defines values for ErrorCode.
 const (
-	CONFLICT         ErrorCode = "CONFLICT"
-	FORBIDDEN        ErrorCode = "FORBIDDEN"
-	INTERNAL         ErrorCode = "INTERNAL"
-	NOTFOUND         ErrorCode = "NOT_FOUND"
-	UNAUTHENTICATED  ErrorCode = "UNAUTHENTICATED"
-	VALIDATIONFAILED ErrorCode = "VALIDATION_FAILED"
+	CONFLICT          ErrorCode = "CONFLICT"
+	FORBIDDEN         ErrorCode = "FORBIDDEN"
+	INTERNAL          ErrorCode = "INTERNAL"
+	NOTFOUND          ErrorCode = "NOT_FOUND"
+	ORGREQUESTPENDING ErrorCode = "ORG_REQUEST_PENDING"
+	SLUGTAKEN         ErrorCode = "SLUG_TAKEN"
+	UNAUTHENTICATED   ErrorCode = "UNAUTHENTICATED"
+	VALIDATIONFAILED  ErrorCode = "VALIDATION_FAILED"
 )
 
 // Valid indicates whether the value is a known member of the ErrorCode enum.
@@ -42,6 +45,10 @@ func (e ErrorCode) Valid() bool {
 	case INTERNAL:
 		return true
 	case NOTFOUND:
+		return true
+	case ORGREQUESTPENDING:
+		return true
+	case SLUGTAKEN:
 		return true
 	case UNAUTHENTICATED:
 		return true
@@ -133,6 +140,21 @@ type Organization struct {
 // OrganizationStatus Deleted organizations are not returned.
 type OrganizationStatus string
 
+// OrganizationCreate defines model for OrganizationCreate.
+type OrganizationCreate struct {
+	Description *string `json:"description,omitempty"`
+	DisplayName string  `json:"displayName"`
+	Slug        string  `json:"slug"`
+}
+
+// OrganizationList defines model for OrganizationList.
+type OrganizationList struct {
+	Items []Organization `json:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"nextCursor,omitempty"`
+}
+
 // OrganizationPatch defines model for OrganizationPatch.
 type OrganizationPatch struct {
 	Description *string `json:"description,omitempty"`
@@ -145,11 +167,28 @@ type OrgId = string
 // Error defines model for Error.
 type Error = ErrorResponse
 
+// ListOrganizationsParams defines parameters for ListOrganizations.
+type ListOrganizationsParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque; pass `nextCursor` from the previous page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// CreateOrganizationJSONRequestBody defines body for CreateOrganization for application/json ContentType.
+type CreateOrganizationJSONRequestBody = OrganizationCreate
+
 // PatchOrganizationJSONRequestBody defines body for PatchOrganization for application/json ContentType.
 type PatchOrganizationJSONRequestBody = OrganizationPatch
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// ListOrganizations Organizations the caller belongs to, including their own Pending and Rejected requests
+	// (GET /organizations)
+	ListOrganizations(w http.ResponseWriter, r *http.Request, params ListOrganizationsParams)
+	// CreateOrganization Request a new organization (PRODUCT-PLAN §4.2)
+	// (POST /organizations)
+	CreateOrganization(w http.ResponseWriter, r *http.Request)
 	// GetOrganization Organization detail (any member)
 	// (GET /organizations/{orgId})
 	GetOrganization(w http.ResponseWriter, r *http.Request, orgId OrgId)
@@ -166,6 +205,66 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// ListOrganizations operation middleware
+func (siw *ServerInterfaceWrapper) ListOrganizations(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListOrganizationsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOrganizations(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateOrganization operation middleware
+func (siw *ServerInterfaceWrapper) CreateOrganization(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateOrganization(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetOrganization operation middleware
 func (siw *ServerInterfaceWrapper) GetOrganization(w http.ResponseWriter, r *http.Request) {
@@ -339,6 +438,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/organizations", wrapper.ListOrganizations)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations", wrapper.CreateOrganization)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/organizations/{orgId}", wrapper.GetOrganization)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/organizations/{orgId}", wrapper.PatchOrganization)
 
@@ -346,6 +447,128 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 }
 
 type ErrorJSONResponse ErrorResponse
+
+type ListOrganizationsRequestObject struct {
+	Params ListOrganizationsParams
+}
+
+type ListOrganizationsResponseObject interface {
+	VisitListOrganizationsResponse(w http.ResponseWriter) error
+}
+
+type ListOrganizations200JSONResponse OrganizationList
+
+func (response ListOrganizations200JSONResponse) VisitListOrganizationsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListOrganizations400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListOrganizations400JSONResponse) VisitListOrganizationsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListOrganizations401JSONResponse ErrorResponse
+
+func (response ListOrganizations401JSONResponse) VisitListOrganizationsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateOrganizationRequestObject struct {
+	Body *CreateOrganizationJSONRequestBody
+}
+
+type CreateOrganizationResponseObject interface {
+	VisitCreateOrganizationResponse(w http.ResponseWriter) error
+}
+
+type CreateOrganization201ResponseHeaders struct {
+	Location string
+}
+
+type CreateOrganization201JSONResponse struct {
+	Body    Organization
+	Headers CreateOrganization201ResponseHeaders
+}
+
+func (response CreateOrganization201JSONResponse) VisitCreateOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Location", fmt.Sprint(response.Headers.Location))
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateOrganization400JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateOrganization400JSONResponse) VisitCreateOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateOrganization401JSONResponse ErrorResponse
+
+func (response CreateOrganization401JSONResponse) VisitCreateOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateOrganization409JSONResponse ErrorResponse
+
+func (response CreateOrganization409JSONResponse) VisitCreateOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
 
 type GetOrganizationRequestObject struct {
 	OrgId OrgId `json:"orgId"`
@@ -492,6 +715,12 @@ func (response PatchOrganization409JSONResponse) VisitPatchOrganizationResponse(
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// ListOrganizations Organizations the caller belongs to, including their own Pending and Rejected requests
+	// (GET /organizations)
+	ListOrganizations(ctx context.Context, request ListOrganizationsRequestObject) (ListOrganizationsResponseObject, error)
+	// CreateOrganization Request a new organization (PRODUCT-PLAN §4.2)
+	// (POST /organizations)
+	CreateOrganization(ctx context.Context, request CreateOrganizationRequestObject) (CreateOrganizationResponseObject, error)
 	// GetOrganization Organization detail (any member)
 	// (GET /organizations/{orgId})
 	GetOrganization(ctx context.Context, request GetOrganizationRequestObject) (GetOrganizationResponseObject, error)
@@ -537,6 +766,63 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// ListOrganizations operation middleware
+func (sh *strictHandler) ListOrganizations(w http.ResponseWriter, r *http.Request, params ListOrganizationsParams) {
+	var request ListOrganizationsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListOrganizations(ctx, request.(ListOrganizationsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListOrganizations")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListOrganizationsResponseObject); ok {
+		if err := validResponse.VisitListOrganizationsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateOrganization operation middleware
+func (sh *strictHandler) CreateOrganization(w http.ResponseWriter, r *http.Request) {
+	var request CreateOrganizationRequestObject
+
+	var body CreateOrganizationJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateOrganization(ctx, request.(CreateOrganizationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateOrganization")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateOrganizationResponseObject); ok {
+		if err := validResponse.VisitCreateOrganizationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // GetOrganization operation middleware
@@ -603,29 +889,38 @@ func (sh *strictHandler) PatchOrganization(w http.ResponseWriter, r *http.Reques
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,
