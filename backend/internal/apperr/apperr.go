@@ -17,6 +17,8 @@ const (
 	Forbidden       Code = "FORBIDDEN"
 	NotFound        Code = "NOT_FOUND"
 	Conflict        Code = "CONFLICT"
+	// MethodNotAllowed is the router's, not a service's: the path exists but not with this method.
+	MethodNotAllowed Code = "METHOD_NOT_ALLOWED"
 
 	// Specific conflicts the UI handles differently from a generic CONFLICT.
 	SlugTaken         Code = "SLUG_TAKEN"

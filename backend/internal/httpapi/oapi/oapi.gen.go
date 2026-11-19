@@ -27,6 +27,7 @@ const (
 	CONFLICT          ErrorCode = "CONFLICT"
 	FORBIDDEN         ErrorCode = "FORBIDDEN"
 	INTERNAL          ErrorCode = "INTERNAL"
+	METHODNOTALLOWED  ErrorCode = "METHOD_NOT_ALLOWED"
 	NOTFOUND          ErrorCode = "NOT_FOUND"
 	ORGREQUESTPENDING ErrorCode = "ORG_REQUEST_PENDING"
 	SLUGTAKEN         ErrorCode = "SLUG_TAKEN"
@@ -43,6 +44,8 @@ func (e ErrorCode) Valid() bool {
 		return true
 	case INTERNAL:
 		return true
+	case METHODNOTALLOWED:
+		return true
 	case NOTFOUND:
 		return true
 	case ORGREQUESTPENDING:
@@ -52,6 +55,33 @@ func (e ErrorCode) Valid() bool {
 	case UNAUTHENTICATED:
 		return true
 	case VALIDATIONFAILED:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OperationState.
+const (
+	OperationStateBlocked   OperationState = "Blocked"
+	OperationStateFailed    OperationState = "Failed"
+	OperationStatePending   OperationState = "Pending"
+	OperationStateRunning   OperationState = "Running"
+	OperationStateSucceeded OperationState = "Succeeded"
+)
+
+// Valid indicates whether the value is a known member of the OperationState enum.
+func (e OperationState) Valid() bool {
+	switch e {
+	case OperationStateBlocked:
+		return true
+	case OperationStateFailed:
+		return true
+	case OperationStatePending:
+		return true
+	case OperationStateRunning:
+		return true
+	case OperationStateSucceeded:
 		return true
 	default:
 		return false
@@ -81,19 +111,19 @@ func (e OrgRole) Valid() bool {
 
 // Defines values for OrganizationStatus.
 const (
-	Active   OrganizationStatus = "Active"
-	Pending  OrganizationStatus = "Pending"
-	Rejected OrganizationStatus = "Rejected"
+	OrganizationStatusActive   OrganizationStatus = "Active"
+	OrganizationStatusPending  OrganizationStatus = "Pending"
+	OrganizationStatusRejected OrganizationStatus = "Rejected"
 )
 
 // Valid indicates whether the value is a known member of the OrganizationStatus enum.
 func (e OrganizationStatus) Valid() bool {
 	switch e {
-	case Active:
+	case OrganizationStatusActive:
 		return true
-	case Pending:
+	case OrganizationStatusPending:
 		return true
-	case Rejected:
+	case OrganizationStatusRejected:
 		return true
 	default:
 		return false
@@ -125,6 +155,42 @@ type Me struct {
 	// IsPlatformAdmin The Keycloak realm role `platform-admin`; every admin endpoint checks it again server-side.
 	IsPlatformAdmin bool `json:"isPlatformAdmin"`
 }
+
+// Operation defines model for Operation.
+type Operation struct {
+	// CorrelationId Request id of the call that started it, for support
+	CorrelationId string    `json:"correlationId"`
+	CreatedAt     time.Time `json:"createdAt"`
+
+	// CreatedBy User id; absent when the platform started it
+	CreatedBy *string `json:"createdBy,omitempty"`
+
+	// ErrorCode Set when Failed or Blocked, e.g. APPLY_FAILED
+	ErrorCode    *string `json:"errorCode,omitempty"`
+	ErrorMessage *string `json:"errorMessage,omitempty"`
+
+	// FinishedAt Set once Succeeded, Failed or Blocked
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+	Id         string     `json:"id"`
+	OrgId      string     `json:"orgId"`
+	Progress   int        `json:"progress"`
+	ResourceId string     `json:"resourceId"`
+
+	// ResourceType e.g. Workspace
+	ResourceType string `json:"resourceType"`
+
+	// State Pending: waiting to reach the cluster. Running: the cluster is working on it.
+	// Failed can be retried; Blocked needs a Platform Admin.
+	State OperationState `json:"state"`
+
+	// Type e.g. workspace.create
+	Type      string    `json:"type"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// OperationState Pending: waiting to reach the cluster. Running: the cluster is working on it.
+// Failed can be retried; Blocked needs a Platform Admin.
+type OperationState string
 
 // OrgRole defines model for OrgRole.
 type OrgRole string
@@ -172,6 +238,9 @@ type OrganizationPatch struct {
 	DisplayName *string `json:"displayName,omitempty"`
 }
 
+// OperationId defines model for operationId.
+type OperationId = string
+
 // OrgId defines model for orgId.
 type OrgId = string
 
@@ -197,6 +266,12 @@ type ServerInterface interface {
 	// GetMe The signed-in user
 	// (GET /me)
 	GetMe(w http.ResponseWriter, r *http.Request)
+	// GetOperation Progress of an asynchronous change (any member of its organization)
+	// (GET /operations/{operationId})
+	GetOperation(w http.ResponseWriter, r *http.Request, operationId OperationId)
+	// RetryOperation Retry a Failed operation (OrgOwner or OrgAdmin)
+	// (POST /operations/{operationId}:retry)
+	RetryOperation(w http.ResponseWriter, r *http.Request, operationId OperationId)
 	// ListOrganizations Organizations the caller belongs to, including their own Pending and Rejected requests
 	// (GET /organizations)
 	ListOrganizations(w http.ResponseWriter, r *http.Request, params ListOrganizationsParams)
@@ -218,6 +293,18 @@ type Unimplemented struct{}
 // GetMe The signed-in user
 // (GET /me)
 func (_ Unimplemented) GetMe(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetOperation Progress of an asynchronous change (any member of its organization)
+// (GET /operations/{operationId})
+func (_ Unimplemented) GetOperation(w http.ResponseWriter, r *http.Request, operationId OperationId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RetryOperation Retry a Failed operation (OrgOwner or OrgAdmin)
+// (POST /operations/{operationId}:retry)
+func (_ Unimplemented) RetryOperation(w http.ResponseWriter, r *http.Request, operationId OperationId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -259,6 +346,58 @@ func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMe(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOperation operation middleware
+func (siw *ServerInterfaceWrapper) GetOperation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operationId" -------------
+	var operationId OperationId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operationId", chi.URLParam(r, "operationId"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOperation(w, r, operationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RetryOperation operation middleware
+func (siw *ServerInterfaceWrapper) RetryOperation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operationId" -------------
+	var operationId OperationId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operationId", chi.URLParam(r, "operationId"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RetryOperation(w, r, operationId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -508,6 +647,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	r.Group(func(r chi.Router) {
 		r.Patch(options.BaseURL+"/organizations/{orgId}", wrapper.PatchOrganization)
 	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/operations/{operationId}", wrapper.GetOperation)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/operations/{operationId}:retry", wrapper.RetryOperation)
+	})
 
 	return r
 }
@@ -545,6 +690,134 @@ func (response GetMe401JSONResponse) VisitGetMeResponse(w http.ResponseWriter) e
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOperationRequestObject struct {
+	OperationId OperationId `json:"operationId"`
+}
+
+type GetOperationResponseObject interface {
+	VisitGetOperationResponse(w http.ResponseWriter) error
+}
+
+type GetOperation200JSONResponse Operation
+
+func (response GetOperation200JSONResponse) VisitGetOperationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOperation401JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetOperation401JSONResponse) VisitGetOperationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOperation404JSONResponse ErrorResponse
+
+func (response GetOperation404JSONResponse) VisitGetOperationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RetryOperationRequestObject struct {
+	OperationId OperationId `json:"operationId"`
+}
+
+type RetryOperationResponseObject interface {
+	VisitRetryOperationResponse(w http.ResponseWriter) error
+}
+
+type RetryOperation200JSONResponse Operation
+
+func (response RetryOperation200JSONResponse) VisitRetryOperationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RetryOperation401JSONResponse struct{ ErrorJSONResponse }
+
+func (response RetryOperation401JSONResponse) VisitRetryOperationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RetryOperation403JSONResponse ErrorResponse
+
+func (response RetryOperation403JSONResponse) VisitRetryOperationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RetryOperation404JSONResponse ErrorResponse
+
+func (response RetryOperation404JSONResponse) VisitRetryOperationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RetryOperation409JSONResponse ErrorResponse
+
+func (response RetryOperation409JSONResponse) VisitRetryOperationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -819,6 +1092,12 @@ type StrictServerInterface interface {
 	// GetMe The signed-in user
 	// (GET /me)
 	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
+	// GetOperation Progress of an asynchronous change (any member of its organization)
+	// (GET /operations/{operationId})
+	GetOperation(ctx context.Context, request GetOperationRequestObject) (GetOperationResponseObject, error)
+	// RetryOperation Retry a Failed operation (OrgOwner or OrgAdmin)
+	// (POST /operations/{operationId}:retry)
+	RetryOperation(ctx context.Context, request RetryOperationRequestObject) (RetryOperationResponseObject, error)
 	// ListOrganizations Organizations the caller belongs to, including their own Pending and Rejected requests
 	// (GET /organizations)
 	ListOrganizations(ctx context.Context, request ListOrganizationsRequestObject) (ListOrganizationsResponseObject, error)
@@ -889,6 +1168,58 @@ func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetMeResponseObject); ok {
 		if err := validResponse.VisitGetMeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetOperation operation middleware
+func (sh *strictHandler) GetOperation(w http.ResponseWriter, r *http.Request, operationId OperationId) {
+	var request GetOperationRequestObject
+
+	request.OperationId = operationId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetOperation(ctx, request.(GetOperationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetOperation")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetOperationResponseObject); ok {
+		if err := validResponse.VisitGetOperationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RetryOperation operation middleware
+func (sh *strictHandler) RetryOperation(w http.ResponseWriter, r *http.Request, operationId OperationId) {
+	var request RetryOperationRequestObject
+
+	request.OperationId = operationId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RetryOperation(ctx, request.(RetryOperationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RetryOperation")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RetryOperationResponseObject); ok {
+		if err := validResponse.VisitRetryOperationResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -1017,42 +1348,50 @@ func (sh *strictHandler) PatchOrganization(w http.ResponseWriter, r *http.Reques
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"AP//",
+	"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",
+	"nq654qRL2jRj7bsTW23/OwAA//8=",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

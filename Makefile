@@ -30,9 +30,11 @@ migrate-down: ## Roll back the last migration
 migrate-status: ## Show which migrations are applied
 	cd $(BACKEND) && go run ./cmd/tenantry-migrate status
 
-.PHONY: run-api
+.PHONY: run-api run-worker
 run-api: ## Run the Platform API locally
 	cd $(BACKEND) && go run ./cmd/tenantry-api
+run-worker: ## Run the outbox worker locally (logs events; no cluster yet)
+	cd $(BACKEND) && go run ./cmd/tenantry-worker
 
 .PHONY: generate build fmt vet lint test
 generate: ## Regenerate code from openapi/tenantry.v1.yaml (commit the result)

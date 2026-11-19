@@ -1,0 +1,140 @@
+// Package operation tracks asynchronous work a user can follow, such as
+// creating a Workspace: Pending until the change reaches the cluster, Running
+// while the controller works, then Succeeded, Failed or Blocked
+// (IMPLEMENTATION-PLAN M2 item 6).
+//
+// The functions that take a *store.Queries run inside the caller's
+// transaction, so an operation is written together with the change it tracks.
+package operation
+
+import (
+	"context"
+	"errors"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/thaihoc1310/tenantry/backend/internal/apperr"
+	"github.com/thaihoc1310/tenantry/backend/internal/id"
+	"github.com/thaihoc1310/tenantry/backend/internal/org"
+	"github.com/thaihoc1310/tenantry/backend/internal/store"
+)
+
+type State string
+
+const (
+	Pending   State = "Pending"   // waiting for its outbox events to reach the cluster
+	Running   State = "Running"   // delivered; the controller is working on it
+	Succeeded State = "Succeeded" // the controller reports the change done
+	Failed    State = "Failed"    // delivery kept failing, or the controller gave up; can be retried
+	Blocked   State = "Blocked"   // needs a Platform Admin, e.g. a delete stuck on a finalizer
+)
+
+// cameFrom lists, for each state, the states an operation may move to it
+// from. Anything else is refused by MoveOperation's WHERE clause.
+var cameFrom = map[State][]State{
+	Running:   {Pending, Failed}, // Failed: a delivery still retrying in the background got through
+	Succeeded: {Running},
+	Failed:    {Pending, Running},
+	Blocked:   {Running},
+	Pending:   {Failed}, // user retry
+}
+
+// ApplyFailed is the error code of an operation whose events could not be
+// delivered to the cluster.
+const ApplyFailed = "APPLY_FAILED"
+
+var (
+	ErrNotFound    = apperr.New(apperr.NotFound, "operation not found")
+	ErrForbidden   = apperr.New(apperr.Forbidden, "requires OrgOwner or OrgAdmin")
+	ErrNotRetrying = apperr.New(apperr.Conflict, "only a Failed operation can be retried")
+)
+
+// New describes an operation to start.
+type New struct {
+	OrgID         string
+	ResourceType  string // e.g. Workspace
+	ResourceID    string
+	Type          string // e.g. workspace.create
+	CorrelationID string // request id of the call that started it
+	CreatedBy     string // user id; empty when the platform started it
+}
+
+// Create starts an operation in Pending.
+func Create(ctx context.Context, q *store.Queries, n New) (store.Operation, error) {
+	arg := store.CreateOperationParams{
+		ID: id.New(id.Operation), OrgID: n.OrgID, ResourceType: n.ResourceType, ResourceID: n.ResourceID,
+		Type: n.Type, CorrelationID: n.CorrelationID,
+	}
+	if n.CreatedBy != "" {
+		arg.CreatedBy = &n.CreatedBy
+	}
+	return q.CreateOperation(ctx, arg)
+}
+
+// Move changes the state of operation id, clearing the error unless one is
+// given. ok is false when the transition is not allowed from the current state.
+func Move(ctx context.Context, q *store.Queries, opID string, to State, errCode, errMsg string) (op store.Operation, ok bool, err error) {
+	from := make([]string, 0, len(cameFrom[to]))
+	for _, s := range cameFrom[to] {
+		from = append(from, string(s))
+	}
+	op, err = q.MoveOperation(ctx, store.MoveOperationParams{
+		ID: opID, ToState: string(to), FromStates: from, ErrorCode: errCode, ErrorMessage: errMsg,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return store.Operation{}, false, nil
+	}
+	return op, err == nil, err
+}
+
+// Service serves operations to users.
+type Service struct {
+	db *pgxpool.Pool
+	q  *store.Queries
+}
+
+func NewService(db *pgxpool.Pool) *Service { return &Service{db: db, q: store.New(db)} }
+
+// Get returns an operation to any member of its organization; others get ErrNotFound.
+func (s *Service) Get(ctx context.Context, userID, opID string) (store.Operation, error) {
+	row, err := s.q.GetOperationForMember(ctx, store.GetOperationForMemberParams{ID: opID, UserID: userID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return store.Operation{}, ErrNotFound
+	}
+	return row.Operation, err
+}
+
+// Retry puts a Failed operation back to Pending and has its undelivered events
+// sent again at once (OrgOwner or OrgAdmin).
+//
+// A failure the controller reported has no undelivered event left; the
+// Workspace service will re-enqueue the apply for that case when it exists (M4).
+func (s *Service) Retry(ctx context.Context, userID, opID string) (store.Operation, error) {
+	row, err := s.q.GetOperationForMember(ctx, store.GetOperationForMemberParams{ID: opID, UserID: userID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return store.Operation{}, ErrNotFound
+	}
+	if err != nil {
+		return store.Operation{}, err
+	}
+	if r := org.Role(row.Role); r != org.RoleOwner && r != org.RoleAdmin {
+		return store.Operation{}, ErrForbidden
+	}
+
+	var op store.Operation
+	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		q := s.q.WithTx(tx)
+		moved, ok, err := Move(ctx, q, opID, Pending, "", "")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrNotRetrying
+		}
+		op = moved
+		_, err = q.ResetOperationEvents(ctx, opID)
+		return err
+	})
+	return op, err
+}

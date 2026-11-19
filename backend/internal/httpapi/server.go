@@ -18,6 +18,7 @@ import (
 
 	"github.com/thaihoc1310/tenantry/backend/internal/apperr"
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi/oapi"
+	"github.com/thaihoc1310/tenantry/backend/internal/operation"
 	"github.com/thaihoc1310/tenantry/backend/internal/org"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
 	"github.com/thaihoc1310/tenantry/backend/internal/user"
@@ -41,6 +42,7 @@ type Options struct {
 
 type server struct {
 	orgs *org.Service
+	ops  *operation.Service
 }
 
 // Register mounts every /api/v1 operation on r.
@@ -48,17 +50,25 @@ func Register(r chi.Router, db *pgxpool.Pool, opts Options) {
 	badRequest := func(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, apperr.New(apperr.Validation, err.Error()))
 	}
-	api := oapi.NewStrictHandlerWithOptions(server{orgs: org.NewService(db)}, nil, oapi.StrictHTTPServerOptions{
+	api := oapi.NewStrictHandlerWithOptions(server{orgs: org.NewService(db), ops: operation.NewService(db)}, nil, oapi.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: badRequest,
 		// Handlers return errors as-is; writeError turns them into responses.
 		ResponseErrorHandlerFunc: writeError,
 	})
-	oapi.HandlerWithOptions(api, oapi.ChiServerOptions{
-		BaseURL:    "/api/v1",
-		BaseRouter: r,
-		// The last entry runs first: an anonymous caller gets 401 before any 400.
-		Middlewares:      []oapi.MiddlewareFunc{validate(), authenticate(user.NewService(store.New(db)), opts)},
-		ErrorHandlerFunc: badRequest,
+	r.Route("/api/v1", func(v1 chi.Router) {
+		// Unrouted requests answer with an ErrorResponse like everything else under /api/v1.
+		v1.NotFound(func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, r, apperr.New(apperr.NotFound, "no such endpoint"))
+		})
+		v1.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, r, apperr.New(apperr.MethodNotAllowed, r.Method+" is not supported here"))
+		})
+		oapi.HandlerWithOptions(api, oapi.ChiServerOptions{
+			BaseRouter: v1,
+			// The last entry runs first: an anonymous caller gets 401 before any 400.
+			Middlewares:      []oapi.MiddlewareFunc{validate(), authenticate(user.NewService(store.New(db)), opts)},
+			ErrorHandlerFunc: badRequest,
+		})
 	})
 }
 
@@ -167,6 +177,43 @@ func toOrganization(o org.Org) oapi.Organization {
 		CreatedAt:   o.CreatedAt,
 		MyRole:      &r,
 	}
+}
+
+func (s server) GetOperation(ctx context.Context, req oapi.GetOperationRequestObject) (oapi.GetOperationResponseObject, error) {
+	op, err := s.ops.Get(ctx, userID(ctx), req.OperationId)
+	if err != nil {
+		return nil, err
+	}
+	return oapi.GetOperation200JSONResponse(toOperation(op)), nil
+}
+
+func (s server) RetryOperation(ctx context.Context, req oapi.RetryOperationRequestObject) (oapi.RetryOperationResponseObject, error) {
+	op, err := s.ops.Retry(ctx, userID(ctx), req.OperationId)
+	if err != nil {
+		return nil, err
+	}
+	return oapi.RetryOperation200JSONResponse(toOperation(op)), nil
+}
+
+func toOperation(op store.Operation) oapi.Operation {
+	o := oapi.Operation{
+		Id:            op.ID,
+		OrgId:         op.OrgID,
+		ResourceType:  op.ResourceType,
+		ResourceId:    op.ResourceID,
+		Type:          op.Type,
+		State:         oapi.OperationState(op.State),
+		Progress:      int(op.Progress),
+		CorrelationId: op.CorrelationID,
+		CreatedBy:     op.CreatedBy,
+		CreatedAt:     op.CreatedAt,
+		UpdatedAt:     op.UpdatedAt,
+		FinishedAt:    op.FinishedAt,
+	}
+	if op.ErrorCode != "" {
+		o.ErrorCode, o.ErrorMessage = &op.ErrorCode, &op.ErrorMessage
+	}
+	return o
 }
 
 // --- context: request id and caller ---

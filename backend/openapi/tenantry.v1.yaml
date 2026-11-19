@@ -124,6 +124,44 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
 
+  /operations/{operationId}:
+    parameters:
+      - $ref: "#/components/parameters/operationId"
+    get:
+      operationId: getOperation
+      summary: Progress of an asynchronous change (any member of its organization)
+      description: A non-member gets 404. Poll until `state` is Succeeded, Failed or Blocked.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /operations/{operationId}:retry:
+    parameters:
+      - $ref: "#/components/parameters/operationId"
+    post:
+      operationId: retryOperation
+      summary: Retry a Failed operation (OrgOwner or OrgAdmin)
+      description: The operation goes back to Pending and its undelivered changes are sent again at once.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: The operation is not Failed (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
 components:
   parameters:
     orgId:
@@ -133,6 +171,12 @@ components:
       description: |
         Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
         characters), so the two can never be confused.
+      schema: { type: string }
+
+    operationId:
+      name: operationId
+      in: path
+      required: true
       schema: { type: string }
 
   responses:
@@ -152,6 +196,7 @@ components:
         - FORBIDDEN
         - NOT_FOUND
         - CONFLICT
+        - METHOD_NOT_ALLOWED
         - SLUG_TAKEN
         - ORG_REQUEST_PENDING
         - INTERNAL
@@ -178,6 +223,30 @@ components:
         isPlatformAdmin:
           type: boolean
           description: The Keycloak realm role `platform-admin`; every admin endpoint checks it again server-side.
+
+    Operation:
+      type: object
+      required: [id, orgId, resourceType, resourceId, type, state, progress, correlationId, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        orgId: { type: string }
+        resourceType: { type: string, description: e.g. Workspace }
+        resourceId: { type: string }
+        type: { type: string, description: e.g. workspace.create }
+        state:
+          type: string
+          enum: [Pending, Running, Succeeded, Failed, Blocked]
+          description: |
+            Pending: waiting to reach the cluster. Running: the cluster is working on it.
+            Failed can be retried; Blocked needs a Platform Admin.
+        progress: { type: integer, minimum: 0, maximum: 100 }
+        errorCode: { type: string, description: "Set when Failed or Blocked, e.g. APPLY_FAILED" }
+        errorMessage: { type: string }
+        correlationId: { type: string, description: "Request id of the call that started it, for support" }
+        createdBy: { type: string, description: User id; absent when the platform started it }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time, description: "Set once Succeeded, Failed or Blocked" }
 
     OrgRole:
       type: string

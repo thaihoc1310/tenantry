@@ -11,11 +11,12 @@ import (
 
 // statusOf is the only place an error code meets an HTTP status.
 var statusOf = map[apperr.Code]int{
-	apperr.Validation:      http.StatusBadRequest,
-	apperr.Unauthenticated: http.StatusUnauthorized,
-	apperr.Forbidden:       http.StatusForbidden,
-	apperr.NotFound:        http.StatusNotFound,
-	apperr.Conflict:        http.StatusConflict,
+	apperr.Validation:       http.StatusBadRequest,
+	apperr.Unauthenticated:  http.StatusUnauthorized,
+	apperr.Forbidden:        http.StatusForbidden,
+	apperr.NotFound:         http.StatusNotFound,
+	apperr.Conflict:         http.StatusConflict,
+	apperr.MethodNotAllowed: http.StatusMethodNotAllowed,
 
 	apperr.SlugTaken:         http.StatusConflict,
 	apperr.OrgRequestPending: http.StatusConflict,

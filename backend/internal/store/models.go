@@ -8,6 +8,23 @@ import (
 	"time"
 )
 
+type Operation struct {
+	ID            string
+	OrgID         string
+	ResourceType  string
+	ResourceID    string
+	Type          string
+	State         string
+	Progress      int16
+	ErrorCode     string
+	ErrorMessage  string
+	CorrelationID string
+	CreatedBy     *string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	FinishedAt    *time.Time
+}
+
 type Organization struct {
 	ID          string
 	Slug        string
@@ -26,6 +43,21 @@ type OrganizationMember struct {
 	Role      string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+type OutboxEvent struct {
+	ID              int64
+	OperationID     string
+	OrderingKey     string
+	TargetClusterID string
+	Type            string
+	Payload         []byte
+	Version         int64
+	Attempts        int32
+	NextAttemptAt   time.Time
+	LastError       string
+	ProcessedAt     *time.Time
+	CreatedAt       time.Time
 }
 
 type User struct {
