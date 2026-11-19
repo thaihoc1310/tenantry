@@ -14,3 +14,13 @@ WHERE (o.id = @id_or_slug OR o.slug = @id_or_slug)
   AND o.status <> 'Deleted'
 ORDER BY o.status = 'Rejected', o.created_at DESC
 LIMIT 1;
+
+-- name: UpdateOrganization :one
+-- A NULL argument keeps the column. The status guard closes the gap between
+-- the caller's read and this write: a request rejected in between stays untouched.
+UPDATE organizations
+SET display_name = COALESCE(sqlc.narg(display_name), display_name),
+    description  = COALESCE(sqlc.narg(description), description),
+    updated_at   = now()
+WHERE id = @id AND status IN ('Pending', 'Active')
+RETURNING *;

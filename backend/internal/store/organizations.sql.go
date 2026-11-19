@@ -62,3 +62,37 @@ func (q *Queries) GetOrganizationForMember(ctx context.Context, arg GetOrganizat
 	)
 	return i, err
 }
+
+const updateOrganization = `-- name: UpdateOrganization :one
+UPDATE organizations
+SET display_name = COALESCE($1, display_name),
+    description  = COALESCE($2, description),
+    updated_at   = now()
+WHERE id = $3 AND status IN ('Pending', 'Active')
+RETURNING id, slug, display_name, description, owner_user_id, status, review_note, created_at, updated_at
+`
+
+type UpdateOrganizationParams struct {
+	DisplayName *string
+	Description *string
+	ID          string
+}
+
+// A NULL argument keeps the column. The status guard closes the gap between
+// the caller's read and this write: a request rejected in between stays untouched.
+func (q *Queries) UpdateOrganization(ctx context.Context, arg UpdateOrganizationParams) (Organization, error) {
+	row := q.db.QueryRow(ctx, updateOrganization, arg.DisplayName, arg.Description, arg.ID)
+	var i Organization
+	err := row.Scan(
+		&i.ID,
+		&i.Slug,
+		&i.DisplayName,
+		&i.Description,
+		&i.OwnerUserID,
+		&i.Status,
+		&i.ReviewNote,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

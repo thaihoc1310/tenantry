@@ -6,14 +6,17 @@ package httpapi
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
+	"strings"
 
+	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/jackc/pgx/v5"
+	validator "github.com/oapi-codegen/nethttp-middleware"
 
+	"github.com/thaihoc1310/tenantry/backend/internal/apperr"
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi/oapi"
+	"github.com/thaihoc1310/tenantry/backend/internal/org"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
 )
 
@@ -26,51 +29,75 @@ type Options struct {
 }
 
 type server struct {
-	q *store.Queries
+	orgs *org.Service
 }
 
 // Register mounts every /api/v1 operation on mux.
 func Register(mux *http.ServeMux, db store.DBTX, opts Options) {
 	q := store.New(db)
-	api := oapi.NewStrictHandlerWithOptions(server{q: q}, nil, oapi.StrictHTTPServerOptions{
-		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			writeError(w, r, http.StatusBadRequest, oapi.VALIDATIONFAILED, err.Error())
-		},
-		ResponseErrorHandlerFunc: internalError,
+	badRequest := func(w http.ResponseWriter, r *http.Request, err error) {
+		writeError(w, r, apperr.New(apperr.Validation, err.Error()))
+	}
+	api := oapi.NewStrictHandlerWithOptions(server{orgs: org.NewService(q)}, nil, oapi.StrictHTTPServerOptions{
+		RequestErrorHandlerFunc: badRequest,
+		// Handlers return errors as-is; writeError turns them into responses.
+		ResponseErrorHandlerFunc: writeError,
 	})
 	oapi.HandlerWithOptions(api, oapi.StdHTTPServerOptions{
-		BaseURL:     "/api/v1",
-		BaseRouter:  mux,
-		Middlewares: []oapi.MiddlewareFunc{authenticate(q, opts)},
-		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			writeError(w, r, http.StatusBadRequest, oapi.VALIDATIONFAILED, err.Error())
+		BaseURL:    "/api/v1",
+		BaseRouter: mux,
+		// The last entry runs first: an anonymous caller gets 401 before any 400.
+		Middlewares:      []oapi.MiddlewareFunc{validate(), authenticate(q, opts)},
+		ErrorHandlerFunc: badRequest,
+	})
+}
+
+// validate checks each request against the embedded OpenAPI document
+// (maxLength, unknown fields, ...): the strict server only decodes JSON.
+func validate() oapi.MiddlewareFunc {
+	spec, err := oapi.GetSpec()
+	if err != nil {
+		panic(err) // the embedded spec is covered by TestEmbeddedSpecIsValid
+	}
+	return validator.OapiRequestValidatorWithOptions(spec, &validator.Options{
+		DoNotValidateServers: true, // match on the path only, not the Host header
+		Prefix:               "/api/v1",
+		ErrorHandlerWithOpts: func(_ context.Context, err error, w http.ResponseWriter, r *http.Request, _ validator.ErrorHandlerOpts) {
+			// A schema error would otherwise print the whole schema and the
+			// submitted value; keep the reason and point at the field instead.
+			var se *openapi3.SchemaError
+			if !errors.As(err, &se) {
+				writeError(w, r, apperr.New(apperr.Validation, err.Error()))
+			} else if field := strings.Join(se.JSONPointer(), "."); field != "" {
+				writeError(w, r, apperr.Invalid(field, se.Reason))
+			} else {
+				writeError(w, r, apperr.New(apperr.Validation, se.Reason))
+			}
 		},
 	})
 }
 
 func (s server) GetOrganization(ctx context.Context, req oapi.GetOrganizationRequestObject) (oapi.GetOrganizationResponseObject, error) {
-	row, err := s.q.GetOrganizationForMember(ctx, store.GetOrganizationForMemberParams{
-		UserID:   userID(ctx),
-		IDOrSlug: req.OrgId,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return oapi.GetOrganization404JSONResponse(errorBody(ctx, oapi.NOTFOUND, "organization not found")), nil
-	}
+	o, err := s.orgs.Get(ctx, userID(ctx), req.OrgId)
 	if err != nil {
 		return nil, err
 	}
-	return oapi.GetOrganization200JSONResponse(toOrganization(row.Organization, row.Role)), nil
+	return oapi.GetOrganization200JSONResponse(toOrganization(o)), nil
 }
 
-// ponytail: PATCH stays in the contract but lands in the next step; until then it answers 501.
-func (s server) PatchOrganization(context.Context, oapi.PatchOrganizationRequestObject) (oapi.PatchOrganizationResponseObject, error) {
-	return nil, errNotImplemented
+func (s server) PatchOrganization(ctx context.Context, req oapi.PatchOrganizationRequestObject) (oapi.PatchOrganizationResponseObject, error) {
+	o, err := s.orgs.Update(ctx, userID(ctx), req.OrgId, org.Patch{
+		DisplayName: req.Body.DisplayName,
+		Description: req.Body.Description,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return oapi.PatchOrganization200JSONResponse(toOrganization(o)), nil
 }
 
-var errNotImplemented = errors.New("not implemented yet")
-
-func toOrganization(o store.Organization, role string) oapi.Organization {
-	r := oapi.OrgRole(role)
+func toOrganization(o org.Org) oapi.Organization {
+	r := oapi.OrgRole(o.Role)
 	return oapi.Organization{
 		Id:          o.ID,
 		Slug:        o.Slug,
@@ -116,40 +143,17 @@ func authenticate(q *store.Queries, opts Options) oapi.MiddlewareFunc {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id := r.Header.Get(DevUserHeader)
 			if !opts.DevAuth || id == "" {
-				writeError(w, r, http.StatusUnauthorized, oapi.UNAUTHENTICATED, "login required")
+				writeError(w, r, apperr.New(apperr.Unauthenticated, "login required"))
 				return
 			}
 			if _, err := q.GetActiveUserID(r.Context(), id); err != nil {
-				if !errors.Is(err, pgx.ErrNoRows) {
-					internalError(w, r, err)
-					return
+				if errors.Is(err, pgx.ErrNoRows) {
+					err = apperr.New(apperr.Unauthenticated, "unknown or disabled user")
 				}
-				writeError(w, r, http.StatusUnauthorized, oapi.UNAUTHENTICATED, "unknown or disabled user")
+				writeError(w, r, err)
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userIDKey, id)))
 		})
 	}
-}
-
-// --- error bodies: every error is an ErrorResponse ---
-
-func errorBody(ctx context.Context, code oapi.ErrorCode, msg string) oapi.ErrorResponse {
-	return oapi.ErrorResponse{Code: code, Message: msg, RequestId: requestID(ctx)}
-}
-
-func writeError(w http.ResponseWriter, r *http.Request, status int, code oapi.ErrorCode, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(errorBody(r.Context(), code, msg))
-}
-
-// internalError logs the cause and hides it from the client.
-func internalError(w http.ResponseWriter, r *http.Request, err error) {
-	if errors.Is(err, errNotImplemented) {
-		writeError(w, r, http.StatusNotImplemented, oapi.INTERNAL, err.Error())
-		return
-	}
-	slog.ErrorContext(r.Context(), "request failed", "err", err, "path", r.URL.Path, "request_id", requestID(r.Context()))
-	writeError(w, r, http.StatusInternalServerError, oapi.INTERNAL, "internal error")
 }

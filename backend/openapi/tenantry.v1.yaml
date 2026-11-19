@@ -29,6 +29,9 @@ paths:
     patch:
       operationId: patchOrganization
       summary: Update display name or description (OrgOwner or OrgAdmin). Slug is immutable.
+      description: |
+        Fields left out keep their value; an empty body changes nothing.
+        Values are trimmed; a blank displayName is rejected.
       requestBody:
         required: true
         content:
@@ -44,6 +47,11 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: The organization request was rejected and is read-only (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
 
 components:
   parameters:
@@ -72,6 +80,7 @@ components:
         - UNAUTHENTICATED
         - FORBIDDEN
         - NOT_FOUND
+        - CONFLICT
         - INTERNAL
 
     ErrorResponse:
