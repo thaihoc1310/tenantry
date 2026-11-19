@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	validator "github.com/oapi-codegen/nethttp-middleware"
 
@@ -42,8 +43,8 @@ type server struct {
 	orgs *org.Service
 }
 
-// Register mounts every /api/v1 operation on mux.
-func Register(mux *http.ServeMux, db *pgxpool.Pool, opts Options) {
+// Register mounts every /api/v1 operation on r.
+func Register(r chi.Router, db *pgxpool.Pool, opts Options) {
 	badRequest := func(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, apperr.New(apperr.Validation, err.Error()))
 	}
@@ -52,9 +53,9 @@ func Register(mux *http.ServeMux, db *pgxpool.Pool, opts Options) {
 		// Handlers return errors as-is; writeError turns them into responses.
 		ResponseErrorHandlerFunc: writeError,
 	})
-	oapi.HandlerWithOptions(api, oapi.StdHTTPServerOptions{
+	oapi.HandlerWithOptions(api, oapi.ChiServerOptions{
 		BaseURL:    "/api/v1",
-		BaseRouter: mux,
+		BaseRouter: r,
 		// The last entry runs first: an anonymous caller gets 401 before any 400.
 		Middlewares:      []oapi.MiddlewareFunc{validate(), authenticate(user.NewService(store.New(db)), opts)},
 		ErrorHandlerFunc: badRequest,

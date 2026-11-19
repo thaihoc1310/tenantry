@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi"
@@ -64,10 +65,10 @@ func main() {
 }
 
 func routes(db *pgxpool.Pool, opts httpapi.Options) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+	r := chi.NewRouter()
+	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
-	httpapi.Register(mux, db, opts)
-	return httpapi.WithRequestID(mux)
+	httpapi.Register(r, db, opts)
+	return httpapi.WithRequestID(r)
 }

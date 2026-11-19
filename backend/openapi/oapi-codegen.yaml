@@ -1,9 +1,10 @@
-# Handlers implement the generated StrictServerInterface on a net/http ServeMux.
+# Handlers implement the generated StrictServerInterface on a chi router: unlike
+# net/http's ServeMux, chi matches action paths such as /operations/{id}:retry.
 # The embedded spec feeds the request validator: the strict server only decodes JSON.
 package: oapi
 output: oapi.gen.go
 generate:
-  std-http-server: true
+  chi-server: true
   strict-server: true
   models: true
   embedded-spec: true

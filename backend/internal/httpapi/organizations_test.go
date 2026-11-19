@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi"
@@ -69,9 +70,9 @@ func newAPI(t *testing.T, opts httpapi.Options) (http.Handler, *pgxpool.Pool) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	mux := http.NewServeMux()
-	httpapi.Register(mux, pool, opts)
-	return httpapi.WithRequestID(mux), pool
+	r := chi.NewRouter()
+	httpapi.Register(r, pool, opts)
+	return httpapi.WithRequestID(r), pool
 }
 
 func call(h http.Handler, method, path, user string) *httptest.ResponseRecorder {
