@@ -129,8 +129,8 @@ paths:
       - $ref: "#/components/parameters/operationId"
     get:
       operationId: getOperation
-      summary: Progress of an asynchronous change (any member of its organization)
-      description: A non-member gets 404. Poll until `state` is Succeeded, Failed or Blocked.
+      summary: Progress of an asynchronous change (any member of its organization, or a Platform Admin)
+      description: Anyone else gets 404. Poll until `state` is Succeeded, Failed or Blocked.
       responses:
         "200":
           description: OK
@@ -145,7 +145,7 @@ paths:
       - $ref: "#/components/parameters/operationId"
     post:
       operationId: retryOperation
-      summary: Retry a Failed operation (OrgOwner or OrgAdmin)
+      summary: Retry a Failed operation (OrgOwner, OrgAdmin or Platform Admin)
       description: The operation goes back to Pending and its undelivered changes are sent again at once.
       responses:
         "200":

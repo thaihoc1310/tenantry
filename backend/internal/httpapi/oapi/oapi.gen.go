@@ -266,10 +266,10 @@ type ServerInterface interface {
 	// GetMe The signed-in user
 	// (GET /me)
 	GetMe(w http.ResponseWriter, r *http.Request)
-	// GetOperation Progress of an asynchronous change (any member of its organization)
+	// GetOperation Progress of an asynchronous change (any member of its organization, or a Platform Admin)
 	// (GET /operations/{operationId})
 	GetOperation(w http.ResponseWriter, r *http.Request, operationId OperationId)
-	// RetryOperation Retry a Failed operation (OrgOwner or OrgAdmin)
+	// RetryOperation Retry a Failed operation (OrgOwner, OrgAdmin or Platform Admin)
 	// (POST /operations/{operationId}:retry)
 	RetryOperation(w http.ResponseWriter, r *http.Request, operationId OperationId)
 	// ListOrganizations Organizations the caller belongs to, including their own Pending and Rejected requests
@@ -296,13 +296,13 @@ func (_ Unimplemented) GetMe(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// GetOperation Progress of an asynchronous change (any member of its organization)
+// GetOperation Progress of an asynchronous change (any member of its organization, or a Platform Admin)
 // (GET /operations/{operationId})
 func (_ Unimplemented) GetOperation(w http.ResponseWriter, r *http.Request, operationId OperationId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// RetryOperation Retry a Failed operation (OrgOwner or OrgAdmin)
+// RetryOperation Retry a Failed operation (OrgOwner, OrgAdmin or Platform Admin)
 // (POST /operations/{operationId}:retry)
 func (_ Unimplemented) RetryOperation(w http.ResponseWriter, r *http.Request, operationId OperationId) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -1092,10 +1092,10 @@ type StrictServerInterface interface {
 	// GetMe The signed-in user
 	// (GET /me)
 	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
-	// GetOperation Progress of an asynchronous change (any member of its organization)
+	// GetOperation Progress of an asynchronous change (any member of its organization, or a Platform Admin)
 	// (GET /operations/{operationId})
 	GetOperation(ctx context.Context, request GetOperationRequestObject) (GetOperationResponseObject, error)
-	// RetryOperation Retry a Failed operation (OrgOwner or OrgAdmin)
+	// RetryOperation Retry a Failed operation (OrgOwner, OrgAdmin or Platform Admin)
 	// (POST /operations/{operationId}:retry)
 	RetryOperation(ctx context.Context, request RetryOperationRequestObject) (RetryOperationResponseObject, error)
 	// ListOrganizations Organizations the caller belongs to, including their own Pending and Rejected requests
@@ -1377,21 +1377,21 @@ var swaggerSpec = []string{
 	"ZhezWv0486UwtXmpLeNmtmia+eTBMGNjAJmioMKodQ0HEpA7VNqDeBJ2wk6L8iyh4YkLBxkKmjHSJadh",
 	"JzwljouJs4O21+cSTVMkkFX8mQZD+W2RQVltrBK0gcA+6kSu3GAXeS1MNIRpgjfC1gGo/qh3fHQkU4SF",
 	"kinM3vSn0K59LY5c6yORN2gui+xi2yJ50en8bg2Sy8auyPithfBl5+TQ9I087UoDJU9TqtZFGajZUmDc",
-	"YgJyjX5Ae3M23f5SOef9QW30bIXaSl02A0s0Gl52XoYwkZxDLgzjMHM51swq6qG6IGxCdlv5PSPA201+",
-	"F5zt6Jdfp5VJkYXaJIQKoHotokRJIXMNUULFEuGIijUUcMsFMFO34GNXCFXanu+b5dgOaVdBv//wkBF0",
-	"bVmx3m2sPnWHgGRSm+bOxGYkLCVqmNPo1tK4yI4cu+2JcxEjZ3eobMXjcPEu0IUz35igvhTdt6ore4b/",
-	"Vbs6fSYrtKN/+HYt3bqqmXZpceERjmZlb3R2HO7ww+kO6MZ5bJY4Kuss61DKQuu4cGlVF37Qj41wZePp",
-	"giltQvjtCXzduGxGN67tt8dG15L/lKNab3vynKWu1bOFN8YFzbmxeU+wbWa8qDUzTvabGffB3g1ERj/l",
-	"trqhWsNsmw3OfJRzgdQWANbF2OQvLG8NdkSMfA750D3Bh+fk0m7a/AClOk8y+68MoDUtbzqL7g6GS7HU",
-	"YGQATEQ8d57LJMgUyJWo+bKyxCurWu28d6N39NWW36lqlTY7nBVrzrZXFoUwVEPJjDOgN6Le/gGaZUre",
-	"oQ0hRTGtgZkQfqI8L1yqUSxN3XXSzFY4LoxnqFIqnK8VcVE3o24um600N6Im8YpxbqFwl1gKXQs5hpVU",
-	"sd5k07PbfI6tWVmUU5e8Vi626rTz4NRKoU0j/5WM189ihkX9e1+vjozK8X6PCCfPIkETCbxUtr5PkMbF",
-	"zedQRptu0k4v+mpYdsYFrmqW9bQ7wmdl3jcOT7Pt7dusC1S4vlKddYnksSdjcU+7aUbdiLJFpZAj1ajd",
-	"DQOFuCGmQGzTHCGNLQ9nDfd8s26NzlwhjdfuYohWWmG+gbxwLL5juLIc2Y2cfizdU/NerfoyfNEUOdtf",
-	"XFv1iZWA4zgriG2h0hBRYYPo3AYeOT+U+O8a4jeIK//x9L/23wL+xrWa739Nbu864S7nLrsx9fO9ZmgN",
-	"mePCgMwN3CJmRbC6s0HgzNYhvrvqegNltm05wcQyvBH7seIMKMw5FbdQac/YuFFSpMmFu27RN/bgvkP1",
-	"mxz4t7e45/Sl/09lRJUzTZcDvmi0zzRuScHXD1YY1+6CpzRcn8FIBZV9D9QaIbyzgYBpYOWVQuhl9lfk",
-	"nq654qRL2jRj7bsTW23/OwAA//8=",
+	"YgJyjX5Ae3M23f5SOef9QW30xFoKBOQaYYlGw8vOyxAmknPIhWEcZi7Fmlk9PVQWhE3Abgu/Z8R3u8nv",
+	"ArMd/fLrlDIpklCbg1ABVK9FlCgpZK4hSqhYIhxRsYbU5Y52FDN1Aw4sortZ/rErjiqt0PfNwm2HtKua",
+	"uP/wkGF0bamx3m22PnWHgGRSm+ZuxWYkLCVqmNPo1lK7yJgc4y0MuYiRsztUtgpyYHm36EKcb1ZQX57u",
+	"m9qVPcP/qrGdPpNp2tE/fLs2b13VTLtUuXATR7OyXzo7DndI43QHdONRNksclbVXAGXpZdmxxw1n3VU3",
+	"f9DXjXBlY+6CKW1C+O1Jft3YbNY3ru23x07Xtv+Uo1pv+/acpa4dtIU7xgXNubG5UbBteLyoNTxO9hse",
+	"98HeLUVGP+W2AqJaw2ybMc58JHTB1hYJ1g/ZBDEsbxZ2RIx8nvnQXcKH5+TWbmr9AMU6T6LBVwbZmpY3",
+	"3Ud3T8OlWGowMgAmIp47T2YSZArkStR8W1kGlpWvdt680Vv6iszvVLVKm0HOijVn22uNQhiqoWTKGdAb",
+	"UScI0CxT8g5tnCkKbg3MhPAT5XnhYo1iaequnGa2CnKxPkOVUuF8r4iL2hp1c2ltpbkRNYlXjHMLhbvo",
+	"UujazDGspIr1JuOe3eZzbM3Kwp26BLdy+VWnnQenVi5tmv2vZLx+FjMsauT7egVlVI73e0Q4eRYJmkjg",
+	"pYpJQBKkcXE7OpTRpuO006++Gpbdc4GrmmU97R7xWZn3jcPVbHtDN+sCFa73VGddInnsyVjc5W4aVjei",
+	"bGMp5Eg1ancLQSFuiCkQ27RHSGNLyFnDXeCsW6MzV0jjtbs8opV2mW8yLxyL7xiuLEd2I6kfS/fUvFfP",
+	"vgxfNEXO9hfXen2gWgAhRavIX8tywXGcFcS2UGmIqLBBdG4Dj5wfqg52DfEbxJX/eI1Q+48CfytbLQq+",
+	"Jtd33XKXg5cdm/r5XjO0hsxxYUDmBm4RsyJY3dkgcGaLFd+Bdf2DMvu2nGBiGd6I/VhxBhTmnIpbqLRw",
+	"bNwoKdLkwl1H6Rt7cN/F+k0O/Ntb3HP60v+nsqLKmaYLBF9E2mcat6Tg6wcrjmt3CVQars9gpILKvtva",
+	"w34oq4/jEN7ZQMA0sPLaIfQy+2t0T9dccdIlbZqx9t2Jrb7/HQAA//8=",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

@@ -180,7 +180,8 @@ func toOrganization(o org.Org) oapi.Organization {
 }
 
 func (s server) GetOperation(ctx context.Context, req oapi.GetOperationRequestObject) (oapi.GetOperationResponseObject, error) {
-	op, err := s.ops.Get(ctx, userID(ctx), req.OperationId)
+	c := caller(ctx)
+	op, err := s.ops.Get(ctx, c.user.ID, c.platformAdmin, req.OperationId)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +189,8 @@ func (s server) GetOperation(ctx context.Context, req oapi.GetOperationRequestOb
 }
 
 func (s server) RetryOperation(ctx context.Context, req oapi.RetryOperationRequestObject) (oapi.RetryOperationResponseObject, error) {
-	op, err := s.ops.Retry(ctx, userID(ctx), req.OperationId)
+	c := caller(ctx)
+	op, err := s.ops.Retry(ctx, c.user.ID, c.platformAdmin, req.OperationId)
 	if err != nil {
 		return nil, err
 	}

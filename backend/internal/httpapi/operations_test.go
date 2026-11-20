@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi"
@@ -103,5 +104,55 @@ func TestOperations(t *testing.T) {
 		if e := errorBody(t, rec); e.Code != c.code {
 			t.Fatalf("%s %s: code %s", c.method, c.path, e.Code)
 		}
+	}
+}
+
+// A Platform Admin reads and retries operations of any organization, member
+// or not (06-security-and-identity §8). The realm role alone grants it.
+func TestPlatformAdminOperations(t *testing.T) {
+	h, db := newAPI(t, httpapi.Options{DevAuth: true})
+	if _, err := db.Exec(context.Background(), `
+INSERT INTO operations (id, org_id, resource_type, resource_id, type, state, error_code, finished_at) VALUES
+  ('op-a', 'org-acme', 'Workspace', 'ws-1', 'workspace.create', 'Failed', 'APPLY_FAILED', now()),
+  ('op-b', 'org-acme', 'Workspace', 'ws-2', 'workspace.create', 'Failed', 'APPLY_FAILED', now());`); err != nil {
+		t.Fatal(err)
+	}
+	as := func(method, path, user, roles string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, nil)
+		req.Header.Set(httpapi.DevUserHeader, user)
+		req.Header.Set(httpapi.DevRolesHeader, roles)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	for _, c := range []struct {
+		name, method, path, user, roles string
+		status                          int
+		wantState                       oapi.OperationState
+	}{
+		{"non-member admin reads", http.MethodGet, "/api/v1/operations/op-a", "usr-dave", "platform-admin", 200, "Failed"},
+		{"non-member admin retries", http.MethodPost, "/api/v1/operations/op-a:retry", "usr-dave", "platform-admin", 200, "Pending"},
+		{"admin who is only OrgMember retries", http.MethodPost, "/api/v1/operations/op-b:retry", "usr-bob", "offline_access, platform-admin", 200, "Pending"},
+		{"other realm roles grant nothing", http.MethodGet, "/api/v1/operations/op-a", "usr-dave", "offline_access", 404, ""},
+		{"admin still gets 404 for a missing one", http.MethodGet, "/api/v1/operations/op-nope", "usr-dave", "platform-admin", 404, ""},
+		{"admin cannot retry what is not Failed", http.MethodPost, "/api/v1/operations/op-a:retry", "usr-dave", "platform-admin", 409, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rec := as(c.method, c.path, c.user, c.roles)
+			if rec.Code != c.status {
+				t.Fatalf("status %d, want %d: %s", rec.Code, c.status, rec.Body)
+			}
+			if c.status != 200 {
+				return
+			}
+			var op oapi.Operation
+			if err := json.Unmarshal(rec.Body.Bytes(), &op); err != nil {
+				t.Fatal(err)
+			}
+			if op.State != c.wantState {
+				t.Fatalf("state %s, want %s", op.State, c.wantState)
+			}
+		})
 	}
 }

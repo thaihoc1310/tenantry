@@ -46,7 +46,7 @@ const ApplyFailed = "APPLY_FAILED"
 
 var (
 	ErrNotFound    = apperr.New(apperr.NotFound, "operation not found")
-	ErrForbidden   = apperr.New(apperr.Forbidden, "requires OrgOwner or OrgAdmin")
+	ErrForbidden   = apperr.New(apperr.Forbidden, "requires OrgOwner, OrgAdmin or Platform Admin")
 	ErrNotRetrying = apperr.New(apperr.Conflict, "only a Failed operation can be retried")
 )
 
@@ -96,29 +96,28 @@ type Service struct {
 
 func NewService(db *pgxpool.Pool) *Service { return &Service{db: db, q: store.New(db)} }
 
-// Get returns an operation to any member of its organization; others get ErrNotFound.
-func (s *Service) Get(ctx context.Context, userID, opID string) (store.Operation, error) {
-	row, err := s.q.GetOperationForMember(ctx, store.GetOperationForMemberParams{ID: opID, UserID: userID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return store.Operation{}, ErrNotFound
-	}
+// Get returns an operation to any member of its organization, and to a
+// Platform Admin for every organization; others get ErrNotFound.
+func (s *Service) Get(ctx context.Context, userID string, platformAdmin bool, opID string) (store.Operation, error) {
+	row, err := s.find(ctx, userID, platformAdmin, opID)
 	return row.Operation, err
 }
 
 // Retry puts a Failed operation back to Pending and has its undelivered events
-// sent again at once (OrgOwner or OrgAdmin).
+// sent again at once (OrgOwner, OrgAdmin, or a Platform Admin for any organization).
 //
 // A failure the controller reported has no undelivered event left; the
 // Workspace service will re-enqueue the apply for that case when it exists (M4).
-func (s *Service) Retry(ctx context.Context, userID, opID string) (store.Operation, error) {
-	row, err := s.q.GetOperationForMember(ctx, store.GetOperationForMemberParams{ID: opID, UserID: userID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return store.Operation{}, ErrNotFound
-	}
+func (s *Service) Retry(ctx context.Context, userID string, platformAdmin bool, opID string) (store.Operation, error) {
+	row, err := s.find(ctx, userID, platformAdmin, opID)
 	if err != nil {
 		return store.Operation{}, err
 	}
-	if r := org.Role(row.Role); r != org.RoleOwner && r != org.RoleAdmin {
+	var role org.Role // empty for a Platform Admin who is not a member
+	if row.Role != nil {
+		role = org.Role(*row.Role)
+	}
+	if !platformAdmin && role != org.RoleOwner && role != org.RoleAdmin {
 		return store.Operation{}, ErrForbidden
 	}
 
@@ -137,4 +136,12 @@ func (s *Service) Retry(ctx context.Context, userID, opID string) (store.Operati
 		return err
 	})
 	return op, err
+}
+
+func (s *Service) find(ctx context.Context, userID string, platformAdmin bool, opID string) (store.GetOperationForCallerRow, error) {
+	row, err := s.q.GetOperationForCaller(ctx, store.GetOperationForCallerParams{ID: opID, UserID: userID, PlatformAdmin: platformAdmin})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return row, ErrNotFound
+	}
+	return row, err
 }

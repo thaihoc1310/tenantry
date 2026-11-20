@@ -55,28 +55,31 @@ func (q *Queries) CreateOperation(ctx context.Context, arg CreateOperationParams
 	return i, err
 }
 
-const getOperationForMember = `-- name: GetOperationForMember :one
+const getOperationForCaller = `-- name: GetOperationForCaller :one
 SELECT op.id, op.org_id, op.resource_type, op.resource_id, op.type, op.state, op.progress, op.error_code, op.error_message, op.correlation_id, op.created_by, op.created_at, op.updated_at, op.finished_at, m.role
 FROM operations op
-JOIN organization_members m ON m.org_id = op.org_id AND m.user_id = $1
+LEFT JOIN organization_members m ON m.org_id = op.org_id AND m.user_id = $1
 WHERE op.id = $2
+  AND (m.user_id IS NOT NULL OR $3::bool)
 `
 
-type GetOperationForMemberParams struct {
-	UserID string
-	ID     string
+type GetOperationForCallerParams struct {
+	UserID        string
+	ID            string
+	PlatformAdmin bool
 }
 
-type GetOperationForMemberRow struct {
+type GetOperationForCallerRow struct {
 	Operation Operation
-	Role      string
+	Role      *string
 }
 
 // Resolves the organization from the operation itself, never from the
-// client (threat case §10.1); a non-member gets no row, hence 404.
-func (q *Queries) GetOperationForMember(ctx context.Context, arg GetOperationForMemberParams) (GetOperationForMemberRow, error) {
-	row := q.db.QueryRow(ctx, getOperationForMember, arg.UserID, arg.ID)
-	var i GetOperationForMemberRow
+// client (threat case §10.1). A non-member gets no row, hence 404, unless
+// the caller is a Platform Admin; role is NULL when the caller is not a member.
+func (q *Queries) GetOperationForCaller(ctx context.Context, arg GetOperationForCallerParams) (GetOperationForCallerRow, error) {
+	row := q.db.QueryRow(ctx, getOperationForCaller, arg.UserID, arg.ID, arg.PlatformAdmin)
+	var i GetOperationForCallerRow
 	err := row.Scan(
 		&i.Operation.ID,
 		&i.Operation.OrgID,

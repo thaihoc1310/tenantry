@@ -3,13 +3,15 @@ INSERT INTO operations (id, org_id, resource_type, resource_id, type, correlatio
 VALUES (@id, @org_id, @resource_type, @resource_id, @type, @correlation_id, sqlc.narg(created_by))
 RETURNING *;
 
--- name: GetOperationForMember :one
+-- name: GetOperationForCaller :one
 -- Resolves the organization from the operation itself, never from the
--- client (threat case §10.1); a non-member gets no row, hence 404.
+-- client (threat case §10.1). A non-member gets no row, hence 404, unless
+-- the caller is a Platform Admin; role is NULL when the caller is not a member.
 SELECT sqlc.embed(op), m.role
 FROM operations op
-JOIN organization_members m ON m.org_id = op.org_id AND m.user_id = @user_id
-WHERE op.id = @id;
+LEFT JOIN organization_members m ON m.org_id = op.org_id AND m.user_id = @user_id
+WHERE op.id = @id
+  AND (m.user_id IS NOT NULL OR @platform_admin::bool);
 
 -- name: MoveOperation :one
 -- Applies a state change only if the current state is one it may come from;
