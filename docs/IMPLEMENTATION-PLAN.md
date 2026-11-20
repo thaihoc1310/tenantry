@@ -134,7 +134,7 @@ INSERT INTO workspaces (...);                                  -- state = Reserv
 INSERT INTO workspace_node_reservations (...) -- state Pending → Active khi commit (Dedicated)
 INSERT INTO network_allocations (...);        -- state Active
 INSERT INTO operations (...);                 -- type workspace.create, state Pending
-INSERT INTO outbox_events (target_cluster_id, type='workspace.apply', payload=CR spec JSON, version);
+INSERT INTO outbox_events (operation_id, ordering_key='Workspace/<id>', target_cluster_id, type='workspace.apply', payload=CR spec JSON, version);
 INSERT INTO audit_events (...);
 COMMIT;
 ```
@@ -238,7 +238,8 @@ loop mỗi 1s (đề xuất):
   BEGIN
   SELECT * FROM outbox_events
    WHERE processed_at IS NULL AND next_attempt_at <= now()
-   ORDER BY id LIMIT 10 FOR UPDATE SKIP LOCKED;
+     AND NOT EXISTS (event cũ hơn, chưa giao, cùng ordering_key)
+   ORDER BY id LIMIT 10 FOR UPDATE OF e SKIP LOCKED;
   với mỗi event:
      build CR từ payload (version) → server-side apply, field manager tenantry-provisioning-worker
      type workspace.delete → client.Delete CR
@@ -247,7 +248,9 @@ loop mỗi 1s (đề xuất):
   COMMIT
 ```
 
-- Cột thêm so với spec §15 **(đề xuất)**: `next_attempt_at`, `last_error`. Backoff exponential 1s → 5 phút, không giới hạn attempts với lỗi tạm thời; sau 10 lần lỗi liên tiếp, `operations.state = Failed` để UI hiện nút retry (`:retry` reset `attempts`, `next_attempt_at`).
+- Cột thêm so với spec §15: `operation_id`, `next_attempt_at`, `last_error`, `ordering_key`.
+- **Thứ tự theo resource**: `ordering_key = <resource_type>/<resource_id>` của operation (do `outbox.Enqueue` tự đặt). Event chỉ được lấy khi không còn event cũ hơn chưa giao cùng key, kể cả khi event đó đang backoff — nên `workspace.delete` không thể vượt `workspace.apply` đang lỗi của cùng Workspace; resource khác không bị chặn.
+- Backoff exponential 1s → 5 phút, không giới hạn attempts với lỗi tạm thời; sau 10 lần lỗi liên tiếp, `operations.state = Failed` để UI hiện nút retry (`:retry` reset `attempts`, `next_attempt_at`).
 - **At-least-once + idempotent**: apply CR là idempotent (SSA); payload mang `generation` mong muốn; apply lặp không tạo duplicate.
 - **Status sync**: một informer trên `PlatformWorkspace` (credential có `get/list/watch/patch/update/delete` đúng resource này, không hơn — spec §14.3); mỗi status update → `workspaces.state`, `operations.state/progress/error_code` (từ conditions), `workspace_namespaces` (observed, upsert theo `status.namespaces`), `Degraded` khi condition False sau Ready; CR biến mất sau delete → release reservation/CIDR (mục 4.3).
 - Resync định kỳ 5 phút (đề xuất) để phát hiện drift khi worker restart hoặc mất event.
