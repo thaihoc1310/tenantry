@@ -33,18 +33,22 @@ Tài liệu này trả lời bốn câu hỏi: code đặt ở đâu (mục 2), 
 │   │   ├── tenantry-migrate/    # chạy migrations
 │   │   └── tenantry-seed/       # seed dev: Cluster A, onboarding policy, shared pool, NetworkPool
 │   ├── internal/
-│   │   ├── app/                 # wiring/DI: build services từ config, không chứa business logic
 │   │   ├── httpapi/             # handler generated từ OpenAPI + middleware (phiên, CSRF, rate limit, authz, idempotency)
 │   │   ├── auth/                # OIDC (Authorization Code + PKCE), phiên trong PostgreSQL, upsert user theo (issuer, subject)
 │   │   ├── org/                 # organizations, members, invitations, groups, ownership_transfers, entitlement
-│   │   ├── workspace/           # workspaces, workspace_namespaces, bindings, state machine, operations
+│   │   ├── user/                # account projection: user Active/Disabled
+│   │   ├── operation/           # operations: máy trạng thái, get/retry
+│   │   ├── workspace/           # workspaces, workspace_namespaces, bindings, state machine
 │   │   ├── reservation/         # cluster registry, cluster grants, shared pools, dedicated node grants, capacity math, reservation tx
 │   │   ├── ipam/                # network_pools, network_allocations, CIDR math, quarantine
 │   │   ├── outbox/              # outbox_events repo + provisioning worker loop
 │   │   ├── keycloak/            # Keycloak Admin API client + group sync worker
 │   │   ├── k8s/                 # client apply/watch PlatformWorkspace CR bằng scoped credential
 │   │   ├── audit/               # audit_events
-│   │   └── store/               # pgx pool, transaction helper, sqlc-generated queries
+│   │   ├── apperr/              # kiểu lỗi nghiệp vụ dùng chung (mục 3.3)
+│   │   ├── id/                  # sinh ID: tiền tố + ULID
+│   │   ├── testdb/              # database riêng cho mỗi test
+│   │   └── store/               # sqlc: queries/*.sql của mọi domain + code sinh ra
 │   ├── migrations/              # SQL migrations (goose)
 │   └── openapi/                 # tenantry.v1.yaml + config sinh code Go/TS
 ├── operator/                    # Workspace Operator per Cluster (module Go riêng, kubebuilder layout)
@@ -88,16 +92,17 @@ Một câu cho mỗi thư mục cấp một:
 ### 2.1 Quy tắc ranh giới package Go (đề xuất)
 
 ```text
-cmd/*            → internal/app                     (chỉ wiring)
-internal/httpapi → internal/{auth,org,workspace,reservation,ipam,audit}  (gọi service, không gọi repo)
-internal/<domain>/service.go → repo cùng domain + interface của domain khác (không import package domain khác trực tiếp nếu tránh được)
-internal/<domain>/repo.go    → internal/store        (SQL của domain nằm trong domain đó)
-internal/outbox, internal/keycloak, internal/k8s     → adapter; domain định nghĩa interface, adapter implement, app nối lại
-internal/store   → không import bất kỳ domain nào
+cmd/*            → internal/httpapi, internal/outbox…  (chỉ wiring; chưa cần package app riêng)
+internal/httpapi → service của các domain            (không tự viết SQL; chỉ dùng kiểu dữ liệu của store để map ra response)
+internal/<domain> → internal/store + apperr + id      (business rule, transaction boundary)
+internal/store   → không import bất kỳ domain nào     (toàn bộ SQL nằm ở store/queries/*.sql, sqlc sinh method có kiểu)
+internal/outbox, internal/keycloak, internal/k8s     → adapter; domain định nghĩa interface, adapter implement
 operator/api/v1alpha1 → được backend/internal/k8s import để build CR; ngược lại operator không import gì từ backend/
 ```
 
-Kiểm tra bằng `go vet` + một test `depguard`/`go list -deps` đơn giản trong CI để phát hiện import ngược. Hai module Go riêng (`backend`, `operator`) để controller-runtime không kéo dependency vào backend và ngược lại; `go.work` cho dev local.
+Không có lớp repository viết tay cho từng domain: sqlc đã là lớp đó, và gom SQL về một chỗ để sqlc đọc được schema. Domain import domain khác chỉ khi cần kiểu/hằng của nó (ví dụ `operation` dùng role của `org`); chiều ngược lại bị cấm để không tạo vòng.
+
+Trình biên dịch Go từ chối import vòng; rule `depguard` của golangci-lint cho các chiều cấm còn lại sẽ thêm khi có domain thứ ba. Hai module Go riêng (`backend`, `operator`) để controller-runtime không kéo dependency vào backend và ngược lại; `go.work` cho dev local.
 
 ---
 
@@ -111,10 +116,10 @@ HTTP request
   → generated handler (oapi-codegen) → decode/validate theo OpenAPI
   → authz: RequireOrgRole(orgId, ≥OrgMember|OrgAdmin|OrgOwner) hoặc RequirePlatformAdmin()
   → service (business rule, transaction boundary, ghi audit + outbox)
-  → repository (SQL thuần, sqlc) → PostgreSQL
+  → store (SQL thuần, sqlc sinh code) → PostgreSQL
 ```
 
-- Handler không chứa business rule; service không biết HTTP; repo không biết rule.
+- Handler không chứa business rule; service không biết HTTP; query sqlc không chứa rule.
 - Mọi route `/workspaces/{workspaceId}`, `/groups/{groupId}`, `/operations/{operationId}` resolve `org_id` từ row rồi mới check membership — không tin `orgId` client gửi (spec §10.1).
 - Endpoint namespace/binding cần thêm rule "OrgOwner/OrgAdmin **hoặc** member của group giữ `TenantOwner` tại Workspace" (spec §4.5) — implement trong `workspace` service, không trong middleware.
 
@@ -165,7 +170,7 @@ COMMIT;
 
 - Cookie phiên → `users` row + `realm_roles` của phiên. Cơ chế phiên, refresh, CSRF và rate limit: `architecture/06-security-and-identity.md` mục 3 và 6.
 - `RequireOrgRole(min)`: load `organization_members` cho `(org_id, user_id)`; thứ tự `OrgMember < OrgAdmin < OrgOwner`. Endpoint transfer-ownership, delete Organization, đổi role Owner yêu cầu `OrgOwner`.
-- `RequirePlatformAdmin()`: kiểm tra `platform-admin` trong `realm_roles` của phiên; áp cho `/api/v1/admin/*` và `operations/{id}:force`.
+- `RequirePlatformAdmin()`: kiểm tra `platform-admin` trong `realm_roles` của phiên; áp cho `/api/v1/admin/*` và `operations/{id}:force`. Ngoài `/admin/*`, chỗ duy nhất Platform Admin được bỏ qua membership là `GET /operations/{id}` và `:retry`; cờ admin chỉ đi vào service `operation`, không vào `org`.
 - Matrix role × endpoint được viết thành **bảng dữ liệu** trong test (`authz_matrix_test.go`) để cover threat case spec §20.3 (đổi `orgId`, OrgMember tự nâng role, user thường gọi admin, OrgAdmin gọi transfer-ownership...).
 
 ### 3.6 OpenAPI-first
@@ -385,7 +390,7 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
   1. `store`: pgx pool, tx helper `WithTx(ctx, fn)`, sqlc config.
   2. Migrations `0001` (`users`, `organizations`, `organization_members`) và `0002` (`operations`, `outbox_events`). Bảng khác được thêm ở milestone đầu tiên dùng tới nó.
   3. oapi-codegen strict server; middleware request-id, recover, logging, `ErrorResponse`.
-  4. `org` service: get/patch Organization, list members; repo + unit test.
+  4. `org` service: xin tạo (`Pending` + OrgOwner), get/patch/list Organization có phân trang cursor; `GET /me`.
   5. `outbox` repo + worker loop khung (chưa apply CR, chỉ log).
   6. `operations` service: create/get/retry state machine `Pending → Running → Succeeded|Failed|Blocked`.
   7. Healthz/readyz, config bằng env, Dockerfile multi-stage, chart `tenantry-backend` tối thiểu.

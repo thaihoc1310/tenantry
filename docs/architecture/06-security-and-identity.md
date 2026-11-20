@@ -275,7 +275,7 @@ Không có credential nào của user được lưu ở dạng dùng lại đư�
 | Hành động | PlatformAdmin | OrgOwner | OrgAdmin | OrgMember + TenantOwner group | OrgMember + Developer | OrgMember + Viewer |
 |---|---|---|---|---|---|---|
 | Đăng ký Cluster, duyệt/tạo Org, ClusterGrant, node, pool | ✅ | — | — | — | — | — |
-| Đổi display name Org | ✅ | ✅ | ✅ | — | — | — |
+| Đổi display name Org | — | ✅ | ✅ | — | — | — |
 | Transfer ownership, xóa Org | — | ✅ | — | — | — | — |
 | Mời, remove member, đổi role (trừ Owner) | — | ✅ | ✅ | — | — | — |
 | Tạo/xóa group, thêm member | — | ✅ | ✅ | — | — | — |
@@ -288,10 +288,13 @@ Không có credential nào của user được lưu ở dạng dùng lại đư�
 | kubectl: CRUD workload | — | * | * | ✅ | ✅ | ❌ |
 | kubectl: đọc Secret, exec | — | * | * | ✅ | theo policy | ❌ |
 | kubectl: sửa label/annotation isolation, nodeSelector | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Xem operation | ✅ mọi org | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Retry operation | ✅ mọi org | ✅ | ✅ | — | — | — |
 | Force finalizer khi delete kẹt | ✅ | ❌ | ❌ | — | — | — |
 
 `*` = chỉ khi bản thân nằm trong một group được bind vào Workspace; platform role không tự sinh quyền Kubernetes.
+
+Platform Admin làm việc với Organization qua `/api/v1/admin/*`. Các endpoint `/organizations/{orgId}` chỉ dành cho member: Admin không phải member nhận 404 như mọi người ngoài. Ngoại lệ duy nhất là operation — Admin xem, retry và force được operation của mọi Organization ngay trên `/operations/{id}`.
 
 **Điểm cần review**
 
