@@ -9,7 +9,7 @@ func TestCheckSlug(t *testing.T) {
 	cases := map[string]bool{ // slug -> valid
 		"acme": true, "a1b": true, "my-team-2": true, strings.Repeat("a", 20): true,
 		"kubeflow": true, // only kube- is Kubernetes'
-		"ab": false, strings.Repeat("a", 21): false,
+		"ab":       false, strings.Repeat("a", 21): false,
 		"1abc": false, "Acme": false, "my_team": false, "my--team": false, "team-": false, "-team": false,
 		"admin": false, "default": false, "kube": false, "kube-x": false, "tenantry": false,
 	}

@@ -36,7 +36,7 @@ run-api: ## Run the Platform API locally
 run-worker: ## Run the outbox worker locally (logs events; no cluster yet)
 	cd $(BACKEND) && go run ./cmd/tenantry-worker
 
-.PHONY: generate build fmt vet lint test
+.PHONY: generate build fmt fmt-check vet lint test
 generate: ## Regenerate code from openapi/tenantry.v1.yaml (commit the result)
 	cd $(BACKEND) && go generate ./...
 build: ## Build every backend binary into bin/
@@ -45,7 +45,9 @@ fmt: ## gofmt
 	cd $(BACKEND) && gofmt -l -w .
 vet: ## go vet
 	cd $(BACKEND) && go vet ./...
-lint: vet ## golangci-lint if installed, else just vet
+fmt-check: ## Fail if any Go file is not gofmt-formatted
+	@cd $(BACKEND) && files=$$(gofmt -l .) && if [ -n "$$files" ]; then echo "not gofmt-formatted (run make fmt):"; echo "$$files"; exit 1; fi
+lint: fmt-check vet ## gofmt check, vet, then golangci-lint if installed
 	@if command -v golangci-lint >/dev/null; then cd $(BACKEND) && golangci-lint run ./...; else echo "golangci-lint not installed; ran go vet only"; fi
 test: ## Tests (migration tests need PostgreSQL: make dev-up)
 	cd $(BACKEND) && go test -race -count=1 ./...
