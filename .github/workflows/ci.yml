@@ -25,3 +25,9 @@ jobs:
         with: { working-directory: backend, args: --timeout=5m }
       - run: make test
       - run: make build
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make chart-lint
+      - run: make image

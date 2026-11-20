@@ -1,0 +1,40 @@
+# Runs before every install and upgrade, so the API and worker of a release
+# never start against an older schema. goose holds an advisory lock, so two
+# overlapping runs wait for each other instead of colliding.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tenantry-migrate
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    # A failed run stays for `kubectl logs`; the next upgrade replaces it.
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        {{- include "tenantry.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      # Migrate never calls Kubernetes.
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "tenantry.podSecurity" . | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "tenantry.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [/usr/local/bin/tenantry-migrate, up]
+          env:
+            {{- include "tenantry.env" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.migrate.resources | nindent 12 }}
+          securityContext:
+            {{- include "tenantry.containerSecurity" . | nindent 12 }}

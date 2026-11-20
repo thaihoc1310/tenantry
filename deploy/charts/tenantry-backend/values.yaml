@@ -1,0 +1,35 @@
+# One image holds every backend binary (deploy/Dockerfile.backend).
+image:
+  repository: tenantry/backend
+  tag: ""            # defaults to the chart appVersion
+  pullPolicy: IfNotPresent
+
+# The chart never creates or holds database credentials: point it at a Secret
+# that already exists in the release namespace.
+database:
+  existingSecret: ""   # required
+  key: DATABASE_URL    # key holding the postgres:// URL
+
+log:
+  level: info          # debug, info, warn, error
+
+api:
+  replicas: 1
+  # Dev-only login by header (X-Tenantry-Dev-User): anyone reaching the API can
+  # act as any user, Platform Admin included. Never enable outside a lab.
+  devAuth: false
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
+
+worker:
+  provisioning:
+    replicas: 1        # more are safe (SKIP LOCKED) but not needed
+    resources:
+      requests: { cpu: 20m, memory: 64Mi }
+      limits: { memory: 256Mi }
+
+migrate:
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { memory: 128Mi }

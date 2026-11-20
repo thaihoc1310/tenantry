@@ -39,6 +39,14 @@ run-api: ## Run the Platform API locally
 run-worker: ## Run the outbox worker locally (logs events; no cluster yet)
 	cd $(BACKEND) && go run ./cmd/tenantry-worker
 
+.PHONY: image chart-lint
+IMAGE ?= tenantry/backend:dev
+image: ## Build the backend image (every binary, one image)
+	docker build -f deploy/Dockerfile.backend -t $(IMAGE) $(BACKEND)
+chart-lint: ## Lint and render the tenantry-backend chart
+	helm lint deploy/charts/tenantry-backend --set database.existingSecret=lint
+	helm template tenantry deploy/charts/tenantry-backend --set database.existingSecret=lint >/dev/null
+
 .PHONY: generate build fmt fmt-check vet lint test
 generate: ## Regenerate code from openapi/tenantry.v1.yaml (commit the result)
 	cd $(BACKEND) && go generate ./...

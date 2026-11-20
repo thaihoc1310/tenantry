@@ -1,0 +1,40 @@
+# Delivers outbox events to clusters. Its ServiceAccount, with rights on the
+# tenantry.io CRDs only, comes with those CRDs (M6); the group sync worker is
+# a second Deployment with its own credentials (M4).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tenantry-worker-provisioning
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker-provisioning
+spec:
+  replicas: {{ .Values.worker.provisioning.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: worker-provisioning
+  template:
+    metadata:
+      labels:
+        {{- include "tenantry.labels" . | nindent 8 }}
+        app.kubernetes.io/component: worker-provisioning
+    spec:
+      # Does not call Kubernetes yet.
+      automountServiceAccountToken: false
+      # On SIGTERM the worker finishes the batch in hand, for up to 2 minutes
+      # (outbox.batchTimeout); killing it earlier only means redelivery.
+      terminationGracePeriodSeconds: 150
+      securityContext:
+        {{- include "tenantry.podSecurity" . | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "tenantry.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [/usr/local/bin/tenantry-worker]
+          env:
+            {{- include "tenantry.env" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.worker.provisioning.resources | nindent 12 }}
+          securityContext:
+            {{- include "tenantry.containerSecurity" . | nindent 12 }}

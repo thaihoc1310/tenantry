@@ -1,0 +1,20 @@
+# One image for every backend binary (tenantry-api, tenantry-worker,
+# tenantry-migrate); each Deployment picks its binary with `command`.
+#
+#   docker build -f deploy/Dockerfile.backend -t tenantry/backend:dev backend
+
+FROM golang:1.26.8-bookworm AS build
+WORKDIR /src
+# Modules first so a code change does not download them again.
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/...
+
+# No shell, no package manager, uid 65532. Pinned by digest: the tag moves.
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+COPY --from=build /out/ /usr/local/bin/
+USER nonroot:nonroot
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/tenantry-api"]
