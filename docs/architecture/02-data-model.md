@@ -1,16 +1,23 @@
-# 02 — Data model: ERD và invariant
+# 02 — Data model: bảng, constraint, invariant
 
-> Nguồn sự thật: `docs/PRODUCT-PLAN.md` v0.6, mục 4, 5, 15. PostgreSQL là source of truth cho product state; Kubernetes chỉ giữ runtime state qua CR `PlatformWorkspace`.
-> Cách đọc: ERD tổng → ERD theo từng vùng nghiệp vụ → bảng invariant và cách enforce (constraint vs transaction). Sau mỗi sơ đồ có **Điểm cần review**.
+> Nơi định nghĩa cho bảng, cột, constraint và thứ tự lock. DDL thật nằm ở `backend/migrations/`; bảng nào đã có migration thì file này phải khớp migration. Quy tắc nghiệp vụ đứng sau từng invariant ở `PRODUCT-PLAN.md` mục 4, 5.
+> PostgreSQL là source of truth cho product state; Kubernetes chỉ giữ runtime state qua CR `PlatformWorkspace`.
+
+Quy ước chung cho mọi bảng:
+
+- **ID** là `text` chứa ULID có tiền tố (`org-`, `ws-`, `grp-`, `op-`, `netalloc-`, `nodegrant-`…); riêng `clusters.id` là tên do Admin đặt (`cluster-a`), `outbox_events.id` và `audit_events.id` là `bigint` tăng dần.
+- **Thời gian** là `timestamptz`; bảng nào sửa được thì có `created_at`, `updated_at` (không vẽ lại trong ERD).
+- **Lượng tài nguyên** lưu số nguyên theo đơn vị gốc: CPU là milliCPU, memory/storage là byte, cột `bigint`. API nhận và trả Kubernetes quantity (`"4"`, `8Gi`), đổi ở biên. Nhờ vậy `SUM` trong SQL là chính xác và không phải parse chuỗi dưới row lock.
+- **Trạng thái** là `text` có `CHECK`; tập giá trị và cạnh chuyển định nghĩa ở `04-state-machines.md`.
 
 ## 1. ERD tổng thể
-
-**Mục đích:** nhìn một lần toàn bộ entity và quan hệ; chi tiết cột ở các mục sau.
 
 ```mermaid
 erDiagram
   users ||--o{ organization_members : "là member"
-  users ||--|| organizations : "sở hữu personal org"
+  users ||--o{ organizations : "owner_user_id"
+  users ||--o{ sessions : ""
+  users ||--o{ idempotency_keys : ""
   organizations ||--o{ organization_members : ""
   organizations ||--o{ invitations : ""
   organizations ||--o{ ownership_transfers : ""
@@ -38,79 +45,105 @@ erDiagram
   workspaces ||--o{ workspace_group_bindings : ""
   groups ||--o{ workspace_group_bindings : ""
   workspaces ||--o{ workspace_namespaces : ""
-  workspaces ||--o{ operations : ""
+  organizations ||--o{ operations : ""
   operations ||--o{ outbox_events : ""
   clusters ||--o{ outbox_events : "target"
   organizations ||--o{ audit_events : ""
-  onboarding_policies ||--o{ organization_cluster_grants : "template"
 ```
 
 **Điểm cần review**
 
 - `workspaces → organization_cluster_grants` là quan hệ **bắt buộc**: Workspace luôn thuộc đúng một grant (org × cluster). Đây là chỗ enforce "Cluster phải được cấp cho Organization".
-- `network_pools.organization_id` nullable: pool chung cho onboarding. Grant tham chiếu pool qua bảng nối; pool riêng chỉ được tham chiếu bởi grant của đúng org (check ở service layer + trigger đơn giản).
-- Reservation quota của ClusterGrant **không có bảng riêng**: nó được suy ra bằng `SUM(workspaces.resources)` trong grant, kiểm tra dưới row lock của grant. NodeReservation thì có bảng riêng vì cần state riêng và lifecycle riêng.
+- Reservation quota của ClusterGrant **không có bảng riêng**: nó là `SUM` các cột tài nguyên của `workspaces` trong grant, tính dưới row lock của grant. NodeReservation có bảng riêng vì có state và lifecycle riêng.
+- `cluster_agents` (cluster_id, identity fingerprint, version, status, last_seen) chỉ tạo ở Phase 2.
 
-## 2. Vùng Identity & Organization
+## 2. Vùng Identity, phiên và Organization
 
 ```mermaid
 erDiagram
   users {
-    ulid id PK
+    text id PK
     text issuer
     text subject
     text email
     text display_name
-    text status
+    text status "Active | Disabled"
+  }
+  sessions {
+    bytea id_hash PK "sha256 của cookie"
+    text user_id FK
+    text[] realm_roles "snapshot ở lần refresh gần nhất"
+    bytea refresh_token_enc "AES-256-GCM"
+    timestamptz access_expires_at
+    timestamptz expires_at "hạn của refresh token"
+  }
+  idempotency_keys {
+    text user_id PK
+    text key PK
+    text method
+    text path
+    bytea request_hash "sha256 của body"
+    int response_status
+    jsonb response_body
     timestamptz created_at
   }
   organizations {
-    ulid id PK
-    text slug "immutable, global unique"
+    text id PK
+    text slug "immutable"
     text display_name
-    bool is_personal
-    ulid owner_user_id FK "đúng một Owner"
-    text status
+    text description
+    text owner_user_id FK
+    text status "Pending | Active | Rejected | Deleted"
+    text review_note
   }
   organization_members {
-    ulid org_id FK
-    ulid user_id FK
+    text org_id PK
+    text user_id PK
     text role "OrgOwner | OrgAdmin | OrgMember"
-    text status
   }
   invitations {
-    ulid id PK
-    ulid org_id FK
+    text id PK
+    text org_id FK
     text email
     text token_hash
     text role
-    ulid[] group_ids "optional"
+    text[] group_ids "optional"
     timestamptz expires_at
-    ulid accepted_by FK
+    text accepted_by FK
     text state
   }
   ownership_transfers {
-    ulid id PK
-    ulid org_id FK
-    ulid from_user_id FK
-    ulid to_user_id FK
+    text id PK
+    text org_id FK
+    text from_user_id FK
+    text to_user_id FK
     text token_hash
     timestamptz expires_at
     text state
   }
   groups {
-    ulid id PK
-    ulid org_id FK
-    text display_name "unique trong org"
-    text machine_name "org_<id>:group_<id>, global unique"
+    text id PK
+    text org_id FK
+    text display_name
+    text machine_name "org_<id>:group_<id>"
     text keycloak_group_id
-    text sync_status
+    timestamptz deleted_at "tombstone"
+    text sync_status "Pending | Synced | Error"
+    int sync_attempts
+    timestamptz next_sync_at
+    text last_error
   }
   group_members {
-    ulid group_id FK
-    ulid user_id FK
-    text sync_status
+    text group_id PK
+    text user_id PK
+    timestamptz deleted_at "tombstone"
+    text sync_status "Pending | Synced | Error"
+    int sync_attempts
+    timestamptz next_sync_at
+    text last_error
   }
+  users ||--o{ sessions : ""
+  users ||--o{ idempotency_keys : ""
   users ||--o{ organization_members : ""
   organizations ||--o{ organization_members : ""
   organizations ||--o{ invitations : ""
@@ -120,22 +153,29 @@ erDiagram
   users ||--o{ group_members : ""
 ```
 
-Constraint quan trọng:
-
 | Invariant | Enforce bằng |
 |---|---|
 | Một account ↔ một identity Keycloak | `UNIQUE (issuer, subject)` |
-| Một user có đúng một personal org | `UNIQUE (owner_user_id) WHERE is_personal` |
-| Đúng một OrgOwner mỗi org | `organizations.owner_user_id NOT NULL` + `UNIQUE (org_id) ON organization_members WHERE role = 'OrgOwner'` |
-| Owner luôn là member | trigger/service: khi set `owner_user_id` phải có row member role Owner |
-| Group display name unique trong org, machine name unique toàn cục | hai `UNIQUE` |
-| Không xóa group còn binding | `FK ... ON DELETE RESTRICT` từ `workspace_group_bindings` |
-| Email invite phải khớp email verified khi accept | service layer (đọc claim `email_verified`) |
+| Slug Organization unique, yêu cầu bị từ chối nhả slug | `UNIQUE (slug) WHERE status <> 'Rejected'` |
+| Mỗi user tối đa một yêu cầu `Pending` | `UNIQUE (owner_user_id) WHERE status = 'Pending'` |
+| Đúng một OrgOwner mỗi Organization | `organizations.owner_user_id NOT NULL` (ít nhất một) + `UNIQUE (org_id) ON organization_members WHERE role = 'OrgOwner'` (nhiều nhất một) |
+| Owner luôn là member | service: đổi `owner_user_id` và role hai bên trong một transaction |
+| Group display name unique trong Organization (không tính group đã xóa), machine name unique toàn cục | `UNIQUE (org_id, display_name) WHERE deleted_at IS NULL`; `UNIQUE (machine_name)` |
+| Không xóa group còn binding | service chặn trước khi đặt `deleted_at`; `FK ... ON DELETE RESTRICT` từ `workspace_group_bindings` là lưới an toàn |
+| Member của group phải là member của Organization sở hữu group | service kiểm khi thêm; **không** FK sang `organization_members` (xem dưới) |
+| Tối đa một transfer đang chờ mỗi Organization | `UNIQUE (org_id) ON ownership_transfers WHERE state = 'Proposed'` |
+| Cùng `Idempotency-Key` không tạo hai lần | `PRIMARY KEY (user_id, key)` trên `idempotency_keys` |
 
-**Điểm cần review**
+**Xóa là xóa thật, trừ thứ còn phải đồng bộ ra ngoài:**
 
-- `group_members.user_id` chỉ được trỏ tới user **là member của org sở hữu group** — không diễn tả được bằng FK đơn; cần check ở service + test. Có chấp nhận không, hay dùng FK composite `(org_id, user_id)` sang `organization_members`? Đề xuất: FK composite, an toàn hơn và không tốn gì.
-- Khi remove member: cascade xóa `group_members` (đồng thời ghi outbox sync Keycloak). Cần chốt là cascade DB hay service — đề xuất service, vì phải sinh outbox.
+- Remove member khỏi Organization xóa hẳn row `organization_members`; lịch sử nằm ở `audit_events`.
+- `groups` và `group_members` dùng **tombstone**: thao tác xóa đặt `deleted_at = now()` và `sync_status = 'Pending'` trong cùng transaction; Group Sync Worker gỡ trên Keycloak xong mới xóa hẳn row. Row có `deleted_at` không còn hiệu lực với mọi câu hỏi phân quyền và danh sách — mọi query nghiệp vụ lọc `deleted_at IS NULL`. Thêm lại một member đang là tombstone chỉ cần đặt `deleted_at = NULL`, `sync_status = 'Pending'`.
+- Vì tombstone phải sống lâu hơn membership, `group_members` **không** có FK sang `organization_members`: remove member khỏi Organization xóa row membership ngay, đồng thời đặt tombstone cho mọi `group_members` của user trong Organization đó để worker còn việc mà làm.
+
+**Phiên và idempotency:**
+
+- `sessions`: cơ chế ở `06-security-and-identity.md` mục 3. Index trên `user_id` (thu hồi mọi phiên của một user) và `expires_at` (dọn rác).
+- `idempotency_keys`: cơ chế ở `IMPLEMENTATION-PLAN.md` mục 3.4. Row được ghi trong cùng transaction với thay đổi nghiệp vụ; giữ 24 giờ rồi vòng `housekeeping` xóa.
 
 ## 3. Vùng Cluster & Entitlement
 
@@ -152,31 +192,36 @@ erDiagram
     timestamptz last_health_check
   }
   organization_entitlements {
-    ulid org_id PK
+    text org_id PK
     int max_members
     int max_groups
     int max_workspaces_total
   }
   onboarding_policies {
-    ulid id PK
+    text id PK
     text default_cluster_id FK
     jsonb grant_template
     bool active
   }
   organization_cluster_grants {
-    ulid id PK
-    ulid org_id FK
+    text id PK
+    text org_id FK
     text cluster_id FK
     bool is_default
     int max_workspaces
     int max_namespaces_total
-    jsonb resources "requests/limits cpu-mem, pods, storage"
+    bigint requests_cpu_milli
+    bigint requests_memory_bytes
+    bigint limits_cpu_milli
+    bigint limits_memory_bytes
+    int pods
+    bigint requests_storage_bytes
     text[] allowed_compute_modes
     text[] allowed_storage_classes
     text[] allowed_ingress_classes
   }
   shared_compute_pools {
-    ulid id PK
+    text id PK
     text cluster_id FK
     text name
     jsonb node_selector
@@ -186,31 +231,35 @@ erDiagram
     text status
   }
   cluster_grant_shared_pools {
-    ulid grant_id FK
-    ulid pool_id FK
+    text grant_id FK
+    text pool_id FK
   }
   dedicated_node_grants {
-    ulid id PK
-    ulid org_id FK
+    text id PK
+    text org_id FK
     text cluster_id FK
-    text node_name "unique per cluster"
-    jsonb allocatable
-    jsonb system_reserve
+    text node_name
+    bigint allocatable_cpu_milli
+    bigint allocatable_memory_bytes
+    int allocatable_pods
+    bigint reserve_cpu_milli
+    bigint reserve_memory_bytes
+    int reserve_pods
     text node_state "Ready|NotReady|Cordoned"
     text capacity_state "Available|PartiallyAllocated|FullyAllocated|Overcommitted"
   }
   network_pools {
-    ulid id PK
+    text id PK
     text cluster_id FK
-    ulid org_id FK "nullable = pool chung"
+    text org_id FK "nullable = pool chung"
     cidr[] cidrs
     int default_prefix_length
     int[] allowed_prefix_lengths
     text[] allowed_compute_modes
   }
   cluster_grant_network_pools {
-    ulid grant_id FK
-    ulid pool_id FK
+    text grant_id FK
+    text pool_id FK
   }
   clusters ||--o{ organization_cluster_grants : ""
   clusters ||--o{ shared_compute_pools : ""
@@ -220,7 +269,7 @@ erDiagram
   shared_compute_pools ||--o{ cluster_grant_shared_pools : ""
   organization_cluster_grants ||--o{ cluster_grant_network_pools : ""
   network_pools ||--o{ cluster_grant_network_pools : ""
-  onboarding_policies ||--o{ organization_cluster_grants : "sinh ra"
+  onboarding_policies ||--o{ organization_cluster_grants : "điền sẵn khi duyệt"
 ```
 
 | Invariant | Enforce bằng |
@@ -228,97 +277,107 @@ erDiagram
 | Một org có tối đa một default grant | `UNIQUE (org_id) WHERE is_default` |
 | Một org × cluster có tối đa một grant | `UNIQUE (org_id, cluster_id)` |
 | Node chỉ dedicated cho một org | `UNIQUE (cluster_id, node_name)` |
-| Pool/NodeGrant/NetworkPool trong grant phải cùng `cluster_id` với grant | trigger hoặc check ở service + integration test |
-| Pool riêng chỉ vào grant của đúng org | check ở service khi Admin gán |
-| Không giảm grant dưới tổng allocation hiện tại | transaction: lock grant, `SUM(workspaces.resources)` so với giá trị mới |
-| Không revoke node grant còn reservation Active | `FK ON DELETE RESTRICT` từ `workspace_node_reservations` + check state |
+| Pool/NodeGrant/NetworkPool trong grant phải cùng `cluster_id` với grant | service + integration test |
+| Pool riêng chỉ vào grant của đúng org | service khi Admin gán |
+| Không giảm grant dưới tổng allocation hiện tại | transaction: lock grant, `SUM` cột tài nguyên của `workspaces` so với giá trị mới |
+| Không revoke node grant còn reservation chưa `Released` | `FK ON DELETE RESTRICT` từ `workspace_node_reservations` + check state |
 
 **Điểm cần review**
 
-- `capacity_snapshot` của shared pool và `allocatable` của dedicated node là **dữ liệu chép từ Kubernetes**; ai cập nhật? Đề xuất: Provisioning Worker poll Node mỗi N phút và ghi lại; chênh lệch với reservation → chuyển `Overcommitted`. Cần chốt tần suất và ai chịu trách nhiệm (worker hay controller báo qua CR status).
-- `onboarding_policies.grant_template` là JSON; khi Admin đổi policy, grant đã cấp **không** đổi theo (snapshot tại thời điểm tạo). Đúng ý định chứ?
+- `capacity_snapshot` của shared pool và `allocatable_*` của dedicated node là **dữ liệu chép từ Kubernetes**. Controller báo qua status của CR phụ (`PlatformNodeGrant` cho dedicated node, `PlatformSharedPool` cho shared pool), worker chép về DB — worker không đọc Node trực tiếp. Chênh lệch với reservation → `Overcommitted`.
+- `onboarding_policies.grant_template` là JSON điền sẵn vào form duyệt; grant đã cấp là snapshot, đổi policy sau đó không ảnh hưởng [5.2.1].
 
 ## 4. Vùng Workspace & Allocation
 
 ```mermaid
 erDiagram
   workspaces {
-    ulid id PK
-    ulid org_id FK
+    text id PK
+    text org_id FK
     text cluster_id FK
-    ulid cluster_grant_id FK
+    text cluster_grant_id FK
     text slug "immutable, unique trong org"
     text k8s_name "org_slug-ws_slug, global unique"
     text display_name
     text state
-    jsonb resources
+    bigint requests_cpu_milli
+    bigint requests_memory_bytes
+    bigint limits_cpu_milli
+    bigint limits_memory_bytes
+    int pods
+    bigint requests_storage_bytes
     int namespace_quota
     text compute_mode "Shared|Dedicated"
-    ulid shared_pool_id FK "nullable"
-    int desired_generation
-    int observed_generation
+    text shared_pool_id FK "nullable"
+    bigint desired_generation
+    bigint observed_generation
     jsonb conditions
     timestamptz deleted_at
   }
   workspace_node_reservations {
-    ulid id PK
-    ulid workspace_id FK
-    ulid node_grant_id FK
-    numeric reserved_cpu
-    bigint reserved_memory
+    text id PK
+    text workspace_id FK
+    text node_grant_id FK
+    bigint reserved_cpu_milli
+    bigint reserved_memory_bytes
     int reserved_pods
     text state "Pending|Active|Releasing|Released"
   }
   network_allocations {
-    ulid id PK
-    ulid workspace_id FK
+    text id PK
+    text workspace_id FK
     text cluster_id FK
-    ulid pool_id FK
+    text pool_id FK
     cidr cidr
     text state "Allocated|Releasing|Quarantined|Released"
     timestamptz quarantine_until
   }
   workspace_group_bindings {
-    ulid workspace_id FK
-    ulid group_id FK
+    text workspace_id PK
+    text group_id PK
     text role "TenantOwner|Developer|Viewer"
   }
   workspace_namespaces {
-    ulid workspace_id FK
+    text workspace_id FK
     text name "prefix k8s_name-"
     text source "portal|kubectl"
     text state
     jsonb usage_snapshot
   }
   operations {
-    ulid id PK
+    text id PK
+    text org_id FK
     text resource_type
-    ulid resource_id
+    text resource_id
     text type
     text state "Pending|Running|Succeeded|Failed|Blocked"
-    jsonb progress
+    smallint progress "0–100"
     text error_code
-    text idempotency_key
+    text error_message
     text correlation_id
+    text created_by FK "NULL khi platform tự khởi tạo"
+    timestamptz finished_at
   }
   outbox_events {
-    bigserial id PK
+    bigint id PK "thứ tự giao"
+    text operation_id FK
+    text ordering_key "resource_type/resource_id"
     text target_cluster_id FK
-    ulid operation_id FK
     text type
     jsonb payload
-    int version
+    bigint version
     int attempts
     timestamptz next_attempt_at
+    text last_error
     timestamptz processed_at
   }
   audit_events {
-    bigserial id PK
-    ulid actor_user_id
-    ulid org_id
+    bigint id PK
+    text actor_user_id
+    text org_id
     text action
     text target_type
-    ulid target_id
+    text target_id
     text result
     jsonb detail
     timestamptz at
@@ -327,30 +386,30 @@ erDiagram
   workspaces ||--|| network_allocations : ""
   workspaces ||--o{ workspace_group_bindings : ""
   workspaces ||--o{ workspace_namespaces : ""
-  workspaces ||--o{ operations : ""
   operations ||--o{ outbox_events : ""
 ```
 
 | Invariant | Enforce bằng |
 |---|---|
-| `k8s_name` global unique, không tái dùng trong quarantine | `UNIQUE (k8s_name)` trên cả row `deleted_at IS NOT NULL` cho tới khi hết quarantine (soft row) |
-| Namespace name unique toàn cluster và có tiền tố `k8s_name-` | `UNIQUE (cluster_id, name)` + `CHECK (name LIKE k8s_name || '-%')` qua trigger |
+| `k8s_name` global unique, không tái dùng trong thời gian quarantine | `UNIQUE (k8s_name) WHERE state <> 'Deleted'`; cửa sổ quarantine do service kiểm lúc tạo: từ chối nếu còn Workspace `Deleted` cùng tên mà `network_allocations` chưa `Released` |
+| Namespace name unique toàn cluster và có tiền tố `k8s_name-` | `UNIQUE (cluster_id, name)`; tiền tố do service ghép, không nhận từ client |
 | Một group tối đa một role mỗi Workspace | `PRIMARY KEY (workspace_id, group_id)` |
-| Workspace luôn còn ≥1 TenantOwner binding | service check trong transaction + test; không có constraint SQL thuận tiện |
-| Dedicated Workspace có đúng một reservation Active | `UNIQUE (workspace_id) WHERE state IN ('Pending','Active')` |
-| Σ reservations trên node ≤ reservable | **transaction**: `SELECT ... FOR UPDATE` row `dedicated_node_grants`, tính `SUM` các reservation Active/Pending, so sánh, rồi insert |
-| Σ allocation Shared trên pool ≤ ratio × reservable | **transaction**: lock row `shared_compute_pools`, `SUM(workspaces.resources)` trên pool |
-| Σ allocation trong grant ≤ grant.resources | **transaction**: lock row `organization_cluster_grants` |
-| CIDR không overlap trong cluster | `EXCLUDE USING gist (cluster_id WITH =, cidr inet_ops WITH &&) WHERE state <> 'Released'` (cần extension `btree_gist`) |
-| Idempotency | `UNIQUE (idempotency_key)` trên `operations` |
+| Workspace luôn còn ≥1 TenantOwner binding | service trong transaction + test; không có constraint SQL thuận tiện |
+| Dedicated Workspace có đúng một reservation đang giữ chỗ | `UNIQUE (workspace_id) WHERE state IN ('Pending','Active')` |
+| Σ reservations trên node ≤ reservable | **transaction**: `SELECT ... FOR UPDATE` row `dedicated_node_grants`, `SUM` reservation chưa `Released`, so sánh, rồi insert |
+| Σ allocation Shared trên pool ≤ ratio × reservable | **transaction**: lock row `shared_compute_pools`, `SUM` cột tài nguyên của `workspaces` trên pool |
+| Σ allocation trong grant ≤ grant | **transaction**: lock row `organization_cluster_grants` |
+| CIDR không overlap trong cluster | `EXCLUDE USING gist (cluster_id WITH =, cidr inet_ops WITH &&) WHERE (state <> 'Released')` (extension `btree_gist`) |
+| Event cùng resource giao đúng thứ tự | worker chỉ lấy event khi không còn event cũ hơn chưa giao cùng `ordering_key` |
 
-Thứ tự lock cố định để tránh deadlock: `organization_cluster_grants` → `shared_compute_pools` hoặc `dedicated_node_grants` → `network_pools`. Mọi transaction create/resize/delete phải lock theo đúng thứ tự này.
+Thứ tự lock cố định để tránh deadlock: `organization_cluster_grants` → `shared_compute_pools` hoặc `dedicated_node_grants` → `network_pools`. Mọi transaction create/resize/delete lock theo đúng thứ tự này.
 
-**Điểm cần review**
+**Ghi chú**
 
-- `workspaces.resources` là JSONB (cpu/mem/pods/storage). Tính `SUM` trên JSONB chậm hơn cột riêng; với vài chục Workspace không thành vấn đề, nhưng nếu muốn index thì nên tách 6 cột numeric. Đề xuất: **tách cột** ngay từ đầu, JSONB chỉ dùng cho `conditions`/`progress`.
-- CIDR exclusion constraint là **lớp bảo vệ cuối**; IPAM service vẫn tự tính subnet trống trước. Cần test rằng khi hai request đồng thời chọn cùng subnet, một request nhận `CIDR_OVERLAP` sạch sẽ (map lỗi 23P01) thay vì 500.
-- Reservation grant không có bảng riêng nên "reservation vẫn giữ khi provisioning Failed" được thể hiện bằng việc **row `workspaces` vẫn tồn tại với state Failed** và được tính vào SUM. Chỉ khi `Deleted` mới loại khỏi SUM. Đơn giản nhưng phải viết rõ trong query.
+- "CIDR còn trống" không phải một state: đó là mọi khoảng trong pool không bị row nào khác `Released` phủ lên. Row `Released` được giữ làm lịch sử.
+- "Reservation vẫn giữ khi provisioning `Failed`" thể hiện bằng việc row `workspaces` còn tồn tại ở state `Failed` và vẫn nằm trong `SUM`. Chỉ row `Deleted` mới bị loại khỏi `SUM`; mọi query tính tổng phải viết rõ điều kiện này.
+- Exclusion constraint là **lớp bảo vệ cuối**; IPAM vẫn tự tính subnet trống dưới lock của `network_pools`. Khi constraint bắn (SQLSTATE `23P01`), API trả `CIDR_OVERLAP`, không phải 500.
+- `outbox_events` chỉ mang thay đổi đẩy xuống Cluster, nên `target_cluster_id` là bắt buộc. Đồng bộ sang Keycloak **không** đi qua bảng này: Group Sync Worker đọc thẳng `sync_status` của `groups`/`group_members`.
 
 ## 5. Ánh xạ DB ↔ CR ↔ Kubernetes
 
@@ -362,7 +421,7 @@ flowchart LR
   classDef cr fill:#fff3cd,stroke:#b58900,color:#000
   classDef k8s fill:#d1e7ff,stroke:#0b5ed7,color:#000
 
-  W["workspaces<br/>k8s_name, resources,<br/>namespace_quota, compute_mode"]:::db
+  W["workspaces<br/>k8s_name, tài nguyên,<br/>namespace_quota, compute_mode"]:::db
   NR["workspace_node_reservations<br/>node_grant → node_name"]:::db
   NA["network_allocations.cidr"]:::db
   GB["workspace_group_bindings<br/>+ groups.machine_name"]:::db
@@ -398,5 +457,5 @@ flowchart LR
 
 **Điểm cần review**
 
-- CR chứa **giá trị đã resolve** (node name, CIDR, group subject, hostname zone), không chứa ID tham chiếu về DB mà controller phải tra. Điều này giữ controller stateless với DB và là nền cho Cluster Agent Phase 2.
-- Nếu Admin đổi `allowed_storage_classes` của grant, mọi Workspace trong grant cần re-render CR → cần một "fan-out" trong service entitlement sinh nhiều outbox event. Cần ghi nhận thành task ở M5/M7.
+- CR chứa **giá trị đã resolve** (node name, CIDR, group subject, hostname zone), không chứa ID tham chiếu về DB mà controller phải tra. Điều này giữ controller không phụ thuộc DB và là nền cho Cluster Agent Phase 2.
+- Nếu Admin đổi `allowed_storage_classes` của grant, mọi Workspace trong grant cần re-render CR → một "fan-out" trong service entitlement sinh nhiều outbox event. Task của M5/M7.

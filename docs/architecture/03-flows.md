@@ -1,6 +1,6 @@
 # Tenantry — 03. Luồng nghiệp vụ và kỹ thuật
 
-Tài liệu này vẽ 13 luồng chính của Tenantry dưới dạng `sequenceDiagram`, bám theo `docs/PRODUCT-PLAN.md` v0.6 (nguồn sự thật duy nhất; số mục trong ngoặc vuông như [5.3] trỏ về plan).
+Tài liệu này vẽ 13 luồng chính của Tenantry dưới dạng `sequenceDiagram`. Đây là **góc nhìn**, không định nghĩa gì mới: quy tắc ở `PRODUCT-PLAN.md` (số trong ngoặc vuông như [5.3] trỏ về đó), trạng thái ở `04-state-machines.md`, schema ở `02-data-model.md`, phiên và thu hồi quyền ở `06-security-and-identity.md`.
 Mỗi luồng có ba phần: **Mục đích** một dòng, **sơ đồ Mermaid** đánh số bước bằng `autonumber`, và **Điểm cần review** liệt kê quyết định/bất biến mà luồng phụ thuộc cùng nhánh lỗi — người review đi từng bước và tick từng bullet.
 Nhánh lỗi, nhánh tùy chọn và xử lý đồng thời được vẽ bằng `alt` / `opt` / `loop` / `par`; số bước dùng để trích dẫn khi góp ý.
 Ví dụ xuyên suốt: Organization `acme` (id `org-01jabc`), Workspace `solar` → tên Kubernetes `acme-solar`, Cluster `cluster-a`, node dedicated `worker-a-05` qua `nodegrant-a1`, các Workspace Dedicated `water` và `green`.
@@ -13,12 +13,12 @@ Tên và alias được giữ nguyên trong mọi sơ đồ; sơ đồ nào khô
 | Alias | Tên trong sơ đồ | Vai trò trong Tenantry |
 |---|---|---|
 | `U` | User / Browser | Người dùng cuối, OrgOwner, Platform Admin hoặc trình duyệt của họ |
-| `SPA` | Portal SPA | Frontend React, gọi Platform API qua session cookie |
-| `API` | Platform API | Backend Go kiêm BFF: authz, validation, reservation, operation, session |
-| `DB` | PostgreSQL | Source of truth cho product state, outbox, session store |
+| `SPA` | Portal SPA | Frontend React, gọi Platform API qua cookie phiên |
+| `API` | Platform API | Backend Go kiêm BFF: authz, validation, reservation, operation, phiên |
+| `DB` | PostgreSQL | Source of truth cho product state, outbox, phiên portal |
 | `KC` | Keycloak | Account, OIDC, group claim, realm role `platform-admin` |
 | `PW` | Outbox / Provisioning Worker | Đọc `outbox_events`, apply `PlatformWorkspace` CR bằng credential scoped, đồng bộ status về DB |
-| `GS` | Group Sync Worker | Đồng bộ group/membership từ DB sang Keycloak, revoke session |
+| `GS` | Group Sync Worker | Đồng bộ group/membership từ DB sang Keycloak, logout user khi thu hồi quyền |
 | `K8S` | kube-apiserver | API server của Cluster chứa Workspace |
 | `CTRL` | Workspace Controller | controller-runtime trong Cluster, reconcile CR `tenantry.io` |
 | `CAP` | Capsule | Capsule Operator: Tenant, ResourcePool, TenantResource, admission |
@@ -31,9 +31,11 @@ Tên và alias được giữ nguyên trong mọi sơ đồ; sơ đồ nào khô
 
 ---
 
-## 1. First login / sign-up → personal Organization + onboarding auto-grant
+## 1. Đăng nhập lần đầu và xin tạo Organization
 
-**Mục đích:** Một account mới đăng ký qua Keycloak và, trong đúng một transaction, có user record, personal Organization, ba group mặc định và ClusterGrant onboarding trên default Cluster [4.2][5.2.1][8.1].
+### 1a. First login / sign-up: chỉ tạo user record và phiên
+
+**Mục đích:** Một account đăng ký qua Keycloak; callback chỉ upsert user và tạo phiên portal. Không Organization nào được tạo tự động [4.2][8.1][8.3].
 
 ```mermaid
 sequenceDiagram
@@ -43,60 +45,113 @@ sequenceDiagram
   participant API as Platform API
   participant KC as Keycloak
   participant DB as PostgreSQL
-  participant GS as Group Sync Worker
 
   U->>SPA: Mở portal, bấm Sign up hoặc Login
   SPA->>API: GET /auth/login
-  API-->>U: 302 tới Keycloak, code + PKCE, client portal
-  U->>KC: Trang Registration / Login theme portal
+  API-->>U: Set-Cookie tenantry_login (state, nonce, PKCE), 302 Keycloak
   U->>KC: Đăng ký, verify email, đăng nhập
   KC-->>U: 302 callback kèm authorization code
-  U->>API: GET /auth/callback?code=...
+  U->>API: GET /auth/callback?code=...&state=...
+  API->>API: Mở cookie tenantry_login, so state
   API->>KC: Đổi code + PKCE verifier lấy token
-  KC-->>API: ID token, access token aud portal-api
-  API->>API: Validate issuer, audience, expiry, email_verified
-  API->>DB: BEGIN
-  API->>DB: Upsert users theo issuer + sub
-  alt Lần đầu login, chưa có personal Organization
-    API->>DB: INSERT organizations is_personal=true, slug immutable
-    API->>DB: INSERT organization_members role OrgOwner
-    API->>DB: INSERT groups admins, developers, viewers
-    API->>DB: INSERT group_members owner vào admins, Pending
-    API->>DB: Đọc onboarding_policies đang active
-    API->>DB: INSERT organization_cluster_grants default Cluster
-    API->>DB: INSERT audit OrgCreated, GrantAutoIssued
-  else Đã có personal Organization
-    API->>DB: UPDATE snapshot email, display_name
+  KC-->>API: ID token, access token aud portal-api, refresh token
+  API->>API: Validate issuer, audience, nonce, expiry, email_verified
+  alt email_verified = false hoặc token không hợp lệ
+    API-->>U: Trang lỗi, không tạo phiên
   end
-  API->>DB: INSERT session row
+  API->>DB: BEGIN
+  API->>DB: Upsert users theo issuer + sub, cập nhật email, display_name
+  API->>DB: INSERT sessions (hash cookie, realm_roles, refresh token mã hóa)
   API->>DB: COMMIT
-  API-->>U: Set-Cookie HttpOnly Secure SameSite=Lax, 302 /
+  API-->>U: Set-Cookie tenantry_session + tenantry_csrf, 302 về trang ban đầu
   SPA->>API: GET /api/v1/me, GET /api/v1/organizations
-  API-->>SPA: user + personal Organization + grant
-  loop Group Sync Worker poll sync_status=Pending
-    GS->>DB: Lấy group, group_member chưa sync
-    GS->>KC: Admin API tạo group org_01jabc:group_...
-    GS->>KC: Add user vào group admins
-    GS->>DB: UPDATE sync_status=Synced hoặc Failed + attempts
+  alt User chưa thuộc Organization nào
+    API-->>SPA: danh sách rỗng
+    SPA-->>U: Màn trống: "Xin tạo Organization" hoặc chờ lời mời
+  else Đã có Organization hoặc yêu cầu Pending/Rejected
+    API-->>SPA: Organization + trạng thái yêu cầu
   end
 ```
 
 **Điểm cần review**
 
-- Bước 12: identity key duy nhất là `(issuer, sub)`; email/display name chỉ là snapshot, không dùng làm khóa [4.1].
-- Bước 13–19 nằm trong một transaction với upsert user: hoặc có đủ Org + group + grant, hoặc không có gì. Partial unique index "một personal Org mỗi user" bảo vệ khi hai callback của cùng account chạy song song; transaction thua rơi vào nhánh `else` (giả định).
-- Slug personal Org: sinh từ `preferred_username` chuẩn hóa, thêm hậu tố ngẫu nhiên nếu trùng; slug immutable vì là tiền tố tên Kubernetes [4.2][4.4] (giả định về cách sinh).
-- Bước 17–18: nếu `onboarding_policies` trỏ default Cluster không tồn tại hoặc không `Ready`, vẫn tạo Org nhưng bỏ qua grant, ghi audit và portal hiển thị "chờ Admin cấp quota" [19.2]; không chặn login (giả định).
-- Bước 10: yêu cầu `email_verified=true` trước khi tạo session, để flow Invitation (mục 3) có thể tin email của session (giả định — Keycloak required action Verify Email).
-- Bước 29–33 chạy bất đồng bộ; user có thể vào wizard ngay nhưng tạo Workspace sẽ bị `GROUP_SYNC_PENDING` nếu group `admins` chưa sync xong [16.5][17.1].
+- Bước 13: identity key duy nhất là `(issuer, sub)`; email/display name chỉ là snapshot [4.1]. Upsert nên login hai lần, hoặc hai callback song song, không tạo hai user.
+- Bước 10–12: `email_verified=true` là điều kiện tạo phiên, để flow Invitation (mục 3) tin được email của phiên (Keycloak required action Verify Email).
+- Bước 3, 7, 14, 16: cơ chế cookie, phiên, refresh và logout định nghĩa ở `06-security-and-identity.md` mục 3; sơ đồ này không lặp lại.
+- User có `users.status = Disabled` không qua được bước 16 ở request kế tiếp: API trả 401 và xóa phiên.
+
+### 1b. Xin tạo Organization → Platform Admin duyệt hoặc từ chối
+
+**Mục đích:** User gửi yêu cầu (Organization `Pending`, giữ chỗ slug, người xin là OrgOwner); Admin duyệt kèm ClusterGrant điền sẵn từ onboarding policy, hoặc từ chối kèm lý do và nhả slug [4.2][5.2.1][16.5]. Trạng thái: `04-state-machines.md` mục 11.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant U as User / Browser
+  participant SPA as Portal SPA
+  participant API as Platform API
+  participant DB as PostgreSQL
+  participant GS as Group Sync Worker
+  participant KC as Keycloak
+
+  U->>SPA: Alice nhập slug acme, display name, mô tả
+  SPA->>API: POST /api/v1/organizations
+  API->>API: Validate slug (định dạng, từ cấm)
+  API->>DB: BEGIN
+  API->>DB: INSERT organizations status=Pending, owner=alice
+  API->>DB: INSERT organization_members role OrgOwner
+  alt Slug đã bị giữ
+    API->>DB: ROLLBACK
+    API-->>SPA: 409 SLUG_TAKEN
+  else Alice đang có một yêu cầu Pending khác
+    API->>DB: ROLLBACK
+    API-->>SPA: 409 ORG_REQUEST_PENDING
+  else Hợp lệ
+    API->>DB: COMMIT
+    API-->>SPA: 201 Organization Pending
+    SPA-->>U: Màn "đang chờ duyệt"
+  end
+  Note over U,SPA: Platform Admin mở khu Admin, hàng đợi duyệt
+  SPA->>API: GET /api/v1/admin/organizations?status=Pending
+  API->>API: Check platform-admin trong phiên
+  API-->>SPA: Yêu cầu của Alice + grant điền sẵn từ onboarding policy
+  alt Admin duyệt (có thể sửa grant trước)
+    SPA->>API: POST /admin/organizations/org-01jabc:approve
+    API->>DB: BEGIN, SELECT organizations FOR UPDATE
+    API->>DB: Check Cluster, pool, network refs cùng cluster_id
+    API->>DB: UPDATE organizations status=Active
+    API->>DB: INSERT organization_entitlements
+    API->>DB: INSERT organization_cluster_grants is_default=true
+    API->>DB: INSERT groups admins, developers, viewers (Pending)
+    API->>DB: INSERT group_members alice vào admins (Pending)
+    API->>DB: INSERT audit OrgApproved, COMMIT
+    API-->>SPA: 200 Organization Active + grant
+    GS->>DB: Lấy group, group_member sync_status=Pending
+    GS->>KC: Tạo group org_01jabc:group_..., add Alice vào admins
+    GS->>DB: UPDATE sync_status=Synced
+  else Admin từ chối
+    SPA->>API: POST /admin/organizations/org-01jabc:reject kèm lý do
+    API->>DB: UPDATE status=Rejected, review_note; INSERT audit
+    API-->>SPA: 200
+    Note over U,SPA: Alice thấy lý do, slug acme được nhả, gửi được yêu cầu mới
+  end
+```
+
+**Điểm cần review**
+
+- Bước 5–10: hai nhánh lỗi đến từ hai partial unique index (slug, một `Pending` mỗi user), không phải từ `SELECT` trước khi insert — nên hai request đồng thời vẫn chỉ một thắng.
+- Bước 18–24 là **một** transaction: Organization không bao giờ `Active` mà thiếu entitlement, default grant hay group mặc định.
+- Bước 19: onboarding policy trỏ default Cluster không tồn tại hoặc không `Ready` thì Admin không duyệt được với grant mặc định; phải chọn Cluster khác hoặc sửa policy trước.
+- Bước 26–28 chạy bất đồng bộ; Alice vào wizard ngay được nhưng tạo Workspace sẽ bị `GROUP_SYNC_PENDING` tới khi group `admins` sync xong [16.5][17.1].
+- Grant đã cấp là snapshot của policy tại lúc duyệt [5.2.1].
 
 ---
 
-## 2. Platform Admin tạo Organization cho khách và nâng entitlement
+## 2. Platform Admin tạo thẳng Organization cho khách và nâng entitlement
 
-### 2a. Tạo Organization bổ sung kèm Owner và ClusterGrant ban đầu
+### 2a. Tạo thẳng Organization kèm Owner và ClusterGrant ban đầu
 
-**Mục đích:** Đóng lỗ hổng "nhân free tier": chỉ Platform Admin (realm role `platform-admin`) tạo Organization không-personal, gán đúng một OrgOwner và ClusterGrant ban đầu trong một thao tác [0.2][4.2][16.5].
+**Mục đích:** Platform Admin (realm role `platform-admin`) tạo Organization `Active` ngay cho khách, không qua bước xin–duyệt: gán đúng một OrgOwner và ClusterGrant ban đầu trong một thao tác [4.2][16.5].
 
 ```mermaid
 sequenceDiagram
@@ -111,8 +166,8 @@ sequenceDiagram
   U->>SPA: Admin mở khu Admin, form New Organization
   SPA->>API: POST /api/v1/admin/organizations
   Note over SPA,API: body slug, ownerUserId, entitlement, ClusterGrant đầu
-  API->>API: Check realm role platform-admin trong token
-  alt Token không có platform-admin
+  API->>API: Check platform-admin trong phiên
+  alt Phiên không có platform-admin
     API-->>SPA: 403 FORBIDDEN
   end
   API->>DB: BEGIN
@@ -127,7 +182,7 @@ sequenceDiagram
     API->>DB: ROLLBACK
     API-->>SPA: 409/422 kèm mã lỗi ổn định
   end
-  API->>DB: INSERT organizations is_personal=false, slug acme
+  API->>DB: INSERT organizations status=Active, slug acme
   API->>DB: INSERT organization_members owner role OrgOwner
   API->>DB: INSERT groups admins, developers, viewers
   API->>DB: INSERT group_members owner vào admins
@@ -146,12 +201,12 @@ sequenceDiagram
 - Bước 4: authz admin ở backend theo realm role, không tin flag từ frontend [4.1][10.1].
 - Bước 8–11: Owner phải là user đã login ít nhất một lần; plan ghi "owner (email/user)" nhưng chưa nói cách xử lý email chưa đăng ký. Chọn: từ chối với `OWNER_USER_NOT_FOUND` (giả định); phương án thay thế là tạo invitation role OrgOwner nhưng sẽ vi phạm "đúng một OrgOwner" trong lúc chờ.
 - Bước 12–13: mọi ref trong grant (shared pool, NetworkPool, node grant, StorageClass, IngressClass) phải cùng `cluster_id` với grant; NetworkPool riêng phải có `organizationId` đúng Org hoặc null [5.2][7.1][15].
-- Bước 18–24: cùng một transaction như first login để Org không bao giờ tồn tại mà thiếu Owner hoặc thiếu default grant.
+- Bước 18–24: cùng một transaction, giống cạnh approve ở mục 1b, để Org không bao giờ `Active` mà thiếu Owner hoặc thiếu default grant.
 - Mã lỗi `OWNER_USER_NOT_FOUND` không có trong danh sách [16.5] (giả định).
 
 ### 2b. Nâng quota ClusterGrant và cấp dedicated node
 
-**Mục đích:** Admin nâng quota nhưng không được hạ dưới tổng allocation hiện tại; cấp node yêu cầu node sạch tenant workload của Organization khác, sau đó controller gắn label/taint Organization [0.10][0.11][6.3][6.4].
+**Mục đích:** Admin nâng quota nhưng không được hạ dưới tổng allocation hiện tại; cấp node là một Operation: controller kiểm node sạch tenant workload của Organization khác rồi mới gắn label/taint Organization [6.3][6.4]. API không có credential nào vào Cluster — mọi thứ đi qua CR `PlatformNodeGrant`.
 
 ```mermaid
 sequenceDiagram
@@ -160,14 +215,14 @@ sequenceDiagram
   participant SPA as Portal SPA
   participant API as Platform API
   participant DB as PostgreSQL
-  participant K8S as kube-apiserver
   participant PW as Outbox / Provisioning Worker
+  participant K8S as kube-apiserver
   participant CTRL as Workspace Controller
 
   U->>SPA: Admin sửa quota ClusterGrant của acme
   SPA->>API: PUT /admin/organizations/acme/cluster-grants/cluster-a
   API->>DB: BEGIN, SELECT grant FOR UPDATE
-  API->>DB: SUM allocation Workspace active trong grant
+  API->>DB: SUM allocation Workspace chưa Deleted trong grant
   alt Quota mới thấp hơn tổng allocation hiện tại
     API->>DB: ROLLBACK
     API-->>SPA: 409 CLUSTER_GRANT_BELOW_ALLOCATION
@@ -177,47 +232,47 @@ sequenceDiagram
   end
   U->>SPA: Admin chọn node worker-a-05 cấp cho acme
   SPA->>API: PUT .../cluster-grants/cluster-a/dedicated-nodes
-  API->>K8S: GET node worker-a-05 bằng credential read-only
-  K8S-->>API: Node Ready, schedulable, labels
-  alt Node NotReady, cordoned hoặc là system node
-    API-->>SPA: 422 DEDICATED_NODE_NOT_READY
+  API->>DB: BEGIN
+  API->>DB: INSERT dedicated_node_grants node_state=NotReady
+  alt Node đã cấp cho Organization khác (unique cluster+node)
+    API->>DB: ROLLBACK
+    API-->>SPA: 409 CONFLICT
   end
-  API->>K8S: LIST pods fieldSelector spec.nodeName=worker-a-05
-  K8S-->>API: Pod list
-  API->>API: Lọc pod có label tenantry.io/organization-id khác acme
-  alt Còn tenant pod của Organization khác
-    API-->>SPA: 409 DEDICATED_NODE_NOT_CLEAN + danh sách pod lạ
+  API->>DB: INSERT operations node.grant, outbox node.grant, audit
+  API->>DB: COMMIT
+  API-->>SPA: 202 operationId
+  PW->>DB: Lấy outbox node.grant
+  PW->>K8S: Apply PlatformNodeGrant nodegrant-a1 (node, org id)
+  K8S->>CTRL: Watch event
+  CTRL->>K8S: GET node, LIST pod trên node
+  alt Node NotReady, cordoned hoặc là system node
+    CTRL->>K8S: status Ready=False reason NodeNotReady
+    PW->>DB: operations Failed DEDICATED_NODE_NOT_READY
+  else Còn tenant pod của Organization khác
+    CTRL->>K8S: status Ready=False reason NodeNotClean + danh sách pod
+    PW->>DB: operations Failed DEDICATED_NODE_NOT_CLEAN
   else Node sạch
-    API->>DB: BEGIN
-    API->>DB: INSERT dedicated_node_grants unique cluster+node
-    API->>DB: Ghi allocatable, systemReserve, capacity snapshot
-    API->>DB: UPDATE grant dedicatedNodeGrantRefs, allowedComputeModes
-    API->>DB: INSERT outbox NodeGrantAssigned, audit
-    API->>DB: COMMIT
-    API-->>SPA: 201 DedicatedNodeGrant capacityState=Available
-    PW->>DB: Poll outbox NodeGrantAssigned
-    PW->>K8S: Apply CR nội bộ mô tả node grant, field manager riêng
-    K8S->>CTRL: Watch event
-    CTRL->>K8S: Patch label tenantry.io/dedicated-org=org-01jabc
-    CTRL->>K8S: Patch taint dedicated-org=org-01jabc NoSchedule
-    CTRL->>K8S: Update CR status NodeLabeled=True
-    PW->>DB: UPDATE node grant nodeState=Ready, outbox processed
+    CTRL->>K8S: Patch label + taint tenantry.io/dedicated-org=org-01jabc
+    CTRL->>K8S: status Ready=True, allocatable của node
+    K8S->>PW: Watch status
+    PW->>DB: UPDATE node grant allocatable, node_state=Ready
+    PW->>DB: operations Succeeded
   end
 ```
 
 **Điểm cần review**
 
-- Bước 3–7: đối xứng với rule Workspace không giảm quota dưới usage; mã `CLUSTER_GRANT_BELOW_ALLOCATION` chưa có trong plan (giả định).
-- Bước 14 và 19: Platform API cần một credential **read-only** để GET node và LIST pod; plan chỉ nói worker có credential scoped trên CRD `tenantry.io` [13][20.2]. Cần quyết định: credential read-only riêng cho API (giả định) hay ủy quyền check này cho controller.
-- Bước 21: "pod lạ" = pod có label `tenantry.io/organization-id` khác acme; pod hệ thống (CNI, CSI, monitoring, DaemonSet) không tính [6.3]. Pod tenant không có label (drift) nên được coi là lạ để an toàn.
-- Bước 32–36: plan nói controller gắn label/taint khi grant [6.4] nhưng không nói kênh truyền; chọn một CR nội bộ cho node grant do worker apply (giả định). Cách thay thế là nhúng vào CR `PlatformWorkspace` đầu tiên, nhưng khi đó taint chỉ xuất hiện sau khi có Workspace.
-- Unique `(cluster_id, node_name)` [15] chặn cấp cùng node cho hai Organization; revoke node grant bị chặn khi còn active reservation [6.3].
+- Bước 3–7: đối xứng với rule Workspace không giảm quota dưới usage.
+- Bước 13 và 30: grant mới có `node_state=NotReady` cho tới khi controller xác nhận, nên wizard chưa cho chọn node và reservation bị `DEDICATED_NODE_NOT_READY` — không cần thêm state nào cho "đang cấp".
+- Bước 23–27: "pod lạ" = pod thuộc Namespace có label `tenantry.io/organization-id` khác acme; pod hệ thống (CNI, CSI, monitoring, DaemonSet) không tính [6.3]. Pod tenant không có label (drift) coi là lạ để an toàn. Operation `Failed` thì Admin drain node rồi retry.
+- Controller tiếp tục cập nhật `status.allocatable` và Ready của `PlatformNodeGrant`; worker chép về DB, đó là nguồn của `capacity_state` và drift `Overcommitted` (`04-state-machines.md` mục 5).
+- Unique `(cluster_id, node_name)` chặn cấp cùng node cho hai Organization; revoke node grant bị chặn khi còn reservation chưa `Released` [6.3].
 
 ---
 
 ## 3. Invitation: tạo link → invitee login → accept theo email đã verify
 
-**Mục đích:** Owner tạo invite link one-time có expiry; membership chỉ được tạo khi email đã verify của account đang login khớp email trong invitation [0.13][9.1].
+**Mục đích:** Owner tạo invite link one-time có expiry; membership chỉ được tạo khi email đã verify của account đang login khớp email trong invitation [9.1].
 
 ```mermaid
 sequenceDiagram
@@ -247,11 +302,11 @@ sequenceDiagram
   API-->>SPA: Org name, role, email được mời đã che một phần
   SPA->>API: Chưa login thì /auth/login, giữ returnTo
   API-->>U: 302 Keycloak, Joe login hoặc register + verify
-  Note over API,KC: Flow 1 chạy, Joe có personal Org riêng
+  Note over API,KC: Flow 1a chạy, Joe có user record và phiên
   U->>SPA: Bấm Accept
   SPA->>API: POST /api/v1/invitations/TOKEN:accept
   API->>DB: BEGIN, SELECT invitation FOR UPDATE
-  API->>API: So email đã verify của session với invitation.email
+  API->>API: So email đã verify của user với invitation.email
   alt Email không khớp hoặc email_verified=false
     API->>DB: INSERT audit InvitationAcceptRejected, ROLLBACK
     API-->>SPA: 403 INVITATION_EMAIL_MISMATCH
@@ -275,16 +330,16 @@ sequenceDiagram
 **Điểm cần review**
 
 - Bước 5 và 7: DB chỉ lưu hash; token thô chỉ xuất hiện đúng một lần trong response 201 và không được log [20.1].
-- Bước 22–26: so khớp dùng `email_verified` từ ID token Keycloak của session hiện tại, so sánh case-insensitive; không có nhánh "owner xác nhận identity" [0.13]. Invitation không bị đốt khi mismatch để Joe có thể login lại đúng account (giả định).
+- Bước 22–26: so khớp với email đã verify trong `users` (chép từ ID token lúc login), so sánh case-insensitive; không có nhánh "owner xác nhận identity" [9.1]. Invitation không bị đốt khi mismatch để Joe có thể login lại đúng account (giả định).
 - Bước 21: `SELECT FOR UPDATE` + cột `used_at` bảo đảm one-time khi hai tab cùng bấm Accept.
 - Bước 4: `maxMembers` được check lúc tạo invite và check lại lúc accept (bước 27) vì số member có thể đổi trong lúc chờ (giả định).
 - Nếu Joe đã là member acme, accept trả 409 và không tạo membership trùng; role không bị hạ/nâng ngầm (giả định).
 
 ---
 
-## 4. Thay đổi group membership → Keycloak sync → revoke → contract thu hồi
+## 4. Gỡ user khỏi group → Keycloak sync → logout → contract thu hồi
 
-**Mục đích:** Xóa user khỏi group đồng bộ sang Keycloak, bảo trì group `tenantry:tenant-users`, revoke session; token cũ vẫn hợp lệ tới TTL khoảng 5 phút — đây là contract thu hồi được chấp nhận [9.3][11.4].
+**Mục đích:** Gỡ user khỏi group là một tombstone trong DB; Group Sync Worker gỡ trên Keycloak, bảo trì group `tenantry:tenant-users` và logout user; token cũ vẫn hợp lệ tới TTL 5 phút [9.3][11.4]. Contract và hệ quả: `06-security-and-identity.md` mục 5.
 
 ```mermaid
 sequenceDiagram
@@ -303,31 +358,29 @@ sequenceDiagram
   SPA->>API: DELETE /api/v1/groups/grp-dev/members/joe
   API->>API: Authz OrgOwner/OrgAdmin của acme
   API->>DB: BEGIN
-  API->>DB: UPDATE group_members state=Removing, sync Pending
-  API->>DB: Đếm binding Workspace còn lại của Joe qua group khác
+  API->>DB: UPDATE group_members deleted_at=now, sync_status=Pending
   API->>DB: INSERT audit GroupMemberRemoved, COMMIT
-  API-->>SPA: 202 sync_status=Pending
-  GS->>DB: Poll group_members Pending
+  API-->>SPA: 200, Joe không còn trong danh sách member
+  GS->>DB: Lấy group_members Pending tới hạn (SKIP LOCKED)
   GS->>KC: Admin API remove Joe khỏi org_01jabc:group_01jdev
+  GS->>DB: Joe còn binding Workspace nào qua group khác?
   alt Joe không còn binding Workspace nào
     GS->>KC: Remove Joe khỏi group tenantry:tenant-users
-  else Joe còn binding qua group khác
-    GS->>GS: Giữ tenantry:tenant-users
   end
-  GS->>KC: Revoke mọi session của Joe, kể cả offline token
+  opt Group developers đang có binding Workspace
+    GS->>KC: Logout Joe: kết thúc mọi SSO session
+  end
   alt Keycloak lỗi tạm thời
-    GS->>DB: UPDATE sync_status=Failed, attempts+1, retry backoff
+    GS->>DB: sync_status=Error, sync_attempts+1, next_sync_at theo backoff
   else Thành công
-    GS->>DB: DELETE group_members, sync_status=Synced
+    GS->>DB: DELETE row group_members
   end
-  SPA->>API: Poll GET group members
-  API-->>SPA: Joe đã gỡ, trạng thái Synced
-  Note over KL,K8S: Cửa sổ token cũ còn hiệu lực tối đa TTL khoảng 5 phút
+  Note over KL,K8S: Token cũ còn hiệu lực tối đa 5 phút
   KL->>PROXY: kubectl với token cũ còn group claim
   PROXY->>K8S: Forward, JWT còn đúng signature và expiry
   K8S-->>KL: 200 vẫn truy cập được cho tới expiry
   KL->>KC: Refresh token khi access token hết hạn
-  KC-->>KL: 400 session revoked, cần login lại
+  KC-->>KL: 400 session đã kết thúc, cần login lại
   KL->>KC: Browser login lại
   KC-->>KL: Token mới không còn group developers
   KL->>PROXY: kubectl get pods -n acme-solar-frontend
@@ -337,11 +390,12 @@ sequenceDiagram
 
 **Điểm cần review**
 
-- Bước 5–7: DB đổi trước, Keycloak theo sau; portal hiển thị `Pending` cho tới khi Synced. Nếu Keycloak lỗi lâu, membership trong DB đã mất nhưng Kubernetes vẫn thấy group cũ khi user login lại — cần alert `sync lag` [21.2].
-- Bước 11–14: `tenantry:tenant-users` là điều kiện Capsule coi subject là Capsule user; chỉ gỡ khi user không còn **bất kỳ** binding Workspace nào trên platform, không tính theo Cluster [9.3].
-- Bước 15: revoke session chặn refresh/new token; không làm JWT đã phát hành hết hạn sớm. Bước 23–25 là hành vi đúng thiết kế, không phải bug, và cần ghi vào tài liệu/UI [11.4][19.2].
-- Bước 16–19: retry với backoff và giới hạn `attempts`; đổi thứ tự remove-group và revoke-session không ảnh hưởng kết quả cuối vì cả hai idempotent.
-- Đo "thời gian từ group change tới token mới có hiệu lực" là một chỉ số đánh giá [24.6]; token TTL 5 phút là cấu hình client `kubectl`/`headlamp-*` trong realm.
+- Bước 5–7: sau commit, Joe mất group ngay với portal (mọi query lọc `deleted_at IS NULL`); row tombstone chỉ còn là việc chờ worker. Nếu Keycloak lỗi lâu thì Kubernetes vẫn thấy group cũ khi Joe login lại — cần alert `sync lag` [21.2].
+- Bước 10–12: `tenantry:tenant-users` là điều kiện Capsule coi subject là Capsule user; chỉ gỡ khi user không còn **bất kỳ** binding Workspace nào trên platform, không tính theo Cluster [9.3].
+- Bước 13–14: logout chặn refresh/new token, không làm JWT đã phát hành hết hạn sớm. Nó kết thúc **mọi** phiên của Joe: portal, Headlamp và kubectl của các Organization khác cũng phải login lại. Bước 20–22 là hành vi đúng thiết kế, phải ghi trên UI [19.2].
+- Bước 15–18: retry với backoff; mọi lời gọi Keycloak ở bước 9–14 idempotent nên chạy lại từ đầu là an toàn.
+- Remove member khỏi Organization và member tự rời (mục 11b) đi cùng đường này cho mọi group của Organization mà user thuộc.
+- Đo "thời gian từ group change tới token mới có hiệu lực" là một chỉ số đánh giá [24.6].
 
 ---
 
@@ -370,9 +424,11 @@ sequenceDiagram
   SPA->>API: POST /organizations/acme/workspaces
   Note over SPA,API: Header Idempotency-Key = UUID sinh ở client
   API->>API: Authz OrgOwner/OrgAdmin, validate slug solar
-  API->>DB: Idempotency-Key đã gắn operation nào chưa?
-  alt Key đã tồn tại
-    API-->>SPA: 200 trả lại Operation cũ, không tạo mới
+  API->>DB: SELECT idempotency_keys theo (user, key)
+  alt Key đã có, cùng request hash
+    API-->>SPA: Trả lại đúng response đã lưu, không tạo mới
+  else Key đã có, request hash khác
+    API-->>SPA: 422 IDEMPOTENCY_KEY_REUSED
   end
   API->>DB: BEGIN
   API->>DB: SELECT organization_cluster_grants FOR UPDATE
@@ -382,7 +438,7 @@ sequenceDiagram
     API->>DB: ROLLBACK
     API-->>SPA: 409 CLUSTER_GRANT_CPU_QUOTA_EXCEEDED
   end
-  API->>DB: SELECT shared_compute_pools shared-general FOR SHARE
+  API->>DB: SELECT shared_compute_pools shared-general FOR UPDATE
   API->>DB: SUM allocation mọi Workspace trên pool
   Note over API,DB: Soft check Σ ≤ ratio × allocatable − systemReserve
   alt Vượt ratio × reservable
@@ -401,21 +457,21 @@ sequenceDiagram
     API-->>SPA: 409 NETWORK_POOL_EXHAUSTED
   end
   API->>DB: INSERT network_allocations state=Allocated
-  API->>DB: INSERT workspaces k8s_name=acme-solar state=Reserving
+  API->>DB: INSERT workspaces k8s_name=acme-solar state=Provisioning
   API->>DB: INSERT workspace_group_bindings
-  API->>DB: INSERT operations CreateWorkspace state=Pending
-  API->>DB: INSERT outbox WorkspaceDesired generation=1
-  API->>DB: INSERT audit, COMMIT
+  API->>DB: INSERT operations workspace.create state=Pending
+  API->>DB: INSERT outbox workspace.apply generation=1
+  API->>DB: INSERT idempotency_keys (response 202), audit, COMMIT
   API-->>SPA: 202 workspaceId + operationId
   SPA->>API: GET /operations/op-1 qua SSE hoặc poll
-  PW->>DB: Claim outbox chưa processed, khóa row
+  PW->>DB: BEGIN, lấy outbox tới hạn FOR UPDATE SKIP LOCKED
   PW->>K8S: Server-side apply PlatformWorkspace acme-solar
   Note over PW,K8S: Credential chỉ có quyền CRD tenantry.io
   alt kube-apiserver lỗi hoặc worker chết giữa apply
-    PW->>DB: attempts+1, giữ outbox, retry backoff
+    PW->>DB: attempts+1, next_attempt_at theo backoff, COMMIT
     Note over PW,DB: DB đã commit, reservation giữ nguyên, apply lại
   else Apply thành công
-    PW->>DB: UPDATE workspaces Provisioning, outbox processed
+    PW->>DB: outbox processed, operations Running, COMMIT
   end
   K8S->>CTRL: Watch event PlatformWorkspace generation=1
   CTRL->>CAP: Apply Tenant acme-solar, owners, nodeSelector pool
@@ -435,12 +491,12 @@ sequenceDiagram
 
 **Điểm cần review**
 
-- Bước 8–10: `Idempotency-Key` lưu cùng `operations` theo `(org_id, key)`; retry của client trả lại cùng operation, không tạo Workspace thứ hai [14.4]. Cách lưu là (giả định).
-- Bước 12–24 là **một** transaction: lock grant `FOR UPDATE`, pool `FOR SHARE` (chỉ đọc ratio/capacity), NetworkPool `FOR UPDATE`; unique/exclusion constraint trên `network_allocations` là lớp chặn overlap thứ hai [5.3][7.2].
-- Bước 20: shared là soft allocation — vượt `ratio × reservable` mới từ chối; portal cảnh báo khi pool gần trần nhưng Pod `Pending` khi mọi Workspace dùng hết quota là hành vi chấp nhận [0.5][6.2].
+- Bước 8–12: `Idempotency-Key` tra theo `(user, key)`; row được ghi trong chính transaction tạo Workspace, nên retry của client nhận lại đúng response cũ và không tạo Workspace thứ hai [14.4]. Cơ chế: `IMPLEMENTATION-PLAN.md` mục 3.4.
+- Bước 12–24 là **một** transaction: lock grant, shared pool, NetworkPool đều `FOR UPDATE` và đúng thứ tự đó (pool cũng phải khóa ghi, nếu không hai Organization cùng tạo trên một pool sẽ cùng đọc một tổng và cùng vượt trần); unique/exclusion constraint trên `network_allocations` là lớp chặn overlap thứ hai [5.3][7.2].
+- Bước 20: shared là soft allocation — vượt `ratio × reservable` mới từ chối; portal cảnh báo khi pool gần trần nhưng Pod `Pending` khi mọi Workspace dùng hết quota là hành vi chấp nhận [6.2].
 - Bước 42–47: "DB đã commit nhưng apply thất bại" được cứu bằng outbox retry; reservation **không** bị release vì controller lỗi tạm thời [17]. Server-side apply với field manager riêng bảo đảm apply lại không tạo trùng.
 - Bước 49–57: controller không đọc DB; mọi thứ cần thiết nằm trong `spec` của CR. Nếu Certificate chưa Ready thì `PolicyReady`/`ProxyAccessReady` chưa True và Workspace chưa `Ready`.
-- Mã `NETWORK_POOL_EXHAUSTED` chưa có trong [16.5] (giả định); trạng thái Workspace đi `Validating → Reserving → Provisioning → Ready` [17].
+- `Validating` và `Reserving` chỉ tồn tại trong request; row `workspaces` đầu tiên được ghi đã ở `Provisioning` (`04-state-machines.md` mục 1).
 
 ---
 
@@ -482,7 +538,7 @@ sequenceDiagram
   API->>DB: B: nhận lock, đọc lại SUM reservations = 6, remaining 2
   API->>DB: B: 6 + 3 = 9 > 8 → ROLLBACK
   API-->>U: B: 409 DEDICATED_NODE_INSUFFICIENT_CAPACITY
-  PW->>DB: Poll outbox WorkspaceDesired acme-green
+  PW->>DB: Lấy outbox workspace.apply acme-green
   PW->>K8S: Apply PlatformWorkspace compute.mode=Dedicated
   Note over PW,K8S: spec.compute nodeName=worker-a-05, nodegrant-a1
   K8S->>CTRL: Watch event
@@ -515,7 +571,7 @@ sequenceDiagram
 
 ### 7a. Tạo Namespace từ portal
 
-**Mục đích:** Portal không gọi Kubernetes bằng token user; authz ở API (OrgOwner/OrgAdmin hoặc member group TenantOwner), patch `spec.namespaces` qua outbox, controller tạo Namespace dưới Tenant, `status.namespaces` sync về DB [0.8][4.5][FR-06].
+**Mục đích:** Portal không gọi Kubernetes bằng token user; authz ở API (OrgOwner/OrgAdmin hoặc member group TenantOwner), patch `spec.namespaces` qua outbox, controller tạo Namespace dưới Tenant, `status.namespaces` sync về DB [4.5][FR-06].
 
 ```mermaid
 sequenceDiagram
@@ -547,7 +603,7 @@ sequenceDiagram
     API-->>SPA: 409 NAMESPACE_QUOTA_EXCEEDED
   end
   API->>DB: INSERT workspace_namespaces acme-solar-frontend, portal
-  API->>DB: INSERT operations CreateNamespace, outbox WorkspaceDesired
+  API->>DB: INSERT operations namespace.create, outbox workspace.apply
   API->>DB: COMMIT
   API-->>SPA: 202 operationId
   PW->>DB: Poll outbox, đọc desired namespaces của Solar
@@ -568,7 +624,7 @@ sequenceDiagram
 
 **Điểm cần review**
 
-- Bước 3–6: authz hai nguồn — role Organization **hoặc** binding TenantOwner của group user thuộc; Developer/Viewer chỉ đọc [0.8]. Đây là logic DB, không hỏi Kubernetes.
+- Bước 3–6: authz hai nguồn — role Organization **hoặc** binding TenantOwner của group user thuộc; Developer/Viewer chỉ đọc. Đây là logic DB, không hỏi Kubernetes.
 - Bước 12–15: quota Namespace check ở DB (đếm cả Namespace `source=kubectl`) và được Capsule check lại ở bước 25; nếu hai lớp lệch nhau (ví dụ kubectl vừa tạo thêm), controller báo condition thay vì tạo lén.
 - Bước 22: controller tạo Namespace dưới Tenant với label tenant; controller là ServiceAccount không thuộc `oidc:tenantry:tenant-users` nên Capsule coi là admin path — cần test webhook chấp nhận và gắn đúng Tenant (giả định cần xác minh với Capsule).
 - Bước 27: annotation IPPool do controller đặt; tenant bị Capsule cấm sửa annotation này [7.3].
@@ -743,7 +799,7 @@ sequenceDiagram
 
 ### 10a. Browser → wildcard DNS → ingress-nginx → TLS per-Workspace → Service → Pod
 
-**Mục đích:** Một app trong Workspace được expose qua hostname trong vùng `*.acme-solar.apps.cluster-a.tenantry.example`, TLS từ wildcard Secret per-Workspace mà cert-manager cấp và Capsule replicate [0.4][7.6][18].
+**Mục đích:** Một app trong Workspace được expose qua hostname trong vùng `*.acme-solar.apps.cluster-a.tenantry.example`, TLS từ wildcard Secret per-Workspace mà cert-manager cấp và Capsule replicate [7.6][18].
 
 ```mermaid
 sequenceDiagram
@@ -808,7 +864,7 @@ sequenceDiagram
 
 **Điểm cần review**
 
-- Bước 4: regex do controller render từ `k8s_name` của Workspace; vì `<org-slug>-<ws-slug>` global-unique nên hai Workspace không thể có vùng trùng [0.3][0.4].
+- Bước 4: regex do controller render từ `k8s_name` của Workspace; vì `<org-slug>-<ws-slug>` global-unique nên hai Workspace không thể có vùng trùng.
 - Bước 9–10: collision cluster-wide gần như không xảy ra khi regex đúng; giữ lại làm defense-in-depth và để phát hiện lỗi cấu hình regex.
 - Ingress không có `ingressClassName` hoặc class ngoài allow-list cũng bị Capsule từ chối [18]; test isolation "Ingress không chiếm được hostname của Workspace khác" [24.4].
 - Custom domain per Workspace và cert public là stretch, không có nhánh ở đây [7.6].
@@ -819,7 +875,7 @@ sequenceDiagram
 
 ### 11a. Transfer ownership: Owner đề nghị, OrgAdmin nhận xác nhận
 
-**Mục đích:** Đúng một OrgOwner mỗi Organization; Owner đề nghị cho một OrgAdmin, người nhận xác nhận, đổi role hai bên trong một transaction; personal Org không có luồng này [0.6][9.2][16.1].
+**Mục đích:** Đúng một OrgOwner mỗi Organization; Owner đề nghị cho một OrgAdmin, người nhận xác nhận, đổi role hai bên trong một transaction [9.2][16.1]. Trạng thái: `04-state-machines.md` mục 8.
 
 ```mermaid
 sequenceDiagram
@@ -831,16 +887,16 @@ sequenceDiagram
 
   U->>SPA: Alice mở Settings, Transfer ownership tới Bob
   SPA->>API: POST /organizations/acme:transfer-ownership toUserId=bob
-  API->>DB: Authz Alice là OrgOwner, acme không phải personal
-  alt acme là personal hoặc caller không phải Owner
+  API->>DB: Authz Alice là OrgOwner của acme
+  alt Caller không phải Owner
     API-->>SPA: 403 TRANSFER_NOT_ALLOWED
   end
   API->>DB: Bob là OrgAdmin active của acme?
   alt Bob không phải OrgAdmin
     API-->>SPA: 422 RECIPIENT_NOT_ORG_ADMIN
   end
-  API->>DB: Hủy transfer Pending cũ nếu có
-  API->>DB: INSERT ownership_transfers token_hash, expiry, Pending
+  API->>DB: Transfer Proposed cũ (nếu có) → Cancelled
+  API->>DB: INSERT ownership_transfers token_hash, expiry, Proposed
   API->>DB: INSERT audit TransferRequested
   API-->>SPA: 201 yêu cầu đang chờ Bob xác nhận
   Note over U,SPA: Bob login bằng account của mình
@@ -865,13 +921,13 @@ sequenceDiagram
 
 - Bước 3–9: chỉ Owner gọi được `:transfer-ownership`; OrgAdmin tự gọi là threat case phải test [20.3]. Người nhận bắt buộc là OrgAdmin hiện tại [9.2].
 - Bước 21–25: đổi role hai bên trong một transaction để không có thời điểm nào Org có 0 hoặc 2 Owner; partial unique index trên `organization_members` role Owner là lớp bảo vệ DB [15].
-- Bước 10: tối đa một transfer Pending mỗi Org; nếu Bob mất role OrgAdmin trước khi accept, bước 17 phải kiểm tra lại và từ chối (giả định).
+- Bước 10: tối đa một transfer `Proposed` mỗi Org, đề nghị mới thay đề nghị cũ; nếu Bob mất role OrgAdmin trước khi accept, bước 17 kiểm tra lại và từ chối.
 - Token xác nhận hiển thị trong portal của Bob (thông báo in-app), không cần gửi link vì Bob đã là member (giả định); mã lỗi trong luồng này chưa có trong [16.5] (giả định).
 - Owner cũ thành OrgAdmin, không bị mất membership; group membership và binding không đổi [9.2].
 
 ### 11b. Member tự rời Organization
 
-**Mục đích:** OrgMember/OrgAdmin tự rời Organization không phải personal Org của mình; Owner phải transfer trước; rời kéo theo gỡ mọi group và revoke session [0.14][9.4].
+**Mục đích:** OrgMember/OrgAdmin tự rời Organization; Owner phải transfer trước; rời kéo theo gỡ mọi group của Organization đó [9.4].
 
 ```mermaid
 sequenceDiagram
@@ -885,13 +941,13 @@ sequenceDiagram
 
   U->>SPA: Joe bấm Leave organization tại acme
   SPA->>API: POST /organizations/acme/members/me:leave
-  API->>DB: Đọc membership của Joe và is_personal của acme
-  alt Joe là OrgOwner hoặc acme là personal Org của Joe
+  API->>DB: Đọc membership của Joe trong acme
+  alt Joe là OrgOwner
     API-->>SPA: 409 LEAVE_NOT_ALLOWED, cần transfer trước
   else Được phép
     API->>DB: BEGIN
-    API->>DB: Đánh dấu group_members của Joe trong acme Removing
-    API->>DB: UPDATE organization_members status=Left, tombstone
+    API->>DB: Tombstone mọi group_members của Joe trong acme
+    API->>DB: DELETE organization_members của Joe
     API->>DB: Hủy invitation/transfer Pending liên quan Joe
     API->>DB: INSERT audit MemberLeft, COMMIT
     API-->>SPA: 200, switcher bỏ acme
@@ -900,23 +956,25 @@ sequenceDiagram
     opt Joe không còn binding Workspace nào
       GS->>KC: Remove khỏi tenantry:tenant-users
     end
-    GS->>KC: Revoke session của Joe
-    GS->>DB: DELETE group_members, sync_status=Synced
+    opt Có group đang giữ binding Workspace
+      GS->>KC: Logout Joe
+    end
+    GS->>DB: DELETE các row group_members tombstone
   end
 ```
 
 **Điểm cần review**
 
-- Bước 3–5: hai điều kiện chặn — là Owner (phải transfer) hoặc là personal Org (không rời được) [0.14][9.4].
-- Bước 8–11: rời Org không xóa account Keycloak; Joe vẫn có personal Org và các Org khác [9.4].
-- Bước 14–18: cùng đường sync/revoke như mục 4; contract token cũ tới TTL áp dụng y hệt.
+- Bước 3–5: chỉ một điều kiện chặn — Joe là Owner thì phải transfer trước [9.4].
+- Bước 7–10: row membership bị xóa hẳn nên Joe mất quyền portal ở acme ngay; lịch sử nằm ở audit. Rời Org không xóa account Keycloak; Joe vẫn thuộc các Org khác [9.4].
+- Bước 12–19: cùng đường sync/logout như mục 4; contract token cũ tới TTL áp dụng y hệt.
 - Owner remove member (`DELETE /members/{userId}`) dùng cùng nhánh `else`, thêm rule "không remove được OrgOwner" [9.4].
 
 ---
 
 ## 12. Delete Workspace: confirm → cordon → xóa → chờ finalizer → release có thứ tự
 
-**Mục đích:** Xóa ngay và mất dữ liệu PVC sau confirm gõ tên; controller dọn theo thứ tự an toàn, CIDR chỉ release sau khi Calico sạch và đi qua `Quarantined`; finalizer kẹt → `Blocked`, chỉ Platform Admin `:force` [0.7][7.5][17.4].
+**Mục đích:** Xóa ngay và mất dữ liệu PVC sau confirm gõ tên; controller dọn theo thứ tự an toàn, CIDR chỉ release sau khi Calico sạch và đi qua `Quarantined`; finalizer kẹt → `Blocked`, chỉ Platform Admin `:force` [7.5][17.4].
 
 ```mermaid
 sequenceDiagram
@@ -940,12 +998,12 @@ sequenceDiagram
   API->>API: Authz OrgOwner/OrgAdmin, confirmName khớp slug
   API->>DB: BEGIN, UPDATE workspaces state=Deleting
   API->>DB: UPDATE node reservation state=Releasing
-  API->>DB: INSERT operations DeleteWorkspace, outbox WorkspaceDelete
+  API->>DB: INSERT operations workspace.delete, outbox workspace.delete
   API->>DB: INSERT audit, COMMIT
   API-->>SPA: 202 operationId
   PW->>DB: Poll outbox
   PW->>K8S: DELETE PlatformWorkspace acme-water
-  Note over PW,K8S: CR có finalizer tenantry.io/cleanup của controller
+  Note over PW,K8S: CR có finalizer tenantry.io/workspace của controller
   K8S->>CTRL: Watch deletionTimestamp
   CTRL->>CAP: Tenant cordoned=true, chặn mutation của tenant
   CTRL->>K8S: Xóa RoleBinding Developer/Viewer, gỡ owners Tenant
@@ -959,9 +1017,9 @@ sequenceDiagram
       API-->>SPA: SSE Blocked, OrgOwner chỉ có thể chờ hoặc retry
       U->>SPA: Platform Admin bấm Force
       SPA->>API: POST /operations/op-del:force
-      API->>API: Check realm role platform-admin, audit ForceDelete
-      API->>DB: INSERT outbox ForceCleanup
-      PW->>K8S: Patch CR spec.forceCleanup=true
+      API->>API: Check platform-admin trong phiên, audit ForceDelete
+      API->>DB: INSERT outbox workspace.force-delete
+      PW->>K8S: Patch CR annotation tenantry.io/force-delete=true
       CTRL->>K8S: Gỡ finalizer của object kẹt
     end
   end
@@ -980,16 +1038,16 @@ sequenceDiagram
   PW->>DB: Release ClusterGrant allocation, tombstone k8s_name
   PW->>DB: UPDATE workspaces Deleted, operation Succeeded, COMMIT
   API-->>SPA: SSE Deleted, node còn 6 CPU cho Green
-  Note over PW,DB: Job định kỳ chuyển CIDR Quarantined → Available
+  Note over PW,DB: Vòng housekeeping chuyển CIDR Quarantined → Released
 ```
 
 **Điểm cần review**
 
 - Bước 4–6: confirm gõ lại tên; chọn so với slug `water` (giả định — plan nói "tên Workspace"). UI phải liệt kê số Namespace/PVC trước khi cho bấm [17.4].
 - Bước 8 và 41–44: reservation sang `Releasing` ngay khi nhận lệnh nhưng chỉ `Released` sau khi controller dọn xong; capacity node chỉ hoàn lại lúc đó [17]. Green vẫn chạy, org label/taint không đổi [6.3][6.4].
-- Bước 20–31: `Blocked` là trạng thái chờ có thông tin object kẹt; OrgOwner chỉ chờ/retry, `:force` yêu cầu `platform-admin` và được audit [0.7][16.5]. Trường `spec.forceCleanup` là (giả định).
+- Bước 20–31: `Blocked` là trạng thái chờ có thông tin object kẹt; OrgOwner chỉ chờ/retry, `:force` yêu cầu `platform-admin` và được audit [16.5]. Force đi bằng annotation, không bằng `spec`, để không sinh generation mới.
 - Bước 32–36: thứ tự bắt buộc — Calico sạch → gỡ membership label → xóa IPPool → Certificate → Tenant; không release CIDR khi còn WorkloadEndpoint [7.4][7.5].
-- Bước 43 và 47: CIDR `Quarantined` trước khi `Available`; `k8s_name` được tombstone để không tái dùng tên trong thời gian quarantine [17.4]. Độ dài quarantine do cấu hình (giả định).
+- Bước 43 và 47: CIDR qua `Quarantined` rồi mới `Released`; trong lúc đó `k8s_name` cũng chưa dùng lại được [17.4]. Độ dài quarantine cấu hình được, mặc định 10 phút.
 - Worker chết giữa bước 40–44: transaction DB atomic; khi restart, worker thấy CR đã biến mất và workspace còn `Deleting` → chạy lại bước 40 (xem mục 13b).
 
 ---
@@ -1013,8 +1071,8 @@ sequenceDiagram
   SPA->>API: GET /operations/op-1/events SSE hoặc poll 2s
   API->>DB: SELECT operations, workspace state, conditions
   API-->>SPA: state=Pending, progress 0/5
-  PW->>DB: Claim outbox row FOR UPDATE SKIP LOCKED
-  PW->>K8S: Apply CR generation N, field manager tenantry-worker
+  PW->>DB: Lấy outbox tới hạn FOR UPDATE SKIP LOCKED
+  PW->>K8S: Apply CR generation N, field manager tenantry-provisioning-worker
   PW->>DB: operations Running, workspace Provisioning
   API-->>SPA: state=Running, step Apply CR
   K8S->>CTRL: Reconcile generation N
@@ -1040,9 +1098,9 @@ sequenceDiagram
 
 **Điểm cần review**
 
-- Bước 4: `SKIP LOCKED` cho phép chạy nhiều worker replica mà không xử lý trùng một event; lease/timeout cho row bị claim nhưng chưa processed (giả định).
+- Bước 4: `SKIP LOCKED` cho phép chạy nhiều worker replica mà không xử lý trùng một event. Không cần lease: row lock được giữ suốt transaction giao event, worker chết thì transaction rollback và lock tự nhả.
 - Bước 13–15: không dùng một cờ `error` chung; mỗi condition có `reason` để portal chỉ ra component lỗi [14.4][23].
-- Bước 17–18: retry của OrgOwner/OrgAdmin chỉ tạo outbox event mới cùng generation; Platform Admin retry/force mọi operation [0.16]. Reservation không đổi khi retry [17].
+- Bước 17–18: retry của OrgOwner/OrgAdmin chỉ tạo outbox event mới cùng generation; Platform Admin retry/force mọi operation. Reservation không đổi khi retry [17].
 - Bước 25: worker bỏ qua status có `observedGeneration < generation` để không đánh dấu `Ready` từ thế hệ cũ trong lúc update.
 - SSE hay poll là lựa chọn triển khai; contract là `GET /operations/{id}` trả cùng payload [14.3][16.5].
 
@@ -1060,10 +1118,10 @@ sequenceDiagram
 
   Note over PW: Worker crash ngay sau apply, trước khi ghi DB
   PW->>PW: Restart
-  PW->>DB: SELECT outbox processed_at IS NULL hoặc lease hết hạn
+  PW->>DB: SELECT outbox processed_at IS NULL, tới hạn
   PW->>K8S: Server-side apply lại cùng payload, cùng field manager
   Note over PW,K8S: Idempotent, không tạo IPPool/RoleBinding trùng
-  PW->>DB: Mark processed, attempts+1
+  PW->>DB: Mark processed
   PW->>DB: SELECT workspaces state IN Provisioning, Updating, Deleting
   loop Resync mỗi Workspace đang chuyển trạng thái
     PW->>K8S: GET PlatformWorkspace status

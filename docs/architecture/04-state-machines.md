@@ -1,6 +1,6 @@
 # 04 — State machines của Tenantry
 
-> Tài liệu kiến trúc đi kèm `docs/PRODUCT-PLAN.md` v0.6 (mục 6, 7, 9, 14, 17). Mọi tên gọi lấy đúng theo plan: Organization, Workspace, ClusterGrant, DedicatedNodeGrant, NodeReservation, NetworkPool, NetworkAllocation, PlatformWorkspace CR, Workspace Controller, Provisioning Worker, Capsule Proxy.
+> Nơi định nghĩa cho trạng thái và cạnh chuyển của mọi entity. Quy tắc nghiệp vụ nền ở `PRODUCT-PLAN.md` mục 4, 6, 7, 9, 14, 17; cột lưu trạng thái ở `02-data-model.md`.
 > Chỗ nào plan chưa nói rõ, tài liệu chọn phương án đơn giản nhất còn nhất quán và đánh dấu **(giả định)** để tác giả duyệt.
 
 ## 0. Quy ước chung
@@ -45,6 +45,8 @@ stateDiagram-v2
   Validating --> Failed : lỗi 4xx (code ổn định)
   Reserving --> Failed : lock/serialization thất bại
   Provisioning --> Failed : Condition False quá ngưỡng retry
+  Failed --> Provisioning : retry Operation
+  Failed --> Deleting : DELETE hoặc admin cleanup
   Ready --> Degraded : drift (node Overcommitted, Condition False)
   Updating --> Degraded : reconcile lỗi sau khi apply
   Degraded --> Updating : user/admin sửa (resize, đổi binding)
@@ -92,21 +94,11 @@ stateDiagram-v2
 
 Cách tính: `Ready` ⇔ tất cả Condition áp dụng đều `True` **và** `status.observedGeneration == metadata.generation`. Thiếu `DedicatedNodeCapacityReserved` với Shared mode không tính là lỗi.
 
-### 1.3 Xử lý `Failed` sau commit (giả định)
+### 1.3 `Failed` trước và sau commit
 
-Mục 17 của plan không vẽ cạnh đi ra từ `Failed`. Để Operation retry và cleanup có chỗ đứng, tài liệu đề xuất hai cạnh bổ sung, chỉ áp dụng cho `Failed` **sau** commit (từ `Provisioning`):
+`Failed` từ `Validating`/`Reserving` chỉ là kết quả HTTP: không có row nên không có cạnh đi ra. `Draft`, `Validating`, `Reserving` cũng chỉ tồn tại trong request; row `workspaces` đầu tiên được ghi đã ở `Provisioning`.
 
-```mermaid
-stateDiagram-v2
-  Failed --> Provisioning : retry Operation (OrgOwner/OrgAdmin/Platform Admin)
-  Failed --> Deleting : DELETE hoặc admin cleanup
-  note right of Failed
-    Reservation và NetworkAllocation vẫn giữ
-    khi ở Failed để retry không cấp trùng
-  end note
-```
-
-`Failed` trước commit (từ `Validating`/`Reserving`) chỉ là kết quả HTTP, không có row nên không có cạnh đi ra.
+`Failed` từ `Provisioning` là một row thật, vẫn giữ reservation và NetworkAllocation để retry không cấp trùng (mục 3.2). Đường ra duy nhất là retry Operation (OrgOwner/OrgAdmin/Platform Admin) về `Provisioning`, hoặc DELETE vào `Deleting`.
 
 **Điểm cần review**
 
@@ -114,7 +106,6 @@ stateDiagram-v2
 - Reservation chuyển `Pending → Active` khi Workspace `Ready` (mục 3) hay ngay khi commit? Tài liệu chọn khi `Ready`, nhưng cả hai đều tính vào capacity.
 - `Cordoned` map sang `Tenant.spec.cordoned` của Capsule — cần xác nhận version Capsule 0.13.x hỗ trợ và hành vi với Namespace đang tồn tại.
 - Cluster `Unavailable` không đổi state Workspace, portal chỉ hiển thị "unknown" (plan 6.1). Có muốn thêm Condition `ClusterReady=Unknown` để UI phân biệt với `Degraded`?
-- Hai cạnh từ `Failed` là giả định; nếu chấp nhận thì nên cập nhật lại mục 17 của plan cho khớp.
 
 ---
 
@@ -127,7 +118,9 @@ stateDiagram-v2
   [*] --> Pending : API commit transaction + outbox event
   Pending --> Running : Provisioning Worker đọc outbox, apply CR
   Running --> Succeeded : status CR khớp generation, Condition True
-  Running --> Failed : lỗi vượt ngưỡng retry nội bộ
+  Pending --> Failed : 10 lần giao outbox thất bại liên tiếp
+  Running --> Failed : Condition False quá ngưỡng
+  Failed --> Running : lần giao đang retry nền thành công
   Running --> Blocked : delete kẹt finalizer/PVC quá ngưỡng
   Failed --> Pending : retry (OrgOwner/OrgAdmin của Org, hoặc Platform Admin)
   Blocked --> Running : retry sau khi object kẹt tự giải phóng
@@ -140,11 +133,12 @@ stateDiagram-v2
 | From | Event / Guard | To | Side effects |
 |---|---|---|---|
 | `[*]` | Transaction của API commit thành công | `Pending` | Row `operations` (resource, type, correlation ID), row `outbox_events` (`target_cluster_id`, payload version, attempts=0) |
-| `Pending` | Provisioning Worker lấy outbox event (FOR UPDATE SKIP LOCKED), apply CR server-side với field manager riêng vào đúng `workspace.cluster_id` | `Running` | `outbox_events.attempts++`, `processed_at`; `progress` ghi bước hiện tại |
+| `Pending` | Provisioning Worker lấy outbox event (`FOR UPDATE SKIP LOCKED`), apply CR server-side vào đúng `target_cluster_id` thành công | `Running` | `outbox_events.processed_at`; Operation có nhiều event thì chuyển ở event đầu tiên giao được |
+| `Pending` | Giao một event thất bại 10 lần liên tiếp | `Failed` | `error_code = APPLY_FAILED`; worker **vẫn** tiếp tục giao ở backoff tối đa, giao được thì Operation về `Running` |
 | `Running` | Worker poll `status`: `phase` đích đạt, `observedGeneration` khớp, không Condition False | `Succeeded` | Cập nhật observed state Workspace/Namespace record trong DB; Workspace đổi state tương ứng (mục 1) |
 | `Running` | Condition False kéo dài quá ngưỡng (ví dụ 10 phút) hoặc lỗi không-retry (CRD apply bị 403 vì credential scoped sai) | `Failed` | `error_code` ổn định + Condition/component lỗi; Workspace sang `Failed` (create) hoặc `Degraded` (update) |
 | `Running` (type=delete) | Namespace ở `Terminating` quá ngưỡng vì finalizer/PVC/PV chưa release | `Blocked` | `progress.blockedBy` = danh sách object đang giữ; portal hiển thị; OrgOwner chỉ có thể chờ/retry |
-| `Failed` | `POST /operations/{id}:retry` bởi OrgOwner/OrgAdmin của Organization sở hữu hoặc Platform Admin | `Pending` | Ghi lại outbox event mới với cùng correlation ID; **không** tạo reservation/CIDR mới; apply idempotent |
+| `Failed` | `POST /operations/{id}:retry` bởi OrgOwner/OrgAdmin của Organization sở hữu hoặc Platform Admin | `Pending` | Event chưa giao được đặt lại `attempts = 0` và giao ngay; nếu lỗi do controller báo (mọi event đã giao) thì service ghi lại event apply cùng generation. **Không** tạo reservation/CIDR mới; apply idempotent |
 | `Blocked` | Retry và object kẹt đã biến mất (ví dụ user tự xóa PVC ngoài) | `Running` | Tiếp tục bước delete còn lại |
 | `Blocked` | `POST /operations/{id}:force` bởi Platform Admin | `Running` | Worker/controller xóa finalizer của object kẹt; audit event `force` bắt buộc |
 
@@ -154,7 +148,6 @@ Ràng buộc: mỗi Workspace chỉ có tối đa một Operation ở `Pending`/
 
 - Ngưỡng thời gian chuyển `Running → Failed` và `Running → Blocked` nên là config (per type) hay hằng số?
 - `Blocked` chỉ dành cho delete; nếu update giảm quota bị kẹt vì usage thì đi `Failed` — chấp nhận không?
-- Retry của OrgOwner có bị rate-limit để tránh spam outbox không?
 - Có cần state `Cancelled` cho Operation `Pending` chưa được worker nhận (ví dụ user bấm xóa ngay sau khi tạo)?
 
 ---
@@ -209,15 +202,15 @@ Vì vậy reservation chỉ rời `Pending/Active` khi user chủ động delete
 
 ## 4. NetworkAllocation / CIDR
 
-**Mục đích:** mô tả vòng đời một CIDR trong NetworkPool: từ khoảng trống, cấp cho Workspace, thu hồi qua quarantine rồi mới tái sử dụng.
+**Mục đích:** mô tả vòng đời một CIDR trong NetworkPool: cấp cho Workspace, thu hồi qua quarantine rồi mới tái sử dụng. "Còn trống" không phải một state: một khoảng địa chỉ còn trống khi không có row nào khác `Released` phủ lên nó.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Available
-  Available --> Allocated : IPAM cấp trong transaction tạo Workspace
+  [*] --> Allocated : IPAM cấp trong transaction tạo Workspace
   Allocated --> Releasing : delete workflow bắt đầu
   Releasing --> Quarantined : Calico WEP/IPAM block sạch, IPPool đã xóa
-  Quarantined --> Available : quarantine_until hết hạn
+  Quarantined --> Released : quarantine_until hết hạn
+  Released --> [*]
   note right of Allocated
     Overlap check chạy theo Cluster,
     gồm cả Allocated, Releasing và Quarantined
@@ -228,18 +221,17 @@ stateDiagram-v2
 
 | From | Event / Guard | To | Side effects |
 |---|---|---|---|
-| `Available` | IPAM trong transaction tạo Workspace: pool thuộc grant và đúng Cluster; compute mode tương thích; prefix ∈ `allowedPrefixLengths` (mặc định `defaultPrefixLength`); không overlap Pod CIDR Cluster, Service CIDR, allocation khác (mọi state trừ `Available`) trong Cluster; còn đủ địa chỉ | `Allocated` | Row `network_allocations` (workspace_id, cluster_id, pool_id, CIDR); exclusion constraint chống race; CR `spec.network.cidr` |
+| `[*]` | IPAM trong transaction tạo Workspace: pool thuộc grant và đúng Cluster; compute mode tương thích; prefix ∈ `allowedPrefixLengths` (mặc định `defaultPrefixLength`); không overlap Pod CIDR Cluster, Service CIDR, allocation khác (mọi state trừ `Released`) trong Cluster; còn đủ địa chỉ | `Allocated` | Row `network_allocations` (workspace_id, cluster_id, pool_id, CIDR); exclusion constraint chống race; CR `spec.network.cidr` |
 | `Allocated` | Workspace Controller tạo IPPool `assignmentMode: Manual`, Namespace annotation | (giữ `Allocated`) | Condition `NetworkReady` True |
 | `Allocated` | Delete workflow bắt đầu (bước 2 của 17.4) | `Releasing` | CIDR vẫn bị coi là chiếm; không thể cấp lại |
-| `Releasing` | Controller: Namespace đã xóa, Calico WorkloadEndpoint và IPAM block của pool đã release, IPPool đã xóa | `Quarantined` | `quarantine_until = now + T` (T config, ví dụ 10–30 phút — giả định); audit |
-| `Quarantined` | Sweeper thấy `quarantine_until` đã qua | `Available` | Xóa row hoặc đánh dấu `Released` (giả định: giữ row làm lịch sử, CIDR trở lại vùng cấp) |
+| `Releasing` | Controller: Namespace đã xóa, Calico WorkloadEndpoint và IPAM block của pool đã release, IPPool đã xóa | `Quarantined` | `quarantine_until = now + T`, T cấu hình được, mặc định 10 phút; audit |
+| `Quarantined` | Vòng `housekeeping` thấy `quarantine_until` đã qua | `Released` | Row giữ làm lịch sử; CIDR và `k8s_name` của Workspace dùng lại được |
 
-Không có cạnh `Allocated → Available` trực tiếp: Workspace `Failed` sau commit vẫn giữ `Allocated` (mục 3.2). Rollback trước commit không tạo row nên không cần state.
+Không có cạnh `Allocated → Released` trực tiếp: Workspace `Failed` sau commit vẫn giữ `Allocated` (mục 3.2). Rollback trước commit không tạo row nên không cần state.
 
 **Điểm cần review**
 
 - Thời gian quarantine T: chọn theo `blockSize`/tốc độ Calico GC hay hằng số?
-- Tombstone `k8s_name` (17.4 bước 12) dùng cùng cửa sổ quarantine với CIDR hay dài hơn?
 - Pool chung `onboarding-pod-network` (organizationId null) được nhiều grant tham chiếu — overlap check theo Cluster đã đủ, nhưng UI "IP used/available" nên hiển thị per pool hay per Organization?
 - Requested CIDR (advanced) đè lên pool đã có allocation `Quarantined` phải trả `CIDR_OVERLAP` chứ không phải `CIDR_OUTSIDE_ALLOWED_POOL` — xác nhận thứ tự validate.
 
@@ -277,11 +269,11 @@ remaining  = max(reservable - reserved, 0)
 
 | From | Event / Guard | To | Side effects |
 |---|---|---|---|
-| `[*]` | Platform Admin `PUT .../dedicated-nodes`: node `Ready`, schedulable, không phải system/control-plane, **không còn Pod tenant của Organization khác** (API list Pod trên node, từ chối kèm danh sách nếu chưa sạch) | `Available` | Row `dedicated_node_grants`; controller gắn label + taint `tenantry.io/dedicated-org=<org-id>`; audit |
+| `[*]` | Platform Admin `PUT .../dedicated-nodes` → Operation `node.grant`. Controller của `PlatformNodeGrant` kiểm node `Ready`, schedulable, không phải system/control-plane, **không còn Pod tenant của Organization khác**; chưa sạch thì Operation `Failed` kèm danh sách Pod | `Available` | Row `dedicated_node_grants` có `node_state=NotReady` tới khi controller xác nhận; controller gắn label + taint `tenantry.io/dedicated-org=<org-id>` và báo allocatable; audit |
 | `Available` / `PartiallyAllocated` | Transaction tạo/resize Workspace (mục 3) với `reserved + new ≤ reservable` | `PartiallyAllocated` / `FullyAllocated` | `remaining` cập nhật; membership label `workspaces.tenantry.io/<ws-id>=true` do controller gắn khi reconcile |
 | bất kỳ | Request có `reserved + new > reservable` | (không đổi) | Trả `DEDICATED_NODE_INSUFFICIENT_CAPACITY`; không ghi gì |
 | `PartiallyAllocated` / `FullyAllocated` | NodeReservation `Releasing → Released` | `PartiallyAllocated` / `Available` | `remaining` tăng; label membership của Workspace bị gỡ; org label/taint **giữ nguyên** |
-| `PartiallyAllocated` / `FullyAllocated` | Capacity snapshot refresh (worker đọc `Node.status.allocatable`) hoặc Admin tăng `systemReserve`; kết quả `reserved > reservable` | `Overcommitted` | Chặn reservation mới (`DEDICATED_NODE_INSUFFICIENT_CAPACITY`); mọi Workspace có NodeReservation trên node → `Degraded` (Condition `DedicatedNodeCapacityReserved=False`, reason `Overcommitted`); không evict, không di chuyển |
+| `PartiallyAllocated` / `FullyAllocated` | Capacity snapshot refresh (controller báo allocatable qua `PlatformNodeGrant.status`, worker chép về DB) hoặc Admin tăng `systemReserve`; kết quả `reserved > reservable` | `Overcommitted` | Chặn reservation mới (`DEDICATED_NODE_INSUFFICIENT_CAPACITY`); mọi Workspace có NodeReservation trên node → `Degraded` (Condition `DedicatedNodeCapacityReserved=False`, reason `Overcommitted`); không evict, không di chuyển |
 | `Overcommitted` | Admin xử lý (giảm `systemReserve`, node tăng allocatable) hoặc Organization thu gọn/xóa Workspace tới khi `reserved ≤ reservable` | `PartiallyAllocated` / `FullyAllocated` | Workspace liên quan `Degraded → Ready` tự động |
 | bất kỳ | Platform Admin revoke/move grant | (chặn) | Chỉ được khi không còn reservation `Pending/Active/Releasing`; khi revoke, controller gỡ org label/taint |
 
@@ -325,7 +317,6 @@ stateDiagram-v2
 **Điểm cần review**
 
 - Capacity state là **derived** (tính từ reservation + snapshot) — nên lưu cột trong DB để query nhanh hay tính lúc đọc? Tài liệu giả định lưu cột và tính lại trong mỗi transaction.
-- Tần suất snapshot `allocatable` (worker poll Node) và ai ghi: Provisioning Worker hay Workspace Controller ghi vào `status` của một CR node? Plan chưa nói.
 - `NotReady → Workspace Degraded` là giả định; nếu không muốn đổi state Workspace khi node lỗi, chỉ cần hiển thị health trên node card.
 - Điều kiện "node không còn Pod tenant của Organization khác" kiểm tra bằng label `tenantry.io/organization-id` trên Namespace của Pod — cần loại trừ system DaemonSet (CNI/CSI/monitoring).
 
@@ -372,7 +363,7 @@ stateDiagram-v2
   [*] --> Pending : OrgOwner/OrgAdmin POST invitations (email, role, group tùy chọn)
   Pending --> Accepted : POST invitations/token accept, email verified của account login khớp
   Pending --> Pending : accept với email không khớp hoặc chưa verify, trả lỗi, token không bị tiêu
-  Pending --> Expired : quá expiry (đánh giá khi truy cập hoặc sweeper)
+  Pending --> Expired : quá expiry (đánh giá khi truy cập)
   Pending --> Revoked : OrgOwner/OrgAdmin revoke
   Accepted --> [*]
   Expired --> [*]
@@ -412,16 +403,15 @@ stateDiagram-v2
 
 | From | Event / Guard | To | Side effects |
 |---|---|---|---|
-| `[*]` | `POST /organizations/{orgId}:transfer-ownership`; guard: actor là Owner; Org không phải personal; người nhận là OrgAdmin của Org; chưa có transfer `Proposed` khác (giả định) | `Proposed` | Row `ownership_transfers` (`token_hash`, `expiry`); portal hiển thị cho người nhận; audit |
+| `[*]` | `POST /organizations/{orgId}:transfer-ownership`; guard: actor là Owner; người nhận là OrgAdmin của Org | `Proposed` | Transfer `Proposed` cũ của Org (nếu có) chuyển `Cancelled`; row `ownership_transfers` mới (`token_hash`, `expiry`); portal hiển thị cho người nhận; audit |
 | `Proposed` | `POST /ownership-transfers/{token}:accept` bởi đúng `to_user_id`; re-check hai guard trên trong transaction | `Accepted` | Một transaction: người nhận → `OrgOwner`, Owner cũ → `OrgAdmin`, `organizations.owner_user_id` đổi; audit |
 | `Proposed` | Hết `expiry` | `Expired` | — |
 | `Proposed` | Owner hủy; hoặc người nhận bị đổi role/bị remove/tự rời Org | `Cancelled` | Audit kèm lý do |
 
 **Điểm cần review**
 
-- Guard "chỉ một Proposed tại một thời điểm" là giả định để tránh hai người cùng accept.
+- Mỗi Organization tối đa một transfer `Proposed` (partial unique index); đề nghị mới thay thế đề nghị cũ, nên không thể có hai người cùng accept.
 - Sau `Accepted`, Owner cũ trở thành OrgAdmin (plan 4.2) — không có tuỳ chọn "rời hẳn".
-- Personal Organization không có luồng này; API trả code gì (`PERSONAL_ORG_IMMUTABLE` — giả định)?
 
 ---
 
@@ -429,25 +419,28 @@ stateDiagram-v2
 
 ### 9.1 Group sync status
 
-**Mục đích:** mô tả `sync_status` của group và group member khi Group Sync Worker đồng bộ sang Keycloak.
+**Mục đích:** mô tả cách `groups` và `group_members` hội tụ sang Keycloak. Mỗi row mang hai thứ: **hướng** mong muốn (`deleted_at IS NULL` = phải tồn tại, khác NULL = phải biến mất) và **tiến độ** đồng bộ (`sync_status`).
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Pending : tạo group / thêm-xóa member / xóa group
-  Pending --> Synced : Keycloak Admin API thành công
-  Pending --> Error : Keycloak lỗi (5xx, timeout, 409)
-  Error --> Pending : retry với backoff
-  Synced --> Pending : thay đổi membership mới
-  Synced --> [*] : group bị xóa và đã gỡ khỏi Keycloak
+  [*] --> Pending : tạo group / thêm member
+  Pending --> Synced : Keycloak khớp hướng mong muốn (row còn sống)
+  Pending --> Error : Keycloak lỗi (5xx, timeout)
+  Error --> Synced : retry thành công
+  Synced --> Pending : xóa (đặt deleted_at) hoặc thêm lại (bỏ deleted_at)
+  Pending --> [*] : row tombstone đã gỡ xong trên Keycloak, xóa hẳn row
+  Error --> [*] : retry gỡ thành công, xóa hẳn row
 ```
 
 | From | Event / Guard | To | Side effects |
 |---|---|---|---|
-| `[*]` | Tạo group (machine name `org_<id>:group_<id>`), add/remove member, xóa group (guard: không còn AccessBinding) | `Pending` | Row `groups`/`group_members` với `sync_status=Pending` |
-| `Pending` | Worker gọi Keycloak Admin API: create group, add/remove user, cập nhật platform group `tenantry:tenant-users` theo số binding của user | `Synced` | `keycloak_group_id`; nếu remove: revoke session Keycloak của user |
-| `Pending` | Lỗi | `Error` | Lưu lỗi; metric "group sync lag/error"; retry theo backoff |
-| `Error` | Tới lịch retry | `Pending` | — |
-| `Synced` | Thay đổi mới | `Pending` | Vòng lặp |
+| `[*]` | Tạo group (machine name `org_<id>:group_<id>`) hoặc thêm member | `Pending` | Row mới, `deleted_at = NULL` |
+| `Synced` | Gỡ member, remove/leave Organization, xóa group (guard: group không còn AccessBinding) | `Pending` | **Tombstone**: `deleted_at = now()`. Từ lúc này row không còn hiệu lực với portal; chỉ còn là việc chờ worker làm |
+| `Pending` (tombstone) | Thêm lại đúng member đó | `Pending` | `deleted_at = NULL`; worker sẽ đảm bảo membership tồn tại |
+| `Pending` / `Error` | Worker lấy row tới hạn `next_sync_at`. Row sống: đảm bảo group/membership **có** trên Keycloak. Tombstone: đảm bảo **không còn** | `Synced` (row sống) hoặc xóa hẳn row (tombstone) | Lưu `keycloak_group_id`; cập nhật group platform `tenantry:tenant-users` theo số binding còn lại của user; tombstone của member thuộc group đang có binding Workspace → logout user trên Keycloak (hệ quả: `06-security-and-identity.md` mục 5) |
+| `Pending` / `Error` | Keycloak lỗi | `Error` | `sync_attempts++`, `next_sync_at = now + backoff`, `last_error`; metric "group sync lag/error" |
+
+Mọi lời gọi Keycloak của worker đều idempotent (tạo group đã có, thêm member đã có, gỡ member đã gỡ đều là thành công), nên worker chết giữa chừng chỉ cần chạy lại.
 
 Tác động lên các máy khác: bind group vào Workspace hoặc tạo Workspace với group chưa `Synced` → `GROUP_SYNC_PENDING`; Condition `IdentityBindingsReady` chỉ True khi mọi group trong `accessBindings` đều `Synced`.
 
@@ -521,7 +514,7 @@ flowchart TB
     D6["Gỡ membership label<br/>NodeReservation: Released<br/>tính lại remaining node"]
     D7["Xóa IPPool, Certificate, Tenant,<br/>ResourcePool, RBAC"]
     D8["NetworkAllocation: Quarantined<br/>ClusterGrant reservation: Released<br/>Workspace: Deleted<br/>Operation: Succeeded<br/>tombstone k8s_name"]
-    D9["Sweeper sau quarantine_until<br/>NetworkAllocation: Available"]
+    D9["housekeeping sau quarantine_until<br/>NetworkAllocation: Released"]
     DB["Operation: Blocked<br/>kèm object đang giữ"]
     D1 --> D2 --> D3 --> D4 --> D5 --> D6 --> D7 --> D8 --> D9
     D4 -.->|"kẹt quá ngưỡng"| DB
@@ -545,3 +538,30 @@ Bất biến cần giữ khi đọc sơ đồ:
 - `D8` release ClusterGrant reservation cùng lúc với quarantine CIDR — hay release sớm hơn ngay sau `D6` để Organization tạo Workspace mới nhanh hơn?
 - Có cần Operation con cho `D9` để audit thời điểm CIDR thật sự khả dụng?
 - Khi Cluster `Unavailable` giữa `D3`–`D7`, Operation giữ `Running` hay chuyển `Blocked`? Tài liệu chưa định.
+
+---
+
+## 11. Organization
+
+**Mục đích:** vòng đời một Organization từ lúc user xin tới lúc xóa [4.2].
+
+```mermaid
+stateDiagram-v2
+  [*] --> Pending : user POST /organizations (xin tạo)
+  [*] --> Active : Platform Admin tạo thẳng cho khách
+  Pending --> Active : Admin approve kèm ClusterGrant
+  Pending --> Rejected : Admin reject kèm lý do
+  Active --> Deleted : OrgOwner xóa, khi không còn Workspace
+  Rejected --> [*]
+  Deleted --> [*]
+```
+
+| From | Event / Guard | To | Side effects |
+|---|---|---|---|
+| `[*]` | `POST /organizations`; guard: slug hợp lệ và chưa bị giữ, user chưa có yêu cầu `Pending` nào | `Pending` | Row `organizations` + membership `OrgOwner` cho người xin; slug được giữ chỗ |
+| `[*]` | `POST /admin/organizations`; guard: Owner là user đã login ít nhất một lần | `Active` | Như cạnh approve dưới đây, trong một transaction |
+| `Pending` | `POST /admin/organizations/{id}:approve` | `Active` | Một transaction: entitlement, ClusterGrant (điền sẵn từ onboarding policy), ba group mặc định `admins`/`developers`/`viewers`, Owner vào `admins` (Group Sync `Pending`); audit |
+| `Pending` | `POST /admin/organizations/{id}:reject` kèm lý do | `Rejected` | `review_note`; slug được nhả; người xin gửi được yêu cầu mới |
+| `Active` | OrgOwner xóa; guard: không còn Workspace nào | `Deleted` | Đồng bộ, không có state `Deleting`; group của Org thành tombstone để gỡ khỏi Keycloak |
+
+Organization `Pending`/`Rejected` chỉ hiện với người xin; không mời member, không tạo group hay Workspace được.

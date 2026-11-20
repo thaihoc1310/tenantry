@@ -1,6 +1,6 @@
 # 07 — Portal UX: information architecture và wireflow
 
-> Nguồn sự thật: `docs/PRODUCT-PLAN.md` v0.6, mục 19, 22, 28. Đây là sơ đồ luồng màn hình để review trải nghiệm, không phải thiết kế giao diện.
+> Góc nhìn, không định nghĩa gì mới: IA và yêu cầu ở `PRODUCT-PLAN.md` mục 19, 22, 28; route thật ở `IMPLEMENTATION-PLAN.md` mục 6. Đây là sơ đồ luồng màn hình để review trải nghiệm, không phải thiết kế giao diện.
 > Cách đọc: sitemap → wireflow từng persona → wizard tạo Workspace → màn hình trạng thái/lỗi bắt buộc.
 
 ## 1. Sitemap
@@ -14,11 +14,12 @@ flowchart TB
   classDef ws fill:#e2f0d9,stroke:#2d6a4f,color:#000
   classDef adm fill:#fde2e4,stroke:#c9184a,color:#000
 
-  Login["/login → redirect Keycloak<br/>/callback"]:::pub
-  Invite["/invite/:token<br/>accept sau khi login"]:::pub
-  Transfer["/ownership/:token<br/>xác nhận nhận Owner"]:::pub
+  Login["/login → redirect Keycloak"]:::pub
+  Empty["Chưa thuộc Org nào:<br/>xin tạo Organization / chờ duyệt"]:::pub
+  Invite["/invitations/:token<br/>accept sau khi login"]:::pub
+  Transfer["/ownership-transfers/:token<br/>xác nhận nhận Owner"]:::pub
 
-  Switch["Organization switcher<br/>/o/:orgSlug"]:::org
+  Switch["Organization switcher<br/>/orgs/:orgSlug"]:::org
   Over["Overview<br/>quota theo ClusterGrant, Workspace count,<br/>pool/node remaining, network availability"]:::org
   WSL["Workspaces<br/>list + Create"]:::org
   Mem["Members & invitations"]:::org
@@ -27,7 +28,7 @@ flowchart TB
   Cl["Granted Clusters<br/>quota, shared pools,<br/>dedicated nodes, network pools"]:::org
   Aud["Audit"]:::org
 
-  WSD["Workspace detail /o/:org/w/:ws"]:::ws
+  WSD["Workspace detail<br/>/orgs/:org/workspaces/:ws"]:::ws
   W1["Overview: state, conditions,<br/>operations timeline"]:::ws
   W2["Resources / quota"]:::ws
   W3["Compute: pool hoặc node,<br/>reservation"]:::ws
@@ -38,7 +39,7 @@ flowchart TB
   W8["Danger zone: cordon, delete"]:::ws
 
   Adm["/admin (chỉ realm role platform-admin)"]:::adm
-  A1["Organizations: tạo Org + Owner + grant"]:::adm
+  A1["Organizations: duyệt/từ chối yêu cầu,<br/>tạo thẳng Org + Owner + grant"]:::adm
   A2["Clusters: registry, health, endpoints"]:::adm
   A3["Onboarding policy"]:::adm
   A4["ClusterGrants per Org"]:::adm
@@ -48,6 +49,7 @@ flowchart TB
   A8["Platform health"]:::adm
 
   Login --> Switch
+  Login --> Empty --> Switch
   Invite --> Switch
   Transfer --> Switch
   Switch --> Over & WSL & Mem & Grp & Set & Cl & Aud
@@ -59,12 +61,12 @@ flowchart TB
 
 **Điểm cần review**
 
-- URL dùng **slug** (`/o/acme/w/solar`) vì slug immutable — đổi display name không làm hỏng bookmark.
+- URL dùng **slug** (`/orgs/acme/workspaces/solar`) vì slug immutable — đổi display name không làm hỏng bookmark.
 - OrgMember chỉ có binding vào một Workspace vẫn thấy Overview của Org? Đề xuất: thấy Overview rút gọn (Workspace mình có quyền), không thấy quota/usage toàn Org, không thấy Members/Groups/Settings/Clusters.
 
 ## 2. Wireflow — user mới (Alice)
 
-**Mục đích:** từ chưa có tài khoản tới Workspace Ready không cần Admin can thiệp.
+**Mục đích:** từ chưa có tài khoản tới Workspace Ready; Admin chỉ can thiệp đúng một lần, ở bước duyệt yêu cầu tạo Organization.
 
 ```mermaid
 flowchart LR
@@ -74,8 +76,10 @@ flowchart LR
 
   S1["Landing<br/>nút Sign up / Login"]:::s
   S2["Keycloak Register<br/>email verify"]:::s
-  S3["Callback → tạo user,<br/>personal Org 'alice',<br/>groups admins/developers/viewers,<br/>onboarding grant"]:::e
-  S4["Overview Org alice<br/>banner: bạn có quota Shared<br/>2 CPU / 4 GiB / 2 Workspace"]:::s
+  S3["Callback → tạo user record<br/>màn trống: xin tạo Organization"]:::s
+  S3a["Gửi yêu cầu: slug 'acme'<br/>preview tên Kubernetes acme-*"]:::s
+  S3b["Chờ duyệt<br/>(từ chối → hiện lý do, gửi lại)"]:::d
+  S4["Admin duyệt → Overview Org acme<br/>banner: bạn có quota Shared<br/>2 CPU / 4 GiB / 2 Workspace"]:::e
   S5["Workspaces → Create"]:::s
   W["Wizard 12 bước<br/>xem mục 4"]:::d
   S6["Operation view<br/>Validating → Reserving →<br/>Provisioning → Ready"]:::s
@@ -84,14 +88,15 @@ flowchart LR
   S9["Groups → developers<br/>add Joe"]:::s
   S10["Workspace → Members & bindings<br/>developers = Developer"]:::s
 
-  S1 --> S2 --> S3 --> S4 --> S5 --> W --> S6 --> S7
+  S1 --> S2 --> S3 --> S3a --> S3b --> S4 --> S5 --> W --> S6 --> S7
   S4 --> S8 --> S9 --> S10
 ```
 
 **Điểm cần review**
 
-- Bước S3 chạy ở callback nên phải **nhanh và idempotent**; onboarding grant tạo lỗi (ví dụ default Cluster đang Maintenance) thì user vẫn phải vào được portal với banner "quota chưa sẵn sàng, thử lại sau".
-- Personal Org slug lấy từ đâu? Đề xuất: từ `preferred_username` sau khi chuẩn hóa, thêm hậu tố số nếu trùng; **không** cho sửa vì immutable. Cần hiển thị slug ở bước đầu để user biết tên Kubernetes sẽ ra sao.
+- Callback (S3) chỉ upsert user và tạo phiên nên nhanh và idempotent; không có gì ở đây phụ thuộc Cluster.
+- Slug do user tự chọn ở S3a và **không sửa được** sau đó; form phải hiện ngay tên Kubernetes sẽ sinh ra (`acme-<workspace>`) và báo `SLUG_TAKEN` tại chỗ.
+- S3b phải nói rõ đang chờ ai và cho thấy lý do khi bị từ chối; một user chỉ có một yêu cầu chờ duyệt tại một thời điểm.
 
 ## 3. Wireflow — người được mời (Joe) và người xem (Bob)
 
@@ -106,7 +111,7 @@ flowchart LR
   J3{"email verified<br/>khớp invite?"}:::s
   J4["Accept → membership OrgMember<br/>+ vào group đã chọn"]:::e
   J5["Lỗi: email không khớp,<br/>gợi ý login đúng tài khoản"]:::x
-  J6["Org alice → Workspaces<br/>chỉ thấy Solar"]:::s
+  J6["Org acme → Workspaces<br/>chỉ thấy Solar"]:::s
   J7["Solar → Access<br/>Download kubeconfig<br/>hướng dẫn cài kubelogin"]:::s
   J8["Terminal: kubectl get ns<br/>→ browser SSO → OK"]:::e
   J9["Open Web Console<br/>→ Headlamp SSO"]:::e
@@ -193,7 +198,7 @@ flowchart LR
   end
   subgraph Acc["Cấp Access"]
     A1["Group chưa Synced<br/>→ badge trên binding, cảnh báo token chưa có group"]:::warn
-    A2["Vừa bị remove<br/>→ 'quyền Kubernetes hết hạn sau ≤5 phút'"]:::warn
+    A2["Vừa bị gỡ khỏi group<br/>→ 'quyền Kubernetes hết hạn sau ≤5 phút,<br/>người bị gỡ phải đăng nhập lại'"]:::warn
     A3["Owner không thuộc group nào<br/>→ kubeconfig kèm cảnh báo 403"]:::warn
   end
   subgraph Net["Cấp Network/Node"]
@@ -214,7 +219,7 @@ flowchart LR
   classDef a fill:#fde2e4,stroke:#c9184a,color:#000
   classDef e fill:#e2f0d9,stroke:#2d6a4f,color:#000
 
-  A1["Organizations → Create<br/>slug 'acme', owner = alice@…,<br/>entitlement, grant ban đầu"]:::a
+  A1["Organizations → duyệt yêu cầu của alice<br/>(grant điền sẵn từ onboarding policy)<br/>hoặc Create thẳng: slug, owner, grant"]:::a
   A2["Clusters → cluster-a<br/>Shared pools: shared-general ratio 3.0<br/>Dedicated nodes: worker-a-05"]:::a
   A3["Dedicated nodes → Grant to Org acme<br/>precondition: không còn Pod tenant lạ"]:::a
   A4["ClusterGrants → acme/cluster-a<br/>tăng CPU/RAM, thêm mode Dedicated,<br/>gắn nodegrant, network pool riêng"]:::a

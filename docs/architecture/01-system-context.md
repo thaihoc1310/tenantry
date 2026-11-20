@@ -1,6 +1,6 @@
 # 01 — Sơ đồ hệ thống: Context, Container, Deployment
 
-> Nguồn sự thật: `docs/PRODUCT-PLAN.md` v0.6. Tài liệu này chỉ vẽ lại, không thêm quyết định mới.
+> Góc nhìn, không định nghĩa gì mới: quy tắc ở `PRODUCT-PLAN.md`, phần còn lại theo bản đồ ở `docs/README.md`.
 > Cách đọc: đi từ trên xuống — ai dùng hệ thống (Context) → hệ thống gồm những khối gì (Container) → chạy ở đâu (Deployment) → bên trong controller có gì (Component). Sau mỗi sơ đồ có mục **Điểm cần review**.
 
 ## 1. System Context — ai tương tác với Tenantry
@@ -71,7 +71,7 @@ flowchart TB
     API["Platform API<br/>Go modular monolith<br/>REST /api/v1, BFF session"]:::svc
     PW["Provisioning Worker<br/>đọc outbox → apply CR<br/>watch CR status → DB"]:::svc
     GS["Group Sync Worker<br/>DB group → Keycloak"]:::svc
-    PG[("PostgreSQL<br/>source of truth<br/>+ session store")]:::data
+    PG[("PostgreSQL<br/>source of truth, outbox,<br/>phiên portal")]:::data
     KC["Keycloak<br/>realm tenantry"]:::ext
   end
 
@@ -106,7 +106,7 @@ flowchart TB
   APIS --> CM
   Capsule --> WL
   GS --> PG
-  GS -->|"Admin API: group, member,<br/>revoke session"| KC
+  GS -->|"Admin API: group, member,<br/>logout user"| KC
   API -->|"PromQL usage"| Mon
 
   Kubectl -->|"exec plugin → browser"| KC
@@ -121,7 +121,7 @@ flowchart TB
 **Điểm cần review**
 
 - **Hai worker là process riêng** (Provisioning, Group Sync) nhưng cùng codebase với API; scale/restart độc lập, không cần message broker: outbox trong PostgreSQL là hàng đợi.
-- Provisioning Worker là **thành phần duy nhất** có credential vào Cluster, và credential đó chỉ có quyền trên `platformworkspaces.tenantry.io`. Controller (chạy trong cluster) mới là thứ có quyền tạo Tenant/IPPool/RBAC. Nếu API bị chiếm, kẻ tấn công không tạo được cluster-admin binding.
+- Provisioning Worker là **thành phần duy nhất** có credential vào Cluster, và credential đó chỉ có quyền trên các CRD `tenantry.io`. Controller (chạy trong cluster) mới là thứ có quyền tạo Tenant/IPPool/RBAC. Nếu API bị chiếm, kẻ tấn công không tạo được cluster-admin binding.
 - Portal Web là SPA tĩnh, gọi API same-origin qua cookie → không có CORS, không giữ token trong JS.
 - Cần xác nhận Headlamp nói với Capsule Proxy bằng **token của user** (không dùng ServiceAccount có quyền), đúng như plan 12.4.
 
@@ -144,7 +144,7 @@ flowchart TB
 
   subgraph SYS["system pool — label tenantry.io/compute-pool=system, taint NoSchedule cho tenant"]
     NS1["ns tenantry-system<br/>Portal, API, Provisioning Worker,<br/>Group Sync Worker, PostgreSQL"]:::ns
-    NS2["ns keycloak<br/>Keycloak + PostgreSQL riêng"]:::ns
+    NS2["ns keycloak<br/>Keycloak (database riêng trên<br/>cùng instance PostgreSQL)"]:::ns
     NS3["ns capsule-system<br/>Capsule, Capsule Proxy,<br/>Workspace Controller"]:::ns
     NS4["ns headlamp-system<br/>Headlamp"]:::ns
     NS5["ns ingress-nginx, cert-manager,<br/>nfs-provisioner, monitoring"]:::ns
@@ -154,7 +154,7 @@ flowchart TB
     S1["worker-a-01"]:::node
     S2["worker-a-02"]:::node
     T1["acme-solar-frontend<br/>acme-solar-backend"]:::tenant
-    T2["bob-personal-demo"]:::tenant
+    T2["globex-demo-web"]:::tenant
   end
 
   subgraph DED["dedicated node — tenantry.io/dedicated-org=org-01jabc (label + taint)"]
@@ -187,7 +187,7 @@ Bảng endpoint public (TLS bởi cert-manager, CA lab):
 **Điểm cần review**
 
 - System pool cần **taint** để tenant workload không rơi vào (Capsule Tenant nodeSelector không đủ nếu user bỏ được selector; taint là lớp bảo vệ thứ hai).
-- Keycloak dùng PostgreSQL riêng hay chung instance với Tenantry? Đề xuất: **chung instance, database riêng** để tiết kiệm tài nguyên lab; tách khi Phase 2.
+- Keycloak dùng **chung instance PostgreSQL, database riêng** để tiết kiệm tài nguyên lab; tách khi Phase 2.
 - Với lab kubeadm, cần một cách trả lời DNS wildcard cho máy demo (dnsmasq/CoreDNS nội bộ hoặc `sslip.io`). Điều này ảnh hưởng demo, không ảnh hưởng kiến trúc.
 - Phase 2 chỉ di chuyển khối `tenantry-system` + `keycloak` ra ngoài và thêm Cluster Agent vào `capsule-system`; các hostname theo Cluster (`kube-cluster-b`, `console-cluster-b`) được thêm theo mẫu.
 
@@ -208,8 +208,8 @@ flowchart LR
   end
 
   subgraph Domain["Domain services"]
-    Identity["identity<br/>user upsert, personal org,<br/>onboarding grant"]:::mod
-    Org["organization<br/>member, invitation,<br/>ownership transfer, group"]:::mod
+    Identity["identity<br/>OIDC login, user upsert,<br/>phiên portal"]:::mod
+    Org["organization<br/>xin tạo/duyệt, member, invitation,<br/>ownership transfer, group"]:::mod
     Ent["entitlement<br/>ClusterGrant, shared pool,<br/>DedicatedNodeGrant, NetworkPool"]:::mod
     WS["workspace<br/>validate, create/update/delete,<br/>namespaces, bindings, state"]:::mod
     Res["reservation<br/>grant quota · node capacity<br/>row lock, invariant"]:::mod
@@ -219,7 +219,7 @@ flowchart LR
   end
 
   subgraph Infra["Infrastructure adapters"]
-    Repo["repository (pgx)<br/>transaction manager"]:::infra
+    Repo["repository (sqlc + pgx)<br/>transaction manager"]:::infra
     Outbox["outbox writer/reader"]:::infra
     KCc["Keycloak Admin client"]:::infra
     K8sc["Kubernetes client<br/>chỉ CRD tenantry.io"]:::infra
@@ -234,8 +234,7 @@ flowchart LR
   Res --> Repo
   IPAM --> Repo
   WS --> Outbox
-  Org --> Outbox
-  Identity --> Ent
+  Org --> Ent
   Ops --> Repo
   Org --> Repo
   Ent --> Repo
@@ -249,7 +248,7 @@ flowchart LR
   end
   PW --> Outbox
   PW --> K8sc
-  GS --> Outbox
+  GS --> Repo
   GS --> KCc
 ```
 
@@ -257,8 +256,8 @@ Quy tắc phụ thuộc (để giữ monolith không rối):
 
 - `Edge` chỉ gọi `Domain`; không gọi `Infra` trực tiếp.
 - `workspace` là orchestrator của create/update/delete: nó gọi `reservation` và `ipam` **trong cùng một transaction** do `Repo.transaction manager` cấp; hai module này không được tự mở transaction.
-- `outbox` là cách duy nhất `Domain` gây side effect ra Keycloak/Kubernetes. Không module domain nào import `KCc` hay `K8sc`.
-- `identity` gọi `entitlement` để tạo onboarding grant; `entitlement` không biết `identity`.
+- `Domain` không gọi thẳng Keycloak hay Kubernetes, không module domain nào import `KCc` hay `K8sc`. Thay đổi cho Cluster đi qua `outbox`; thay đổi cho Keycloak đi qua cột `sync_status` của `groups`/`group_members` mà Group Sync Worker đọc. Cả hai được ghi cùng transaction với thay đổi nghiệp vụ.
+- `organization` gọi `entitlement` để tạo grant khi Admin duyệt hoặc tạo thẳng Organization; `entitlement` không biết `organization`.
 
 **Điểm cần review**
 
@@ -278,7 +277,7 @@ flowchart TB
   CR["PlatformWorkspace acme-solar<br/>spec + generation"]:::in
   Main["Reconciler chính<br/>finalizer · observedGeneration · phase"]:::rec
 
-  R1["node reconciler<br/>Dedicated: label/taint org,<br/>membership label ws-id"]:::rec
+  R1["node reconciler<br/>Dedicated: membership label ws-id<br/>(label/taint org: PlatformNodeGrant)"]:::rec
   R2["tenant reconciler<br/>Capsule Tenant acme-solar<br/>owners, nodeSelector, quota,<br/>allowed StorageClass/IngressClass/hostnames"]:::rec
   R3["namespace reconciler<br/>spec.namespaces → Namespace<br/>watch Namespace của Tenant → status.namespaces"]:::rec
   R4["resource reconciler<br/>ResourcePool, LimitRange,<br/>object quota"]:::rec
@@ -315,4 +314,4 @@ Thứ tự khi **tạo**: node → tenant → namespaces → resource → networ
 - Controller **không** biết gì về quota của ClusterGrant hay capacity node: những invariant đó đã được API kiểm tra trước khi CR tồn tại. Controller chỉ render. Nếu thấy controller cần truy vấn DB thì thiết kế đang lệch.
 - `namespace reconciler` phải phân biệt Namespace do portal khai báo (`spec.namespaces`) và do kubectl tạo (chỉ observed) để không xóa nhầm Namespace của user khi họ xóa khỏi portal list.
 - `verify reconciler` là bước tùy chọn nhưng đáng giữ: nó biến "Ready" thành lời khẳng định đã test, không chỉ là "đã apply xong".
-- Label/taint **cấp Organization** trên node (`tenantry.io/dedicated-org`) phải có từ lúc Admin grant node, trước khi có Workspace nào — nên không thể nằm trong `PlatformWorkspace`. Đề xuất (khớp `03-flows` mục 2 và `IMPLEMENTATION-PLAN` mục 12.9): một CRD phụ nhỏ `PlatformNodeGrant` do worker apply và controller reconcile label/taint + báo `allocatable` về status. `node reconciler` của `PlatformWorkspace` chỉ thêm/gỡ membership label per Workspace.
+- Label/taint **cấp Organization** trên node (`tenantry.io/dedicated-org`) phải có từ lúc Admin grant node, trước khi có Workspace nào — nên không thể nằm trong `PlatformWorkspace`. Vì vậy có CRD phụ `PlatformNodeGrant` do worker apply; controller kiểm node sạch, reconcile label/taint và báo `allocatable` về status (`03-flows.md` mục 2b). Capacity của shared pool đi cùng mẫu qua CRD phụ `PlatformSharedPool` (IMPLEMENTATION-PLAN mục 4.5). `node reconciler` của `PlatformWorkspace` chỉ thêm/gỡ membership label per Workspace.

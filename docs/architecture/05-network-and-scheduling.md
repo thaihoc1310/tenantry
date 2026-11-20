@@ -1,6 +1,6 @@
 # 05 — Network, scheduling, ingress, access và storage
 
-> Tài liệu kiến trúc đi kèm `docs/PRODUCT-PLAN.md` v0.6 (mục 6, 7, 8.4, 11, 12, 18). Sơ đồ bám theo lab hiện có trong repo (Calico IPPool `Manual` per tenant, `PodNodeSelector`, NetworkPolicy replicate qua `GlobalTenantResource`) và thay tên lab (`solar`, `water`, `capsule.clastix.io/tenant=solar`) bằng tên Tenantry (`acme-solar`, `tenantry.io/...`).
+> Nơi định nghĩa cho node layout, capacity model, IP plan, NetworkPolicy, Ingress/TLS và storage; quy tắc nghiệp vụ nền ở `PRODUCT-PLAN.md` mục 6, 7, 11, 12, 18. Sơ đồ bám theo lab hiện có trong repo (Calico IPPool `Manual` per tenant, `PodNodeSelector`, NetworkPolicy replicate qua `GlobalTenantResource`) và thay tên lab (`solar`, `water`, `capsule.clastix.io/tenant=solar`) bằng tên Tenantry (`acme-solar`, `tenantry.io/...`).
 > Chỗ plan chưa nói rõ được đánh dấu **(giả định)**.
 
 Ví dụ dùng xuyên suốt:
@@ -263,8 +263,8 @@ flowchart TB
   subgraph CL["Cluster A: supernet 10.240.0.0/16 (Pod CIDR tenant)"]
     direction TB
     subgraph ONB["NetworkPool onboarding-pod-network<br/>organizationId = null (pool chung)<br/>cidrs 10.240.0.0/18 (giả định chia supernet)<br/>defaultPrefixLength 24, allowedComputeModes Shared"]
-      P1["10.240.1.0/24 → Workspace personal của Alice"]
-      P2["10.240.2.0/24 → Workspace personal của Bob"]
+      P1["10.240.1.0/24 → Workspace globex-demo"]
+      P2["10.240.2.0/24 → Workspace initech-lab"]
       PF["... free /24 ..."]
     end
     subgraph ACME["NetworkPool acme-cluster-a-pod-network<br/>organizationId = org-01jabc<br/>cidrs 10.240.64.0/18 (giả định)<br/>allowedPrefixLengths 20–24, Shared + Dedicated"]
@@ -465,7 +465,7 @@ flowchart LR
 
   subgraph CLUSTERA["Cluster A"]
     PX["Capsule Proxy<br/>public HTTPS (kubectl)<br/>+ ClusterIP (Headlamp)<br/>authPreferredTypes BearerToken"]
-    API["kube-apiserver<br/>AuthenticationConfiguration:<br/>issuer id.tenantry.example/realms/capsule<br/>audiences [kubernetes, headlamp-cluster-a]<br/>username claim sub, prefix oidc:<br/>groups claim groups, prefix oidc:"]
+    API["kube-apiserver<br/>AuthenticationConfiguration:<br/>issuer id.tenantry.example/realms/tenantry<br/>audiences [kubernetes, headlamp-cluster-a]<br/>username claim sub, prefix oidc:<br/>groups claim groups, prefix oidc:"]
     RBAC["RBAC + Capsule webhook<br/>owner group → Tenant owner<br/>Developer/Viewer → custom ClusterRole<br/>oidc:tenantry:tenant-users = Capsule user group"]
     PAPI["Platform API"]
     HL["Headlamp<br/>không có cluster-admin SA<br/>kubernetes host = Capsule Proxy service"]
@@ -491,7 +491,7 @@ flowchart LR
 
 | Đường | OIDC client | Audience | Đi qua | Ghi chú |
 |---|---|---|---|---|
-| kubectl | `kubectl` | `kubernetes` | kubeconfig → Capsule Proxy public endpoint | Không static token; kubelogin cache/refresh; token TTL ngắn (5 phút demo) |
+| kubectl | `kubectl` | `kubernetes` | kubeconfig → Capsule Proxy public endpoint | Không static token; kubelogin cache/refresh |
 | Headlamp | `headlamp-cluster-a` | `headlamp-cluster-a` | Headlamp → Capsule Proxy ClusterIP | Một instance per Cluster; SSO nhờ session Keycloak từ portal |
 | Portal | `portal` | `portal-api` | Portal BFF → Platform API | Token không hợp lệ với kube-apiserver vì audience không khớp |
 | Provisioning Worker | (ServiceAccount) | — | apiserver trực tiếp | Chỉ quyền trên CRD `tenantry.io`; Phase 2 thay bằng Cluster Agent |
@@ -501,7 +501,7 @@ flowchart LR
 - Lab hiện dùng `username.claim: preferred_username`, `prefix: ""`, audiences `[headlamp, kubernetes]`; plan yêu cầu `sub` + prefix `oidc:` và audience `headlamp-{clusterId}`. Đổi prefix làm mọi RoleBinding/Tenant owner phải mang `oidc:`; cần cập nhật `60-enable-oidc.sh`, `tenants.yaml`, `values/capsule.yaml` (`userGroups`) cùng lúc.
 - Với Shared mode "không grant Node List" (plan 6.2) nhưng Proxy vẫn lọc theo nodeSelector: Headlamp trang Nodes sẽ rỗng hoặc lỗi 403 — chọn hành vi nào cho UX.
 - Capsule Proxy cần hai Service/Ingress (public cho kubectl, ClusterIP cho Headlamp) hay một public endpoint cho cả hai? Sơ đồ vẽ hai để Headlamp không đi vòng ra ngoài.
-- Revocation contract: remove group → Group Sync Worker revoke session; token đã phát hành vẫn dùng tới hết TTL; cần hiển thị rõ trong portal.
+- Thời hạn token và contract thu hồi quyền: `06-security-and-identity.md` mục 3 và 5.
 
 ---
 

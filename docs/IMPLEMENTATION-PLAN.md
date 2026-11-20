@@ -1,8 +1,7 @@
 # Tenantry — Kế hoạch triển khai kỹ thuật (Implementation Plan)
 
-> Phiên bản: 0.1 — bám theo `docs/PRODUCT-PLAN.md` v0.6 (single source of truth)
-> Ngày: 2026-09-02
-> Đối tượng: tác giả đồ án, dùng để quyết định bắt đầu code như thế nào. Mọi chỗ spec chưa nói được đánh dấu **(đề xuất)**; các chỗ còn lại dùng đúng tên/khái niệm của spec.
+> Bám theo `docs/PRODUCT-PLAN.md` ("spec"). Cập nhật: 2026-11-20
+> Nơi định nghĩa cho cấu trúc repo, layering, transaction, worker, tham số tuning, milestone và test. Schema, state machine, phiên/token/credential nằm ở `docs/architecture/` — bản đồ ở `docs/README.md`; file này trỏ sang chứ không chép lại.
 
 Tài liệu này trả lời bốn câu hỏi: code đặt ở đâu (mục 2), mỗi thành phần được cấu trúc bên trong thế nào (mục 3–6), làm theo thứ tự nào và khi nào coi là xong (mục 7–9), và cần chốt gì trước khi gõ dòng code đầu tiên (mục 10–12).
 
@@ -15,7 +14,7 @@ Tài liệu này trả lời bốn câu hỏi: code đặt ở đâu (mục 2), 
 - **Test là deliverable lõi, không phải phần phụ**: spec §26.2 nói rõ isolation test, resource reservation, group mapping và delete cleanup là "lõi chứng minh đồ án". Mỗi milestone có mục "Test bắt buộc" và milestone chưa xong nếu test đó chưa chạy xanh.
 - **Một monorepo**: API, controller, web, Helm chart, lab script và tài liệu cùng một repo, cùng một tag; đơn giản cho một người làm và cho hội đồng xem code.
 - **Contract-first ở hai ranh giới**: OpenAPI (`/api/v1`) giữa web và API; CRD `PlatformWorkspace` (`tenantry.io/v1alpha1`) giữa central plane và Cluster. Hai contract này thay đổi theo migration/versioning rõ ràng, không sửa ad hoc.
-- **Đơn giản là mặc định**: modular monolith Go + hai worker loop trong cùng binary (hoặc cùng image, khác entrypoint), PostgreSQL làm cả session store và outbox, không Redis/Kafka/Temporal (spec §13.2).
+- **Đơn giản là mặc định**: modular monolith Go + hai worker loop trong cùng binary (hoặc cùng image, khác entrypoint), PostgreSQL làm cả kho phiên, outbox và idempotency; không Redis/Kafka/Temporal (spec §13.2, lý do ở `architecture/06-security-and-identity.md` mục 3.3).
 - **Bám scope, cắt theo §26.2**: khi trễ, cắt iframe Headlamp, custom role builder, email thật, CLI riêng, chart nâng cao; không cắt isolation/reservation/group mapping/delete cleanup.
 - **Ghi ADR khi quyết định**: 20 ADR ở spec §29 được viết dần trong `docs/adr/` khi milestone tương ứng chạm tới, không dồn cuối.
 
@@ -30,13 +29,13 @@ Tài liệu này trả lời bốn câu hỏi: code đặt ở đâu (mục 2), 
 ├── backend/                     # central plane: mọi thứ chạm PostgreSQL (một module Go, modular monolith)
 │   ├── cmd/
 │   │   ├── tenantry-api/        # HTTP server /api/v1 + BFF/OIDC
-│   │   ├── tenantry-worker/     # provisioning loop + group sync loop (--loops chọn loop nào chạy)
+│   │   ├── tenantry-worker/     # ba loop: provisioning, groupsync, housekeeping (--loops chọn loop nào chạy)
 │   │   ├── tenantry-migrate/    # chạy migrations
 │   │   └── tenantry-seed/       # seed dev: Cluster A, onboarding policy, shared pool, NetworkPool
 │   ├── internal/
 │   │   ├── app/                 # wiring/DI: build services từ config, không chứa business logic
-│   │   ├── httpapi/             # handler generated từ OpenAPI + middleware (session, authz, idempotency, CSRF)
-│   │   ├── auth/                # OIDC (Authorization Code + PKCE), session store PostgreSQL, upsert user theo (issuer, subject)
+│   │   ├── httpapi/             # handler generated từ OpenAPI + middleware (phiên, CSRF, rate limit, authz, idempotency)
+│   │   ├── auth/                # OIDC (Authorization Code + PKCE), phiên trong PostgreSQL, upsert user theo (issuer, subject)
 │   │   ├── org/                 # organizations, members, invitations, groups, ownership_transfers, entitlement
 │   │   ├── workspace/           # workspaces, workspace_namespaces, bindings, state machine, operations
 │   │   ├── reservation/         # cluster registry, cluster grants, shared pools, dedicated node grants, capacity math, reservation tx
@@ -45,8 +44,8 @@ Tài liệu này trả lời bốn câu hỏi: code đặt ở đâu (mục 2), 
 │   │   ├── keycloak/            # Keycloak Admin API client + group sync worker
 │   │   ├── k8s/                 # client apply/watch PlatformWorkspace CR bằng scoped credential
 │   │   ├── audit/               # audit_events
-│   │   └── store/               # pgx pool, transaction helper, sqlc-generated queries (đề xuất)
-│   ├── migrations/              # SQL migrations (goose, đề xuất)
+│   │   └── store/               # pgx pool, transaction helper, sqlc-generated queries
+│   ├── migrations/              # SQL migrations (goose)
 │   └── openapi/                 # tenantry.v1.yaml + config sinh code Go/TS
 ├── operator/                    # Workspace Operator per Cluster (module Go riêng, kubebuilder layout)
 │   ├── cmd/manager/
@@ -73,14 +72,14 @@ Tài liệu này trả lời bốn câu hỏi: code đặt ở đâu (mục 2), 
 ├── test/
 │   ├── e2e/                     # Go test chạy trên lab cluster thật (persona §24.3, isolation §24.4, concurrency §24.5)
 │   └── bench/                   # script benchmark §24.6 + baseline kind/vcluster
-└── docs/                        # PRODUCT-PLAN.md, IMPLEMENTATION-PLAN.md, architecture/, adr/, report/
+└── docs/                        # README.md (bản đồ tài liệu), PRODUCT-PLAN.md, IMPLEMENTATION-PLAN.md, architecture/, adr/, report/
 ```
 
 Một câu cho mỗi thư mục cấp một:
 
 - `backend/`: toàn bộ central plane bằng Go — HTTP API, BFF, hai worker loop, migrations, seed; một module, nhiều package nội bộ tách theo domain. Tên là `backend/` chứ không phải `api/` vì chỉ một trong bốn binary là HTTP server.
 - `operator/`: thứ chạy **trong** Cluster, chỉ biết CRD và các resource Kubernetes/Capsule/Calico, không biết PostgreSQL.
-- `web/`: portal SPA gọi API qua session cookie, không giữ token.
+- `web/`: portal SPA gọi API qua cookie phiên, không giữ token.
 - `deploy/`: mọi thứ để cài platform lên một Cluster đã có Capsule (Helm chart per component + realm Keycloak + overlay lab).
 - `lab/`: script dựng nền (Capsule/Proxy/Keycloak/Headlamp/Calico/monitoring/verify) làm nền M1 và regression; dựng lại ở M1, tham chiếu bản đã chạy được ở nhánh `feat/tenantry-scaffold`.
 - `test/`: test cần cluster thật hoặc nhiều tiến trình; unit/integration test nằm cạnh code.
@@ -108,11 +107,11 @@ Kiểm tra bằng `go vet` + một test `depguard`/`go list -deps` đơn giản 
 
 ```text
 HTTP request
-  → middleware: request-id, session cookie → user, CSRF, Idempotency-Key, rate limit
-  → generated handler (oapi-codegen, đề xuất) → decode/validate theo OpenAPI
+  → middleware: request-id, cookie phiên → user, CSRF, rate limit, Idempotency-Key
+  → generated handler (oapi-codegen) → decode/validate theo OpenAPI
   → authz: RequireOrgRole(orgId, ≥OrgMember|OrgAdmin|OrgOwner) hoặc RequirePlatformAdmin()
   → service (business rule, transaction boundary, ghi audit + outbox)
-  → repository (SQL thuần, sqlc đề xuất) → PostgreSQL
+  → repository (SQL thuần, sqlc) → PostgreSQL
 ```
 
 - Handler không chứa business rule; service không biết HTTP; repo không biết rule.
@@ -126,52 +125,58 @@ Toàn bộ bước 9–10 của spec §17.1 nằm trong **một** transaction, t
 ```sql
 BEGIN;
 SELECT ... FROM organization_cluster_grants WHERE org_id=$1 AND cluster_id=$2 FOR UPDATE;   -- 1. grant
-SELECT ... FROM shared_compute_pools       WHERE id=$3 FOR UPDATE;                          -- 2a. Shared (soft: Σ ≤ ratio × reservable)
+SELECT ... FROM shared_compute_pools       WHERE id=$3 FOR UPDATE;                          -- 2a. Shared (soft: Σ ≤ ratio × reservable; phải khóa ghi vì pool dùng chung giữa nhiều grant)
 SELECT ... FROM dedicated_node_grants      WHERE id=$3 FOR UPDATE;                          -- 2b. Dedicated (hard: Σ active + new ≤ reservable)
 SELECT ... FROM network_pools              WHERE id=$4 FOR UPDATE;                          -- 3. pool; overlap check trên network_allocations của cùng cluster_id
 -- tính toán trong Go trên snapshot đã lock; fail → ROLLBACK + error code
-INSERT INTO workspaces (...);                                  -- state = Reserving → Provisioning
+INSERT INTO workspaces (...);                                  -- state = Provisioning (Validating/Reserving chỉ tồn tại trong request)
 INSERT INTO workspace_node_reservations (...) -- state Pending → Active khi commit (Dedicated)
-INSERT INTO network_allocations (...);        -- state Active
+INSERT INTO network_allocations (...);        -- state Allocated
 INSERT INTO operations (...);                 -- type workspace.create, state Pending
 INSERT INTO outbox_events (operation_id, ordering_key='Workspace/<id>', target_cluster_id, type='workspace.apply', payload=CR spec JSON, version);
 INSERT INTO audit_events (...);
+INSERT INTO idempotency_keys (...);          -- response 202 vừa dựng, xem 3.4
 COMMIT;
 ```
 
-- Lớp bảo vệ thứ hai ở DB: exclusion constraint `EXCLUDE USING gist (cluster_id WITH =, cidr inet_ops WITH &&) WHERE (state <> 'Released')` trên `network_allocations`; partial unique index cho "đúng một OrgOwner"; unique `(cluster_id, node_name)` cho `dedicated_node_grants`. Row lock là cơ chế chính, constraint là lưới an toàn.
+- Lớp bảo vệ thứ hai ở DB là các constraint liệt kê trong `architecture/02-data-model.md` (exclusion constraint CIDR, partial unique index…). Row lock là cơ chế chính, constraint là lưới an toàn.
 - Resize Dedicated lock cùng grant + node grant + cập nhật `workspace_node_reservations` cùng transaction (spec §17.2).
-- Release capacity **chỉ** khi delete đã dọn xong trong Cluster (spec §17: reservation `Active` → `Releasing` → `Released`), do worker chuyển sau khi CR biến mất, không phải lúc API nhận DELETE.
+- Release capacity **chỉ** khi delete đã dọn xong trong Cluster (`architecture/04-state-machines.md` mục 3), do worker chuyển sau khi CR biến mất, không phải lúc API nhận DELETE.
 
 ### 3.3 Mô hình lỗi
 
-- Một type `apperr.Error{Code, HTTPStatus, Message, Details map}`; service trả `Code` stable đúng danh sách spec §16.5 (`CLUSTER_GRANT_CPU_QUOTA_EXCEEDED`, `CLUSTER_NOT_GRANTED`, `CLUSTER_NOT_READY`, `COMPUTE_POOL_CAPACITY_EXCEEDED`, `DEDICATED_NODE_NOT_GRANTED`, `DEDICATED_NODE_INSUFFICIENT_CAPACITY`, `DEDICATED_NODE_NOT_READY`, `CIDR_OUTSIDE_ALLOWED_POOL`, `CIDR_OVERLAP`, `LAST_OWNER_BINDING`, `GROUP_SYNC_PENDING`, `WORKSPACE_NOT_READY`) cộng các code chung `VALIDATION_FAILED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`, `IDEMPOTENCY_KEY_REUSED` (đề xuất).
+- Package `internal/apperr`: lỗi nghiệp vụ chỉ mang `Code` ổn định; ánh xạ `Code` → HTTP status nằm ở đúng một chỗ, `httpapi/errors.go`. Handler chỉ `return nil, err`.
+- Danh sách `Code` là enum `ErrorCode` trong `backend/openapi/tenantry.v1.yaml` — đó là nguồn duy nhất, sinh ra type cho cả Go và TS; không chép danh sách ở tài liệu. Spec §16.5 chỉ nêu ví dụ.
 - Body lỗi theo một schema OpenAPI duy nhất `ErrorResponse{code, message, details, requestId}`; UI map `code` → message tiếng Việt/Anh và gợi ý remediation (spec FR-10).
-- Danh sách code là enum trong OpenAPI để TS client có type.
 
 ### 3.4 Idempotency-Key
 
-- Header `Idempotency-Key` bắt buộc cho `POST .../workspaces`, `POST .../namespaces`, `POST .../invitations`, `POST admin/*` (đề xuất: bắt buộc với mọi POST tạo resource).
-- Bảng `idempotency_keys(key, user_id, method, path, request_hash, response_status, response_body, created_at)` **(đề xuất, spec chỉ nêu header)**; unique `(user_id, key)`; insert trong cùng transaction với side effect; TTL 24h dọn bằng job.
-- Cùng key + cùng hash → trả lại response cũ; cùng key + hash khác → `IDEMPOTENCY_KEY_REUSED`.
+- Header `Idempotency-Key` (UUID do client sinh) **bắt buộc** với `POST .../workspaces`, `POST .../invitations` và mọi `POST /admin/*` tạo resource — những chỗ retry mù có thể tạo trùng hoặc sinh token thứ hai. Các `POST` khác nhận header nếu client gửi.
+- Bảng `idempotency_keys`, khóa chính `(user_id, key)` (schema: `architecture/02-data-model.md` mục 2). Key của user này không đụng key của user khác.
+- Middleware tra key trước khi vào handler:
+  - chưa có → chạy handler; service ghi row (kèm `request_hash`, status và body của response) **trong cùng transaction** với thay đổi nghiệp vụ, nên không bao giờ có thay đổi mà thiếu key hay ngược lại;
+  - đã có, cùng `request_hash` → trả lại đúng response đã lưu, không chạy handler;
+  - đã có, `request_hash` khác → `422 IDEMPOTENCY_KEY_REUSED`.
+- Hai request cùng key đến đồng thời: request thua vấp khóa chính lúc commit, rollback rồi trả response của request thắng.
+- Chỉ response thành công được lưu; request lỗi không ghi key nên client sửa rồi gửi lại cùng key được.
+- Row giữ 24 giờ, vòng `housekeeping` xóa (mục 5.3).
 
 ### 3.5 Authz middleware
 
-- Session cookie → `users` row + snapshot claims (realm roles) lưu trong `sessions` (PostgreSQL). Realm role `platform-admin` được đọc lại mỗi lần BFF refresh token, không cache quá TTL access token.
+- Cookie phiên → `users` row + `realm_roles` của phiên. Cơ chế phiên, refresh, CSRF và rate limit: `architecture/06-security-and-identity.md` mục 3 và 6.
 - `RequireOrgRole(min)`: load `organization_members` cho `(org_id, user_id)`; thứ tự `OrgMember < OrgAdmin < OrgOwner`. Endpoint transfer-ownership, delete Organization, đổi role Owner yêu cầu `OrgOwner`.
-- `RequirePlatformAdmin()`: kiểm tra realm role trong session; áp cho `/api/v1/admin/*` và `operations/{id}:force`.
+- `RequirePlatformAdmin()`: kiểm tra `platform-admin` trong `realm_roles` của phiên; áp cho `/api/v1/admin/*` và `operations/{id}:force`.
 - Matrix role × endpoint được viết thành **bảng dữ liệu** trong test (`authz_matrix_test.go`) để cover threat case spec §20.3 (đổi `orgId`, OrgMember tự nâng role, user thường gọi admin, OrgAdmin gọi transfer-ownership...).
 
 ### 3.6 OpenAPI-first
 
-- File nguồn `backend/openapi/tenantry.v1.yaml` viết tay theo spec §16; sinh server stub Go bằng **oapi-codegen** (std `net/http` router Go 1.22+, strict-server: handler nhận struct có kiểu; strict-server chỉ decode JSON, ràng buộc schema như `maxLength`/`additionalProperties` do middleware `oapi-codegen/nethttp-middleware` kiểm theo spec embed) và TS client bằng **openapi-typescript + openapi-fetch** (đề xuất, không runtime nặng).
+- File nguồn `backend/openapi/tenantry.v1.yaml` viết tay theo spec §16; sinh server stub Go bằng **oapi-codegen** (router **chi** — `ServeMux` của std không match được path kiểu `{id}:retry`; strict-server: handler nhận struct có kiểu; strict-server chỉ decode JSON, ràng buộc schema như `maxLength`/`additionalProperties` do middleware `oapi-codegen/nethttp-middleware` kiểm theo spec embed) và TS client bằng **openapi-typescript + openapi-fetch** (không runtime nặng).
 - CI fail nếu `git diff` sau `make generate` khác rỗng.
 - Contract test: request/response mẫu trong `openapi/examples/` validate bằng `kin-openapi` (spec §24.1 "OpenAPI request/response").
 
 ### 3.7 Các quy ước khác
 
-- ID: ULID có tiền tố (`org-`, `ws-`, `grp-`, `op-`, `netalloc-`, `nodegrant-`...) lưu `text` (xem mục 12).
-- Thời gian `timestamptz`, tài nguyên CPU/RAM lưu dạng `text` Kubernetes quantity và parse bằng `k8s.io/apimachinery/pkg/api/resource` để cộng trừ đúng.
+- ID, thời gian và cách lưu lượng tài nguyên: quy ước chung ở đầu `architecture/02-data-model.md`. Tài nguyên lưu số nguyên (milliCPU, byte); Kubernetes quantity chỉ xuất hiện ở biên API, parse bằng `k8s.io/apimachinery/pkg/api/resource`.
 - Audit ghi trong cùng transaction với mutation; log structured (`slog`), không log token/kubeconfig (spec §20.1).
 
 ---
@@ -223,9 +228,16 @@ Finalizer `tenantry.io/workspace` thực thi thứ tự spec §17.4 bước 4–
 - Watch `Namespace` với predicate label `capsule.clastix.io/tenant=<tenant>` (Capsule gắn) → map về PlatformWorkspace cùng tên → ghi `status.namespaces[{name, source}]`; `source=portal` nếu có trong `spec.namespaces`, ngược lại `kubectl`.
 - Đồng thời watch Tenant, IPPool, Certificate, Node (chỉ node có label `tenantry.io/dedicated-org`) bằng `Owns()`/`Watches()` với handler map về CR.
 
-### 4.5 Node grant
+### 4.5 Hai CRD phụ: `PlatformNodeGrant` và `PlatformSharedPool`
 
-Grant/revoke dedicated node là event outbox `node.grant`/`node.revoke` (đề xuất) → worker apply label/taint `tenantry.io/dedicated-org=<org-id>` trực tiếp bằng scoped credential? **Không** — credential worker chỉ có quyền CRD. Vì vậy đề xuất một CRD phụ rất nhỏ `PlatformNodeGrant` (đề xuất) hoặc tái dùng annotation trên Node do controller xử lý. Đây là quyết định mở, xem mục 12.
+Credential của worker chỉ có quyền trên CRD `tenantry.io`, không đọc hay patch Node. Mọi thứ central plane cần biết hoặc cần làm với Node đi qua hai CRD nhỏ do worker apply và operator reconcile:
+
+| CRD (`tenantry.io/v1alpha1`) | Spec | Operator làm | Status trả về |
+|---|---|---|---|
+| `PlatformNodeGrant` | `nodeName`, `organizationId` | Kiểm node `Ready`, không phải system node, không còn Pod tenant của Organization khác; gắn label + taint `tenantry.io/dedicated-org=<org-id>`; gỡ khi CR bị xóa | Condition `Ready` (reason `NodeNotReady`/`NodeNotClean` kèm danh sách Pod), `allocatable` của node |
+| `PlatformSharedPool` | `nodeSelector` | Chỉ quan sát | Số node `Ready`, tổng `allocatable` của pool |
+
+Worker chép status về `dedicated_node_grants` và `shared_compute_pools.capacity_snapshot`; đó là nguồn của capacity math và drift `Overcommitted`. Cùng kênh với `PlatformWorkspace` nên Phase 2 (Cluster Agent) không phải đổi gì.
 
 ---
 
@@ -248,34 +260,49 @@ loop mỗi 1s (đề xuất):
   COMMIT
 ```
 
-- Cột thêm so với spec §15: `operation_id`, `next_attempt_at`, `last_error`, `ordering_key`.
+- Schema `outbox_events`: `architecture/02-data-model.md` mục 4.
+- **Không cần lease**: batch chạy trong một transaction giữ row lock của các event đang giao; worker chết thì transaction rollback, lock tự nhả và event được giao lại.
 - **Thứ tự theo resource**: `ordering_key = <resource_type>/<resource_id>` của operation (do `outbox.Enqueue` tự đặt). Event chỉ được lấy khi không còn event cũ hơn chưa giao cùng key, kể cả khi event đó đang backoff — nên `workspace.delete` không thể vượt `workspace.apply` đang lỗi của cùng Workspace; resource khác không bị chặn.
-- Backoff exponential 1s → 5 phút, không giới hạn attempts với lỗi tạm thời; sau 10 lần lỗi liên tiếp, `operations.state = Failed` để UI hiện nút retry (`:retry` reset `attempts`, `next_attempt_at`).
+- Backoff exponential 1s → 5 phút, không giới hạn attempts với lỗi tạm thời; sau 10 lần lỗi liên tiếp, `operations.state = Failed` để UI hiện nút retry (`:retry` reset `attempts`, `next_attempt_at`); worker vẫn tiếp tục giao ở backoff tối đa.
 - **At-least-once + idempotent**: apply CR là idempotent (SSA); payload mang `generation` mong muốn; apply lặp không tạo duplicate.
-- **Status sync**: một informer trên `PlatformWorkspace` (credential có `get/list/watch/patch/update/delete` đúng resource này, không hơn — spec §14.3); mỗi status update → `workspaces.state`, `operations.state/progress/error_code` (từ conditions), `workspace_namespaces` (observed, upsert theo `status.namespaces`), `Degraded` khi condition False sau Ready; CR biến mất sau delete → release reservation/CIDR (mục 4.3).
+- **Status sync**: một informer trên các CRD `tenantry.io` (quyền của credential: `architecture/06-security-and-identity.md` mục 7); mỗi status update → `workspaces.state`, `operations.state/progress/error_code` (từ conditions), `workspace_namespaces` (observed, upsert theo `status.namespaces`), `Degraded` khi condition False sau Ready; CR biến mất sau delete → release reservation/CIDR (mục 4.3).
 - Resync định kỳ 5 phút (đề xuất) để phát hiện drift khi worker restart hoặc mất event.
 - Chạy nhiều replica được nhờ `SKIP LOCKED`; MVP một replica là đủ.
 - Health check Cluster tối thiểu (spec §6.1 MVP): worker ping `/version` Cluster mỗi 30s, cập nhật `clusters.last_health_check`; Admin đổi trạng thái bằng tay.
 
 ### 5.2 Group Sync Worker (DB → Keycloak)
 
-- Nguồn: `groups.sync_status`, `group_members.sync_status` ∈ `Pending|Error`; mỗi mutation ở `org` service đặt `Pending` trong cùng transaction.
-- Keycloak Admin API client (đề xuất thư viện `gocloak`, hoặc client tự viết vài endpoint: group by name, create group, add/remove user membership, logout user sessions). Service account client `tenantry-sync` với role `manage-users`, `query-groups` — credential trong Secret (spec §20.1).
-- Vòng lặp: `FOR UPDATE SKIP LOCKED` trên hàng `Pending`; ensure group Keycloak theo `machine_name` (`org_<id>:group_<id>`), lưu `keycloak_group_id`; add/remove membership; cập nhật group platform `tenantry:tenant-users` theo rule "có ≥1 Workspace binding" (spec §9.3); revoke session user bị remove (`POST /admin/realms/{realm}/users/{id}/logout`); ghi `sync_status = Synced|Error` + `last_error`.
+Không đi qua `outbox_events` (bảng đó chỉ mang thay đổi cho Cluster). Worker là một reconciler trên hai bảng `groups` và `group_members`; trạng thái và cạnh chuyển: `architecture/04-state-machines.md` mục 9.1.
+
+- Mọi thay đổi ở `org` service đặt `sync_status = Pending` trong cùng transaction. Xóa là **tombstone** (`deleted_at`), không xóa row — row bị xóa thì không còn gì để worker biết phải gỡ trên Keycloak.
+- Vòng lặp: lấy row `sync_status IN (Pending, Error)` tới hạn `next_sync_at` bằng `FOR UPDATE SKIP LOCKED`, rồi đưa Keycloak về đúng hướng row mong muốn:
+  - row sống → đảm bảo group tồn tại theo `machine_name` (`org_<id>:group_<id>`, lưu `keycloak_group_id`) và user là member → `Synced`;
+  - tombstone → gỡ membership (hoặc xóa group) trên Keycloak; nếu group đang có binding Workspace thì logout user (`POST /admin/realms/{realm}/users/{id}/logout`) → xóa hẳn row.
+- Sau mỗi thay đổi membership, cập nhật group platform `tenantry:tenant-users` theo rule "user có ≥1 Workspace binding qua group còn sống" (spec §9.3).
+- Lỗi → `Error`, `sync_attempts++`, `next_sync_at` theo backoff 1s → 5 phút, `last_error`. Mọi lời gọi Keycloak idempotent nên chạy lại là an toàn.
+- Keycloak Admin API: client mỏng tự viết cho vài endpoint cần dùng (group by name, create/delete group, add/remove membership, logout user), xác thực bằng service account của client `tenantry-sync`.
 - Create Workspace bị chặn `GROUP_SYNC_PENDING` nếu group chọn chưa `Synced`.
 - Mapper group claim cấu hình một lần trong realm export cho client `headlamp-{clusterId}` và `kubectl` (không cho `portal`).
 - Metric: sync lag (thời gian từ `Pending` → `Synced`), error count (spec §21.2).
 
 ### 5.3 Deploy
 
-Một binary `tenantry-worker`, hai vòng lặp, chọn bằng flag `--loops=provisioning|groupsync|all`. Deploy thành **hai** Deployment từ cùng image để tách credential:
+Một binary `tenantry-worker`, ba vòng lặp, chọn bằng flag `--loops` (danh sách, hoặc `all`). Deploy thành **hai** Deployment từ cùng image để tách credential:
 
-| Deployment | `--loops` | ServiceAccount / Secret |
+| Deployment | `--loops` | Credential |
 |---|---|---|
-| `tenantry-worker-provisioning` | `provisioning` | SA `tenantry-worker`: Role trên `platformworkspaces` (+ `nodes get/list` từ M5). Không thấy credential Keycloak. |
-| `tenantry-worker-groupsync` | `groupsync` | Chỉ mount Secret client `tenantry-sync` (`manage-users`, `query-groups`). Không có quyền nào trên Cluster. |
+| `tenantry-worker-provisioning` | `provisioning,housekeeping` | SA `tenantry-worker-provisioning`: chỉ các CRD `tenantry.io`. Không thấy credential Keycloak. |
+| `tenantry-worker-groupsync` | `groupsync` | Chỉ mount Secret của client `tenantry-sync`. Không có quyền nào trên Cluster. |
 
-Hai loop không liên quan nghiệp vụ — chúng chỉ chung một hình dạng (poll PostgreSQL → gọi hệ thống ngoài → ghi trạng thái) nên dùng chung DB pool, backoff, metric, graceful shutdown. Gộp ở mức code, tách ở mức deploy: một tiến trình không cầm đồng thời quyền apply CR và quyền quản trị user Keycloak. `--loops=all` dành cho chạy local.
+Quyền chi tiết của từng credential: `architecture/06-security-and-identity.md` mục 7.
+
+Vòng `housekeeping` chỉ đụng PostgreSQL, chạy mỗi phút, làm ba việc dọn dẹp mà trước đây nằm rải rác dưới tên "job"/"sweeper":
+
+- xóa `sessions` có `expires_at < now()`;
+- xóa `idempotency_keys` cũ hơn 24 giờ;
+- chuyển `network_allocations` `Quarantined` quá `quarantine_until` sang `Released`.
+
+Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình dạng (poll PostgreSQL → làm việc → ghi trạng thái) nên dùng chung DB pool, backoff, metric, graceful shutdown. Gộp ở mức code, tách ở mức deploy: một tiến trình không cầm đồng thời quyền apply CR và quyền quản trị user Keycloak. `--loops=all` dành cho chạy local.
 
 ---
 
@@ -283,11 +310,12 @@ Hai loop không liên quan nghiệp vụ — chúng chỉ chung một hình dạ
 
 - **Stack**: React 19 + TypeScript + Vite; state server bằng TanStack Query; router TanStack Router hoặc React Router (đề xuất React Router vì quen thuộc).
 - **Component library**: **Mantine** (đề xuất) — TypeScript-first, có sẵn Stepper/Form/Notifications/Modal/Table đủ cho wizard 12 bước và admin CRUD, theming nhẹ, MIT; tránh phải tự thiết kế component (spec §13.2).
-- **Auth**: không giữ token; `GET /api/v1/me` để biết user, org list, có `platform-admin` hay không. Login = redirect `/auth/login` của BFF; logout = `POST /auth/logout` (+ tùy chọn Keycloak end-session). CSRF token qua header `X-CSRF-Token` lấy từ cookie không HttpOnly (double submit).
-- **Routes** mirror IA spec §19:
+- **Auth**: SPA không giữ token; `GET /api/v1/me` để biết user, org list, có `platform-admin` hay không. Login = chuyển tới `/auth/login`; logout = `POST /auth/logout`; gặp `401` thì chuyển tới `/auth/login`. Mọi request ghi gửi header `X-CSRF-Token` lấy từ cookie `tenantry_csrf`. Phía server: `architecture/06-security-and-identity.md` mục 3.
+- **Routes** mirror IA spec §19 (đây là nơi định nghĩa route; `architecture/07-ux-wireflow.md` vẽ lại theo luồng):
 
 ```text
 /login
+/                                       chưa thuộc Org nào: xin tạo Organization / trạng thái yêu cầu
 /orgs/:orgSlug                          Overview
 /orgs/:orgSlug/workspaces               list
 /orgs/:orgSlug/workspaces/new           wizard (12 bước, spec §19.1)
@@ -316,7 +344,7 @@ Hai loop không liên quan nghiệp vụ — chúng chỉ chung một hình dạ
 
 ### M0 — Chốt spec/ADR
 
-- **Mục tiêu**: đóng băng spec v0.6 và các quyết định mục 12; scaffold repo.
+- **Mục tiêu**: đóng băng spec và các quyết định mục 12; scaffold repo.
 - **Công việc**:
   1. Chốt 10 quyết định ở mục 12 và ghi vào spec/ADR.
   2. Viết ADR 1, 2, 4, 5, 7, 8, 9, 10, 16, 17, 18 (những cái không cần code để quyết).
@@ -355,13 +383,13 @@ Hai loop không liên quan nghiệp vụ — chúng chỉ chung một hình dạ
 - **Mục tiêu**: API chạy được với migrations, OpenAPI, error model, bảng user/org/membership, khung operation/outbox.
 - **Công việc**:
   1. `store`: pgx pool, tx helper `WithTx(ctx, fn)`, sqlc config.
-  2. Migrations 0001–0005: `users`, `organizations`, `organization_members`, `organization_entitlements`, `operations`, `outbox_events`, `audit_events`, `idempotency_keys`, `sessions`.
+  2. Migrations `0001` (`users`, `organizations`, `organization_members`) và `0002` (`operations`, `outbox_events`). Bảng khác được thêm ở milestone đầu tiên dùng tới nó.
   3. oapi-codegen strict server; middleware request-id, recover, logging, `ErrorResponse`.
   4. `org` service: get/patch Organization, list members; repo + unit test.
   5. `outbox` repo + worker loop khung (chưa apply CR, chỉ log).
   6. `operations` service: create/get/retry state machine `Pending → Running → Succeeded|Failed|Blocked`.
   7. Healthz/readyz, config bằng env, Dockerfile multi-stage, chart `tenantry-backend` tối thiểu.
-  8. Test harness: testcontainers-go PostgreSQL, fixture migrate.
+  8. Test harness: test đọc `TEST_DATABASE_URL`, mỗi test tự tạo rồi xóa một database riêng đã migrate (local: postgres của docker compose; CI: service postgres).
 - **Đầu ra kiểm chứng**: `GET /healthz`, `GET /api/v1/organizations/{id}` với auth giả (dev header) trả dữ liệu seed; chart cài lên lab.
 - **Test bắt buộc**: integration test repo/outbox với PostgreSQL thật; contract test OpenAPI examples.
 - **Phụ thuộc**: M0 (repo), M1 (PostgreSQL trên lab để deploy).
@@ -372,14 +400,14 @@ Hai loop không liên quan nghiệp vụ — chúng chỉ chung một hình dạ
 
 - **Mục tiêu**: user mới login xin được Organization, Platform Admin duyệt, Organization có grant dùng được.
 - **Công việc**:
-  1. `auth`: OIDC discovery, Authorization Code + PKCE với client `portal`, callback, session PostgreSQL, cookie HttpOnly/Secure/SameSite=Lax, CSRF double-submit, logout (+ Keycloak end-session tùy chọn).
+  1. `auth` theo `architecture/06-security-and-identity.md` mục 3: OIDC discovery, login/callback/logout, phiên trong PostgreSQL gắn với refresh token, CSRF. Migrations `sessions`, `idempotency_keys`, `audit_events`, `organization_entitlements`; vòng `housekeeping`.
   2. First login chỉ upsert `users` theo `(issuer, subject)`. `POST /organizations` tạo yêu cầu `Pending` + OrgOwner membership. `RequirePlatformAdmin` tối thiểu (kéo từ M5) + `POST /admin/organizations/{id}:approve|reject`: duyệt → `Active`, 3 group mặc định `admins/developers/viewers` (chưa sync Keycloak — M4), ClusterGrant từ onboarding policy (bảng `clusters`, `onboarding_policies`, `organization_cluster_grants` migration ở đây, seed Cluster A); từ chối → `Rejected` + `review_note`.
   3. `GET /me`, `GET /organizations`, `/entitlement`, `/usage` (usage = 0 lúc này).
   4. Web: Vite scaffold, Mantine, layout, login redirect, màn trống "xin tạo Organization" + trạng thái yêu cầu, org switcher, Overview skeleton hiển thị grant/quota, trang Admin duyệt yêu cầu.
-  5. Rate limit endpoint auth.
+  5. Rate limit theo `architecture/06-security-and-identity.md` mục 6.
   6. Realm export dev + `tenantry-seed`.
-- **Đầu ra kiểm chứng**: đăng ký user mới trên Keycloak → portal hiện màn xin tạo Organization → Admin duyệt → user thấy Organization + quota mặc định; refresh trang vẫn login; logout xóa session.
-- **Test bắt buộc**: first login idempotent (login hai lần không tạo hai user); yêu cầu `Pending` thứ hai của cùng user bị chặn; duyệt tạo đúng group + grant trong một transaction; từ chối nhả slug; integration OIDC với Keycloak container (testcontainers) hoặc mock issuer; Playwright login/logout.
+- **Đầu ra kiểm chứng**: đăng ký user mới trên Keycloak → portal hiện màn xin tạo Organization → Admin duyệt → user thấy Organization + quota mặc định; refresh trang vẫn login; để quá 5 phút rồi dùng tiếp vẫn login (refresh chạy); logout xóa phiên và kết thúc SSO session.
+- **Test bắt buộc**: first login idempotent (login hai lần không tạo hai user); phiên chết khi Keycloak từ chối refresh; user `Disabled` bị 401 ngay; request ghi thiếu CSRF bị từ chối; cùng `Idempotency-Key` trả lại response cũ, khác body bị `IDEMPOTENCY_KEY_REUSED`; yêu cầu `Pending` thứ hai của cùng user bị chặn; duyệt tạo đúng group + grant trong một transaction; từ chối nhả slug; integration OIDC với Keycloak container (testcontainers) hoặc mock issuer; Playwright login/logout.
 - **Phụ thuộc**: M1 (Keycloak realm), M2.
 - **Rủi ro chính**: cookie/redirect trên domain lab (`*.tenantry.example` + CA tự ký) — chốt host và HTTPS local sớm.
 - **Ước lượng**: M.
@@ -388,7 +416,7 @@ Hai loop không liên quan nghiệp vụ — chúng chỉ chung một hình dạ
 
 - **Mục tiêu**: Alice mời Joe, tạo group, token Joe có group claim.
 - **Công việc**:
-  1. Migrations `invitations`, `groups`, `group_members`, `ownership_transfers`.
+  1. Migrations `invitations`, `groups`, `group_members` (có tombstone và cột sync), `ownership_transfers`.
   2. Invitation: tạo token (hash + expiry + one-time), hiển thị link, accept chỉ khi email verified khớp (spec §9.1).
   3. Member: patch role, remove (chặn Owner), `members/me:leave` (chặn Owner), transfer ownership hai bước trong một transaction.
   4. Group CRUD, add/remove member, chặn delete khi còn binding (bảng `workspace_group_bindings` migration tạo trước, dùng ở M6).
@@ -398,7 +426,7 @@ Hai loop không liên quan nghiệp vụ — chúng chỉ chung một hình dạ
   8. Authz matrix test đầy đủ cho §16.1–16.2.
   9. Audit events cho mọi mutation trên.
 - **Đầu ra kiểm chứng**: Alice tạo link mời → Joe register/login → accept → thấy Org; Alice tạo group `backend` add Joe → `kubectl oidc-login` của Joe (hoặc token từ Keycloak) có claim `groups: ["org_...:group_..."]`.
-- **Test bắt buộc**: unit invitation expiry/one-time/email mismatch; integration Keycloak create group/add/remove/logout; authz matrix; concurrency accept invite hai lần.
+- **Test bắt buộc**: unit invitation expiry/one-time/email mismatch; integration Keycloak create group/add/remove/logout; tombstone: gỡ member → mất quyền portal ngay, row chỉ biến mất sau khi Keycloak đã gỡ, thêm lại giữa chừng hội tụ về "là member"; worker chết giữa sync chạy lại không lệch; authz matrix; concurrency accept invite hai lần.
 - **Phụ thuộc**: M3.
 - **Rủi ro chính**: Keycloak Admin API version/lag; viết client mỏng có retry và test với đúng Keycloak 26.x của lab.
 - **Ước lượng**: L.
@@ -409,11 +437,11 @@ Hai loop không liên quan nghiệp vụ — chúng chỉ chung một hình dạ
 - **Công việc**:
   1. Migrations `shared_compute_pools`, `cluster_grant_shared_pools`, `dedicated_node_grants`, `network_pools`.
   2. `RequirePlatformAdmin`; endpoint §16.5 admin: organizations (tạo thẳng Org + Owner + grant ban đầu; approve/reject đã có từ M3), entitlement, clusters (register/patch trạng thái `Registered/Ready/Maintenance/Unavailable`), onboarding-policy, cluster-grants PUT/DELETE (chặn giảm dưới allocation, chặn delete khi còn Workspace), dedicated-nodes, shared-pools, network-pools.
-  3. `reservation` capacity math: `reservable/reserved/remaining`, capacity state, soft ratio Shared; snapshot allocatable của node/pool bằng scoped credential đọc Node (worker cần thêm quyền `get/list nodes` — đề xuất chấp nhận cho MVP).
-  4. Grant dedicated node: kiểm tra Pod lạ trên node (spec §6.3) và từ chối kèm danh sách.
+  3. `reservation` capacity math: `reservable/reserved/remaining`, capacity state, soft ratio Shared; snapshot allocatable của node/pool do worker chép từ status của hai CRD phụ (mục 4.5); trước khi operator có ở M6, `tenantry-seed` nhập snapshot tay.
+  4. Grant dedicated node: API ghi `dedicated_node_grants` (`node_state=NotReady`) + Operation `node.grant` + outbox. Việc kiểm Pod lạ (spec §6.3) và gắn label/taint là của operator, làm ở M8.
   5. Catalog endpoint §16.3 phía Org (filter theo grant, sanitize node).
   6. Web: khu Admin (Organizations, Cluster registry, Onboarding policy, Grants, Pools/Nodes/NetworkPools), trang Granted Clusters phía Org.
-- **Đầu ra kiểm chứng**: Admin tạo Org `acme` + Owner + grant; cấp node `wk3` cho `acme`; Org thấy remaining capacity; user thường gọi `/admin/*` bị 403.
+- **Đầu ra kiểm chứng**: Admin tạo Org `acme` + Owner + grant; ghi nhận grant node `wk3` cho `acme` (node dùng được từ M8); Org thấy remaining capacity; user thường gọi `/admin/*` bị 403.
 - **Test bắt buộc**: unit capacity math + transition `Overcommitted`; unit CIDR pool validation; integration grant reduce dưới allocation bị chặn; authz admin.
 - **Phụ thuộc**: M4.
 - **Rủi ro chính**: nhiều form CRUD admin ăn thời gian UI — dùng bảng/form generic của Mantine, không làm đẹp.
@@ -423,11 +451,11 @@ Hai loop không liên quan nghiệp vụ — chúng chỉ chung một hình dạ
 
 - **Mục tiêu**: outbox → CR → Capsule Tenant Ready; Namespace từ portal xuất hiện trong cluster.
 - **Công việc**:
-  1. kubebuilder scaffold `operator/`, types `PlatformWorkspace` theo §14.2, CRD gen, chart `tenantry-operator` (RBAC operator: tenants/resourcepools/ippools/certificates/namespaces/nodes...).
+  1. kubebuilder scaffold `operator/`, types `PlatformWorkspace` theo §14.2 và hai CRD phụ (mục 4.5, ở mức báo `allocatable` về status), CRD gen, chart `tenantry-operator` (RBAC operator: tenants/resourcepools/ippools/certificates/namespaces/nodes...).
   2. ClusterRole `tenantry:tenant-developer`, `tenantry:tenant-viewer` (spec §10.5) trong chart, permission matrix `kubectl auth can-i` test.
   3. `render/` + sub-reconciler `tenant`, `namespaces`, `rbac`; conditions `CapsuleTenantReady`, `IdentityBindingsReady`; `status.namespaces` observation.
   4. Finalizer khung (xóa Namespace → Tenant), chưa network/node.
-  5. `k8s` adapter trong API: build CR từ Workspace + apply/delete; ServiceAccount `tenantry-worker` với Role chỉ trên `platformworkspaces` (+ nodes get/list từ M5).
+  5. `k8s` adapter trong API: build CR từ Workspace + apply/delete; ServiceAccount `tenantry-worker-provisioning` chỉ có quyền trên các CRD `tenantry.io`.
   6. Provisioning worker thật + status informer → DB (mục 5.1).
   7. `workspace` service tối thiểu: create (chưa reservation resource, chỉ grant/cluster/binding validation), list/detail, bindings PUT/DELETE (chặn `LAST_OWNER_BINDING`), namespaces POST/DELETE qua `spec.namespaces`/`namespacesToDelete`.
   8. Migrations `workspaces`, `workspace_namespaces`, `workspace_group_bindings` (nếu chưa).
@@ -462,7 +490,7 @@ Hai loop không liên quan nghiệp vụ — chúng chỉ chung một hình dạ
 - **Công việc**:
   1. Migration `workspace_node_reservations`; lock `dedicated_node_grants` trong transaction (mục 3.2); Dedicated bắt `requests = limits`, đúng một node.
   2. Shared: validate pool thuộc grant, soft ratio; render Tenant `nodeSelector` pool.
-  3. Node grant → label/taint `tenantry.io/dedicated-org` (cơ chế chốt ở mục 12); sub-reconciler `compute` gắn/gỡ membership label; `ComputeReady`.
+  3. Reconciler `PlatformNodeGrant` đầy đủ: kiểm node sạch, gắn/gỡ label + taint `tenantry.io/dedicated-org`; sub-reconciler `compute` gắn/gỡ membership label; `ComputeReady`.
   4. Admission guard: PodNodeSelector (lab hiện có) + Capsule rule chặn `nodeName`/toleration/selector lạ; test bắt buộc khi plugin tắt (spec §6.4).
   5. Capacity state, `Overcommitted` drift → `Degraded`, chặn reservation mới.
   6. Catalog `dedicated-nodes` trả reservable/reserved/remaining và Workspace đang giữ; UI node card.
@@ -477,13 +505,13 @@ Hai loop không liên quan nghiệp vụ — chúng chỉ chung một hình dạ
 
 - **Mục tiêu**: Workspace nhận CIDR tự động; cross-Workspace traffic bị chặn; delete quarantine.
 - **Công việc**:
-  1. Migration `network_allocations` + exclusion constraint; `ipam` service: auto-allocate theo `defaultPrefixLength`, advanced prefix/requested CIDR, containment/overlap với Pod/Service CIDR Cluster; state `Available/Active/Quarantined/Released`.
+  1. Migration `network_allocations` + exclusion constraint; `ipam` service: auto-allocate theo `defaultPrefixLength`, advanced prefix/requested CIDR, containment/overlap với Pod/Service CIDR Cluster; state `Allocated/Releasing/Quarantined/Released`.
   2. Lock `network_pools` trong transaction reservation; error `CIDR_OUTSIDE_ALLOWED_POOL`, `CIDR_OVERLAP`.
   3. Sub-reconciler `network`: Calico IPPool + Namespace annotation qua Tenant `namespaceOptions.additionalMetadata`; Capsule cấm sửa annotation (đã có trong lab); `NetworkReady`.
   4. Baseline NetworkPolicy qua `TenantResource` (spec §7.4) gồm allow từ ingress-nginx namespace, deny metadata endpoint.
-  5. Finalizer: đợi WorkloadEndpoint/IPAMBlock sạch → xóa IPPool; worker quarantine (đề xuất 10 phút) → `Available`.
+  5. Finalizer: đợi WorkloadEndpoint/IPAMBlock sạch → xóa IPPool; worker đặt `Quarantined` (mặc định 10 phút), vòng `housekeeping` chuyển `Released`.
   6. `GET /network-pools/{id}/availability`; UI Network tab + Advanced trong wizard.
-- **Đầu ra kiểm chứng**: Solar và Water nhận /24 khác nhau từ pool `10.240.0.0/16`; Pod IP đúng CIDR; Solar không ping/curl Water; cùng Workspace khác Namespace gọi được; xóa Workspace → CIDR `Quarantined` rồi `Available`.
+- **Đầu ra kiểm chứng**: Solar và Water nhận /24 khác nhau từ pool `10.240.0.0/16`; Pod IP đúng CIDR; Solar không ping/curl Water; cùng Workspace khác Namespace gọi được; xóa Workspace → CIDR `Quarantined` rồi `Released`, cấp lại được.
 - **Test bắt buộc**: unit CIDR math (containment/overlap/next-free); concurrency hai request cùng CIDR; isolation network suite; e2e IPPool lifecycle.
 - **Phụ thuộc**: M7 (delete flow), độc lập với M8 (có thể làm song song).
 - **Rủi ro chính**: Calico IPAM release chậm làm delete kéo dài; đo thời gian thật trên lab và đặt timeout hợp lý.
@@ -518,7 +546,7 @@ Hai loop không liên quan nghiệp vụ — chúng chỉ chung một hình dạ
   5. Tenant `ingressOptions`: allowedClasses từ grant, `allowedHostnames.allowedRegex` vùng `<org>-<ws>`, `hostnameCollisionScope: Cluster`.
   6. Sub-reconciler `proxyaccess` (ProxySetting cho Developer/Viewer) ; `ProxyAccessReady`.
   7. Demo app chart nhỏ (Deployment + PVC `standard` + Ingress + TLS secret replicate) để Joe deploy.
-  8. Logout/revoke test: remove Joe → session logout → token mới không có group; token cũ còn tới TTL (ghi contract vào UI).
+  8. Revoke test theo contract ở `architecture/06-security-and-identity.md` mục 5: gỡ Joe → token cũ còn tới TTL, token mới không có group, Joe phải đăng nhập lại; ghi contract vào UI.
   9. Web: Access tab (download kubeconfig, hướng dẫn cài kubelogin, Open Web Console).
 - **Đầu ra kiểm chứng**: Joe tải kubeconfig → `kubectl get ns` qua Proxy chỉ thấy Namespace Solar → deploy app → `https://web.acme-solar.apps.cluster-a.tenantry.example` mở được với CA lab; Ingress host ngoài vùng bị Capsule từ chối; Bob Viewer không sửa được; Alice mở Headlamp qua SSO không nhập lại password.
 - **Test bắt buộc**: e2e kubeconfig + Proxy filter (Namespace/Node/PV); ingress hostname collision negative test; PVC ngoài StorageClass allow-list bị chặn; revoke contract test đo thời gian.
@@ -626,10 +654,10 @@ gantt
 
 ### 9.2 Integration (chạy trên PR, vài phút)
 
-- **PostgreSQL** qua testcontainers-go (đề xuất; fallback `docker-compose.test.yml`): reservation transaction, exclusion constraint CIDR, outbox `FOR UPDATE SKIP LOCKED`, idempotency key, session store.
+- **PostgreSQL** thật qua `TEST_DATABASE_URL` (mỗi test một database riêng): reservation transaction, exclusion constraint CIDR, outbox `FOR UPDATE SKIP LOCKED`, idempotency key, phiên, tombstone group.
 - **envtest** cho controller: reconcile tạo đúng object, idempotent, finalizer thứ tự, status.namespaces từ Namespace fake; không cần Capsule thật (CRD Capsule/Calico/cert-manager load vào envtest từ `operator/config/crd/external/`).
-- **Keycloak container** (image 26.x cùng lab): tạo group, add/remove member, logout session, token có group claim.
-- **Worker apply CR** với envtest apiserver + scoped RBAC: xác nhận credential không làm được gì ngoài `platformworkspaces`.
+- **Keycloak container** (image 26.x cùng lab): tạo group, add/remove member, logout user, token có group claim.
+- **Worker apply CR** với envtest apiserver + scoped RBAC: xác nhận credential không làm được gì ngoài các CRD `tenantry.io`.
 
 ### 9.3 E2E trên lab cluster thật (`test/e2e`, Go test, tag `e2e`)
 
@@ -669,7 +697,7 @@ make deploy                     # helm upgrade --install 3 chart lên lab với 
 make realm-export / realm-import
 ```
 
-- **Migrations**: **goose** (đề xuất) — SQL thuần, embed vào binary `tenantry-migrate`, chạy như Helm hook job trước API. golang-migrate là lựa chọn tương đương; chọn goose vì hỗ trợ migration Go khi cần backfill.
+- **Migrations**: **goose** — SQL thuần, embed vào binary `tenantry-migrate`, chạy như Helm hook job trước API. golang-migrate là lựa chọn tương đương; chọn goose vì hỗ trợ migration Go khi cần backfill.
 - **Keycloak realm**: `deploy/keycloak/realm-tenantry.json` là nguồn; import lúc Keycloak khởi động (như `lab/manifests/keycloak.yaml` hiện làm); `make realm-export` kéo thay đổi từ UI về file để commit. Realm dev chứa user `alice/joe/bob/mallory` + `admin` có realm role `platform-admin`.
 - **Seed**: `tenantry-seed` idempotent: insert `clusters` (cluster-a, endpoints proxy/console/ingress domain), `onboarding_policies` theo mẫu spec §5.2.1, `shared_compute_pools` (`shared-general`, nodeSelector `tenantry.io/compute-pool=shared-general`, ratio 3.0), `network_pools` (`onboarding-pod-network` 10.240.0.0/16 org null), Organization demo `acme` + grant nếu flag `--demo`.
 - **Pre-commit**: gofmt/golangci-lint, eslint/prettier, `make generate` diff check.
@@ -690,24 +718,25 @@ make realm-export / realm-import
 | 8 | Race/overbook không bắt được trong test | Sai luận điểm reservation | Test concurrency với `-race` lặp; exclusion constraint + partial unique index như lưới an toàn | M7–M9 |
 | 9 | TLS/CA tự ký trong browser, kubectl, Headlamp, Proxy | Demo trục trặc, cookie Secure không set | Một ClusterIssuer từ lab CA ở M1; import CA vào máy demo; script kiểm tra chain | M1, M3, M11 |
 | 10 | Lab cluster nhỏ không đủ cho benchmark 50 Workspace | Không có số liệu | Workspace benchmark không chạy workload; đo control plane; ghi rõ giới hạn | M12 |
-| 11 | Worker credential cần thêm quyền (Node read, node label) phá nguyên tắc "chỉ CRD" | Mâu thuẫn spec §20.2 | Chốt ở mục 12 (#9); nếu cần, chuyển label node vào controller qua CRD phụ | M5, M8 |
+| 11 | Hai CRD phụ (mục 4.5) làm operator lớn thêm | Trễ M6/M8 | Reconciler của CRD phụ rất nhỏ (một object, không finalizer phức tạp); `PlatformSharedPool` chỉ quan sát | M6, M8 |
 | 12 | Drift giữa OpenAPI, DB và CR khi sửa spec | Bug tích hợp | Generate-check trong CI; một PR đổi contract phải đổi cả ba nơi | mọi M |
 
 ---
 
-## 12. Quyết định kỹ thuật mở cần chốt trước khi code
+## 12. Quyết định kỹ thuật đã chốt
 
-| # | Câu hỏi | Mặc định đề xuất |
+Số thứ tự được code trích dẫn (`IMPLEMENTATION-PLAN §12, decision N`) nên giữ nguyên.
+
+| # | Câu hỏi | Quyết định |
 |---|---|---|
-| 1 | Tỷ lệ requests/limits cho Shared | Per pool `maxLimitToRequestRatio` (đề xuất), mặc định 2.0; Dedicated cố định 1.0 (spec) |
-| 2 | Token TTL | Keycloak access token client `kubectl`/`headlamp-*`: 5 phút; SSO session idle 30 phút, max 10h; portal session cookie idle 8h, absolute 24h; BFF refresh token phía server |
+| 1 | Tỷ lệ requests/limits cho Shared | Per pool `maxLimitToRequestRatio`, mặc định 2.0; Dedicated cố định 1.0 (spec) |
+| 2 | Thời hạn token và phiên | Một bộ số ở realm, phiên portal gắn với refresh token: `architecture/06-security-and-identity.md` mục 3.1 |
 | 3 | Định dạng ID | ULID (lowercase Crockford) có tiền tố kebab lưu `text`: `org-01j…`, `ws-01j…`, `grp-`, `op-`, `netalloc-`, `nodegrant-`; Keycloak machine name theo spec §4.3 `org_<ulid>:group_<ulid>` |
 | 4 | Quy tắc slug | `^[a-z][a-z0-9]*(-[a-z0-9]+)*$`; Organization slug 3–20 ký tự, Workspace slug 2–20, Namespace suffix 1–20 → `<org>-<ws>-<ns>` ≤ 62 ≤ 63 (DNS label); cấm từ khóa `kube`, `default`, `system`, `capsule`, `tenantry`, `admin`; tombstone `k8s_name` chặn tái dùng trong quarantine |
 | 5 | Pagination | Cursor keyset trên ULID: `?limit=50&cursor=…` (max 200), response `{items, nextCursor}`; sort mặc định `created_at desc` |
-| 6 | Codegen/ORM | oapi-codegen (strict server, std net/http) + sqlc + pgx v5; TS: openapi-typescript + openapi-fetch |
+| 6 | Codegen/ORM | oapi-codegen (strict server, router chi) + sqlc + pgx v5; migration bằng goose; TS: openapi-typescript + openapi-fetch |
 | 7 | Push trạng thái operation | SSE `GET /operations/{id}/events`, fallback polling 2s; không WebSocket |
 | 8 | Outbox tuning | poll 1s, batch 10, backoff 1s→5m, 10 lỗi liên tiếp → Operation `Failed`; resync CR status 5 phút; CIDR quarantine 10 phút |
-| 9 | Cách gắn label/taint dedicated node và đọc allocatable | (a) worker được thêm quyền `nodes get/list/patch` — đơn giản nhưng nới spec §20.2; **(b) đề xuất**: CRD phụ `PlatformNodeGrant` (`tenantry.io/v1alpha1`) do controller reconcile label/taint và báo allocatable về status; worker vẫn chỉ đụng CRD `tenantry.io` |
+| 9 | Cách gắn label/taint dedicated node và đọc allocatable | Hai CRD phụ `PlatformNodeGrant` và `PlatformSharedPool` do operator reconcile (mục 4.5); worker vẫn chỉ đụng CRD `tenantry.io` |
 | 10 | Deploy artefact | 3 Helm chart riêng (`tenantry-backend`, `tenantry-operator`, `tenantry-web`) + overlay kustomize lab; 3 image: một cho cả 4 binary của `backend/` (Deployment chọn binary bằng `command`), một cho operator, một cho web (nginx static) |
-
-Sau khi chốt 10 mục này (ghi vào spec §31 hoặc ADR), bắt đầu M0 → M1 → M2 theo mục 7.
+| 11 | Redis | Không dùng: phiên, idempotency và hàng đợi đều ở PostgreSQL (`architecture/06-security-and-identity.md` mục 3.3) |

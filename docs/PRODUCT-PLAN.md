@@ -1,11 +1,22 @@
 # Tenantry — Kế hoạch đồ án Kubernetes Tenant as a Service
 
-> Phiên bản: 0.7 — Organization do user xin, Platform Admin duyệt; bỏ personal Organization
-> Ngày: 2026-09-26
+> Phiên bản: 0.8 — phiên portal gắn với Keycloak, tombstone cho group sync, gom tài liệu về một nơi định nghĩa mỗi chủ đề
+> Ngày: 2026-11-20
+> File này định nghĩa **nghiệp vụ**: phạm vi, khái niệm, quy tắc, danh sách endpoint, FR/NFR, roadmap. Schema, state machine, phiên/token và kế hoạch code nằm ở file khác — bản đồ ở [`README.md`](README.md).
 > Tên sản phẩm: **Tenantry** (API group `tenantry.io`, label prefix `tenantry.io/`, domain demo `*.tenantry.example`)
 > Mục tiêu: xây một platform self-service cấp Kubernetes Tenant nhanh, rẻ trên cluster có sẵn, với Capsule là tenancy engine.
 
 ## 0. Changelog
+
+### v0.7 → v0.8
+
+1. **Phiên portal gắn với SSO session của Keycloak.** Phiên sống đúng bằng refresh token; một bộ thời hạn duy nhất đặt ở realm (access token 5 phút, SSO idle 8 giờ, SSO max 24 giờ) thay cho hai bộ số mâu thuẫn trước đây. Logout portal kết thúc luôn SSO session.
+2. **Gỡ group/membership dùng tombstone.** Row bị đánh dấu xóa và chỉ biến mất sau khi Keycloak đã gỡ xong; trước đây row bị xóa ngay nên worker không còn gì để biết phải đồng bộ.
+3. **Hệ quả của thu hồi quyền được ghi rõ**: logout trên Keycloak đăng xuất user ở mọi nơi; chỉ thực hiện khi group bị gỡ đang có binding Workspace.
+4. **`Idempotency-Key`** lưu ở bảng riêng theo `(user, key)`, ghi cùng transaction với thay đổi.
+5. **Không dùng Redis**, ghi thành quyết định có lý do (13.2, ADR 21).
+6. **Central plane không đọc Node**: việc kiểm node sạch, gắn label/taint và đọc capacity đi qua hai CRD phụ `PlatformNodeGrant`, `PlatformSharedPool`; cấp dedicated node trở thành một Operation.
+7. **Tài liệu**: mỗi chủ đề một nơi định nghĩa. Mục 15 (database) và phần state của mục 17 chuyển hẳn sang `architecture/`; `architecture/*` đã theo mô hình "xin tạo Organization" của v0.7.
 
 ### v0.6 → v0.7
 
@@ -14,8 +25,6 @@
 3. **Onboarding policy đổi vai trò:** từ auto-grant lúc first login thành **grant mặc định điền sẵn khi Admin duyệt** một yêu cầu; Admin sửa được trước khi duyệt.
 4. Mọi quy tắc riêng của personal Org (không xóa, không transfer, không rời được) biến mất: Organization nào cũng transfer/xóa được theo luật chung, member nào không phải Owner cũng rời được.
 5. `users.status` (`Active`/`Disabled`): Admin disable user thì backend disable account trên Keycloak **và** set status; status chặn thêm vào group/transfer và từ chối session portal ngay.
-
-Chưa cập nhật theo v0.7 (còn nói về personal Organization, đọc theo các mục trên): `docs/architecture/*` (flow first login, data model, wireflow, REVIEW-CHECKLIST).
 
 ### v0.5 → v0.6
 
@@ -101,7 +110,7 @@ Luận điểm của đồ án:
 - user gửi yêu cầu tạo Organization, Platform Admin duyệt kèm ClusterGrant (điền sẵn từ onboarding policy);
 - đăng ký/đăng nhập qua Keycloak; first login chỉ tạo user record;
 - Organization owner mời user (invite link), tạo group, quản lý membership;
-- Platform Admin tạo Organization bổ sung cho khách hàng/team, gán OrgOwner và ClusterGrant ban đầu; user không tự tạo thêm Organization;
+- Platform Admin cũng tạo thẳng được Organization cho khách hàng/team, gán OrgOwner và ClusterGrant ban đầu;
 - Platform Admin cấp/điều chỉnh resource entitlement cho Organization;
 - Organization tạo nhiều Workspace trong giới hạn được cấp;
 - Workspace ánh xạ 1:1 với Capsule `Tenant`;
@@ -536,7 +545,7 @@ Quy tắc:
 
 - node grant phải thuộc đúng Organization và ClusterGrant;
 - node phải `Ready`, schedulable và không phải system/control-plane node;
-- khi grant, node **không được còn tenant workload của Organization khác** (Platform Admin cordon/drain trước; API kiểm tra Pod trên node và từ chối kèm danh sách Pod lạ nếu chưa sạch);
+- khi grant, node **không được còn tenant workload của Organization khác** (Platform Admin cordon/drain trước; operator trong Cluster kiểm tra Pod trên node, chưa sạch thì Operation cấp node thất bại kèm danh sách Pod lạ);
 - chỉ tenant workload của Organization được schedule lên node; CNI, CSI, monitoring và system DaemonSet vẫn có thể chạy;
 - MVP cho mỗi Dedicated Workspace chọn đúng **một node cụ thể**;
 - CPU/RAM/Pod allocation của Workspace trở thành reservation trên node đó;
@@ -692,7 +701,7 @@ Deletion flow:
 3. đợi Calico workload endpoint/IPAM block được release;
 4. xóa IPPool;
 5. đưa CIDR vào `Quarantined` một khoảng thời gian ngắn;
-6. sau đó mới chuyển về `Available`.
+6. hết thời gian đó CIDR mới được cấp lại.
 
 Không release CIDR ngay khi API nhận lệnh delete.
 
@@ -765,15 +774,15 @@ Portal chịu trách nhiệm:
 
 ### 8.2 Portal session
 
-Authorization Code Flow + PKCE và BFF/session cookie:
+Portal là BFF: browser chỉ giữ một cookie phiên `HttpOnly`/`Secure`/`SameSite=Lax`; token không bao giờ xuống JavaScript; mọi request ghi có CSRF protection.
 
-- browser nhận `HttpOnly`, `Secure`, `SameSite=Lax` session cookie;
-- access/refresh token không lưu vào `localStorage`;
-- portal backend validate issuer/audience/expiry;
-- CSRF protection cho mutation;
-- logout portal đồng thời logout/revoke Keycloak session nếu user yêu cầu.
+Phiên portal **không có đồng hồ riêng**: nó sống đúng bằng SSO session của user trên Keycloak. Hệ quả người dùng thấy:
 
-Với đồ án dùng một session store trong PostgreSQL để tránh thêm Redis.
+- không dùng gì quá thời hạn idle, hoặc quá thời hạn tối đa của một lần đăng nhập, thì phải đăng nhập lại;
+- logout portal là logout Keycloak: Headlamp và kubectl cũng phải đăng nhập lại;
+- bị Admin disable thì mất phiên ngay.
+
+Cơ chế, thời hạn cụ thể và lý do phiên nằm trong PostgreSQL thay vì Redis: `architecture/06-security-and-identity.md` mục 3.
 
 ### 8.3 User chưa có Organization
 
@@ -829,19 +838,21 @@ PostgreSQL là source of truth cho Organization group. Một sync worker dùng K
 - tạo machine group name unique;
 - add/remove Keycloak user khỏi group;
 - retry lỗi và lưu `sync_status`;
-- revoke user session để chặn refresh/new token sau khi thu hồi quyền;
+- gỡ là đánh dấu xóa (tombstone): row chỉ biến mất sau khi Keycloak đã gỡ xong, nên không thay đổi nào bị bỏ sót khi Keycloak tạm lỗi;
+- logout user trên Keycloak để chặn refresh/new token sau khi thu hồi quyền;
 - không cho user tự sửa group Kubernetes qua Keycloak Account Console.
 
 Ngoài Organization group, worker quản lý một platform group `tenantry:tenant-users`. User có ít nhất một Workspace binding được thêm vào group này; khi mất binding cuối cùng thì bị remove. Sau prefix của Kubernetes, Capsule nhận diện group là `oidc:tenantry:tenant-users`. Đây là bản động của group `projectcapsule.dev` đang được hard-code trong lab.
 
 Capsule configuration chỉ xem subject thuộc `oidc:tenantry:tenant-users` là Capsule user. Owner permission vẫn đến từ Owner group của Workspace; platform group này không tự cấp quyền vào bất kỳ Tenant nào.
 
-Group claim chỉ có hiệu lực với token mới. Kubernetes tự kiểm tra JWT signature/expiry và không gọi ngược Keycloak cho từng request, vì vậy revoke session **không vô hiệu ngay token đã phát hành**. Contract thu hồi quyền:
+Group claim chỉ có hiệu lực với token mới. Kubernetes tự kiểm tra JWT signature/expiry và không gọi ngược Keycloak cho từng request, vì vậy logout trên Keycloak **không vô hiệu ngay token đã phát hành**. Contract thu hồi quyền:
 
-- bình thường: có hiệu lực chậm nhất khi token hiện tại hết hạn;
-- remove group + logout/revoke Keycloak session để user không lấy token mới;
-- token Kubernetes nên ngắn, ví dụ 5 phút trong demo, nên revoke latency tối đa xấp xỉ token TTL;
-- immediate revocation thực sự cần online token validation khác và không thuộc scope đồ án.
+- quyền Kubernetes bị thu hồi chậm nhất khi token hiện tại hết hạn (5 phút); quyền trên portal bị thu hồi ngay;
+- gỡ user khỏi group đang có binding Workspace kèm logout trên Keycloak để user không lấy được token mới. Logout này đăng xuất user **ở mọi nơi** (portal, Headlamp, kubectl, kể cả Organization khác) — UI phải nói rõ;
+- immediate revocation thực sự cần online token validation và không thuộc scope đồ án.
+
+Bảng đầy đủ "thay đổi nào có hiệu lực khi nào": `architecture/06-security-and-identity.md` mục 5.
 
 ### 9.4 Xóa user/group
 
@@ -849,10 +860,8 @@ Xóa member:
 
 - không thể remove OrgOwner; phải transfer ownership trước;
 - member tự rời Organization đi qua đúng luồng này (self-service), trừ Owner;
-- xóa khỏi mọi Organization group;
-- sync Keycloak;
-- revoke session;
-- giữ audit/tombstone;
+- xóa khỏi mọi group của Organization đó, sync Keycloak và thu hồi quyền theo 9.3;
+- giữ audit;
 - không nhất thiết xóa Keycloak account nếu user còn Organization khác.
 
 Xóa group:
@@ -959,7 +968,7 @@ users:
         args:
           - oidc-login
           - get-token
-          - --oidc-issuer-url=https://id.tenantry.example/realms/capsule
+          - --oidc-issuer-url=https://id.tenantry.example/realms/tenantry
           - --oidc-client-id=kubectl
 ```
 
@@ -979,12 +988,7 @@ Nếu user có Workspace ở nhiều Cluster (Phase 2), portal sinh các context
 
 ### 11.4 Revoke
 
-Khi remove user khỏi group:
-
-- token mới không còn group;
-- token cũ có thể dùng tới expiry;
-- revoke Keycloak session chặn refresh/new token nhưng không làm JWT cũ hết hạn sớm;
-- kubeconfig vẫn tồn tại nhưng không còn tạo được credential hợp lệ cho Workspace.
+Kubeconfig không chứa credential nên không cần thu hồi file: khi user bị gỡ khỏi group, kubeconfig vẫn tồn tại nhưng không còn tạo được token có quyền vào Workspace. Contract thu hồi: 9.3.
 
 ## 12. Headlamp: tích hợp hay để app riêng?
 
@@ -1120,7 +1124,7 @@ MVP: central plane chạy trên system pool của Cluster A; provisioning worker
 - deployment: Helm/Kustomize;
 - test: Go test, frontend test, Playwright, E2E shell/Go trên cluster thật.
 
-Không cần Kafka, Temporal, service mesh hoặc nhiều microservice. Một modular monolith API + worker processes là đủ.
+Không cần Redis, Kafka, Temporal, service mesh hoặc nhiều microservice. Một modular monolith API + worker processes là đủ; PostgreSQL kiêm kho phiên, hàng đợi (outbox) và kho idempotency vì cả ba đều phải nhất quán với dữ liệu nghiệp vụ trong cùng transaction hoặc cùng request.
 
 ## 14. Source of truth và reconciliation
 
@@ -1223,59 +1227,19 @@ Khi API tạo Workspace:
 
 ## 15. Database model
 
-| Table | Nội dung chính |
-|---|---|
-| `users` | id, issuer, subject, email, display_name, status (`Active`/`Disabled`) |
-| `organizations` | id, slug (immutable), display_name, description, owner_user_id, status (`Pending`/`Active`/`Rejected`/`Deleted`), review_note |
-| `organization_members` | org_id, user_id, role, status |
-| `invitations` | org_id, email, token_hash, role, expiry, accepted_by |
-| `groups` | id, org_id, display_name, machine_name, keycloak_group_id, sync_status |
-| `group_members` | group_id, user_id, sync_status |
-| `organization_entitlements` | max member/group/Workspace toàn platform |
-| `onboarding_policies` | grant mặc định điền sẵn khi Admin duyệt yêu cầu tạo Organization |
-| `clusters` | id, display_name, status, capabilities, proxy/console/ingress endpoints, wildcard domain, last_health_check |
-| `organization_cluster_grants` | org_id, cluster_id, default flag, resource/Workspace/Namespace limits, allowed modes/storage classes/ingress classes |
-| `shared_compute_pools` | id, cluster_id, node selector, allocation_overcommit_ratio, system reserve, capacity snapshot, status |
-| `cluster_grant_shared_pools` | grant_id, shared_pool_id |
-| `dedicated_node_grants` | org_id, cluster_id, node_name, allocatable/system reserve, health/capacity state |
-| `network_pools` | id, org_id (nullable = pool chung), cluster_id, CIDR ranges, default/allowed prefix, compute compatibility |
-| `network_allocations` | workspace_id, cluster_id, pool_id, CIDR, state, quarantine_until |
-| `workspaces` | org_id, cluster_id, slug (immutable), k8s_name = org_slug-ws_slug, state, resources, compute_mode, shared_pool_id |
-| `workspace_namespaces` | workspace_id, name, source (portal/kubectl), state, usage snapshot |
-| `ownership_transfers` | org_id, from_user_id, to_user_id, token_hash, expiry, state |
-| `workspace_node_reservations` | workspace_id, node_grant_id, reserved CPU/RAM/Pod, state |
-| `workspace_group_bindings` | workspace, group, role template |
-| `operations` | resource, type, state, progress, error code, correlation ID |
-| `audit_events` | actor, org, action, target, result, timestamp |
-| `outbox_events` | target_cluster_id, type, payload/version, attempts, processed_at |
+Bảng, cột, constraint và thứ tự lock định nghĩa ở [`architecture/02-data-model.md`](architecture/02-data-model.md); DDL thật ở `backend/migrations/`. Mục này không chép lại.
 
-Bảng dành cho Phase 2: `cluster_agents` (cluster_id, identity fingerprint, version, status, last_seen) — chỉ tạo khi làm agent.
-
-Constraints quan trọng:
-
-- unique `(issuer, subject)`;
-- unique Organization slug trừ Organization `Rejected`, immutable sau khi tạo;
-- mỗi user tối đa một Organization `Pending` (partial unique index trên `owner_user_id`);
-- đúng một OrgOwner mỗi Organization (`organizations.owner_user_id` + partial unique index trên `organization_members` với role Owner);
-- unique group display name trong Organization, machine name global unique;
-- unique Workspace slug theo Organization, immutable; `k8s_name = <org-slug>-<ws-slug>` global-unique và là tên Tenant/tiền tố Namespace/vùng hostname; label vẫn mang immutable ID;
-- Namespace name unique toàn Cluster và phải có tiền tố `<k8s_name>-`;
-- một group có tối đa một role trong một Workspace, unique theo `(workspace, group)`;
-- một Organization có tối đa một default ClusterGrant;
-- Workspace `cluster_id` bắt buộc thuộc ClusterGrant của Organization;
-- DedicatedNodeGrant unique theo `(cluster_id, node_name)` và chỉ thuộc một Organization;
-- Dedicated Workspace có đúng một active NodeReservation trong MVP;
-- tổng active reservations trên node không vượt `allocatable - system_reserve`; invariant này được enforce bằng transaction khóa row `dedicated_node_grants`, không phải phép `CHECK` đơn giản giữa nhiều row;
-- SharedPool/NodeGrant/NetworkPool của Workspace phải cùng `cluster_id`;
-- một CIDR không overlap allocation khác trong cùng Cluster;
-- Workspace luôn còn ít nhất một Owner binding;
-- resource reservation không âm và không vượt ClusterGrant entitlement.
+Các invariant nghiệp vụ mà schema phải giữ đã nêu tại nơi chúng thuộc về: danh tính và Organization (4.1–4.3), entitlement và reservation (5.3), dedicated node (6.3), CIDR (7.2), binding (10.4).
 
 ## 16. API đề xuất
 
 ### 16.1 User và Organization
 
 ```text
+GET    /auth/login                                 # BFF, ngoài /api/v1: bắt đầu OIDC
+GET    /auth/callback
+POST   /auth/logout
+
 GET    /api/v1/me
 GET    /api/v1/organizations                       # các Org user là member, kể cả yêu cầu Pending/Rejected của chính họ
 POST   /api/v1/organizations                       # xin tạo Org: slug, displayName, description → Pending
@@ -1394,7 +1358,7 @@ PATCH  /api/v1/admin/clusters/{clusterId}
 PUT    /api/v1/admin/onboarding-policy
 PUT    /api/v1/admin/organizations/{orgId}/cluster-grants/{clusterId}
 DELETE /api/v1/admin/organizations/{orgId}/cluster-grants/{clusterId}
-PUT    /api/v1/admin/organizations/{orgId}/cluster-grants/{clusterId}/dedicated-nodes
+PUT    /api/v1/admin/organizations/{orgId}/cluster-grants/{clusterId}/dedicated-nodes   # trả operation: operator kiểm node rồi mới gắn label/taint
 POST   /api/v1/admin/clusters/{clusterId}/shared-pools
 POST   /api/v1/admin/clusters/{clusterId}/network-pools
 ```
@@ -1407,7 +1371,7 @@ GET    /internal/v1/clusters/{clusterId}/assignments
 POST   /internal/v1/clusters/{clusterId}/workspace-status
 ```
 
-API mutation trả operation ID nếu có Kubernetes reconciliation. Error có stable code, ví dụ:
+API mutation trả operation ID nếu có Kubernetes reconciliation. Error có stable code; danh sách đầy đủ là enum `ErrorCode` trong `backend/openapi/tenantry.v1.yaml`. Ví dụ:
 
 - `CLUSTER_GRANT_CPU_QUOTA_EXCEEDED`;
 - `CLUSTER_NOT_GRANTED`;
@@ -1424,45 +1388,9 @@ API mutation trả operation ID nếu có Kubernetes reconciliation. Error có s
 
 ## 17. Workspace state machine
 
-```mermaid
-stateDiagram-v2
-  [*] --> Draft
-  Draft --> Validating
-  Validating --> Reserving
-  Reserving --> Provisioning
-  Provisioning --> Ready
-  Ready --> Updating
-  Updating --> Ready
-  Ready --> Cordoned
-  Cordoned --> Ready
-  Ready --> Deleting
-  Cordoned --> Deleting
-  Deleting --> Deleted
-  Validating --> Failed
-  Reserving --> Failed
-  Provisioning --> Failed
-  Ready --> Degraded
-  Updating --> Degraded
-  Degraded --> Updating
-  Degraded --> Ready
-```
+Trạng thái, cạnh chuyển và Condition của Workspace, Operation, Reservation, NetworkAllocation định nghĩa ở [`architecture/04-state-machines.md`](architecture/04-state-machines.md). Mục này chỉ giữ thứ tự nghiệp vụ của từng workflow.
 
-`Ready → Degraded` xảy ra khi drift được phát hiện ngoài chu trình update, ví dụ node Overcommitted (6.3) hoặc component condition chuyển False; controller/worker tự chuyển về `Ready` khi drift được xử lý.
-
-Conditions:
-
-- `ClusterReady`;
-- `ClusterGrantValid`;
-- `ResourcesReserved`;
-- `DedicatedNodeCapacityReserved` nếu dùng Dedicated mode;
-- `IdentityBindingsReady`;
-- `ComputeReady`;
-- `NetworkReady`;
-- `CapsuleTenantReady`;
-- `PolicyReady`;
-- `ProxyAccessReady`.
-
-Reservation có state `Pending`, `Active`, `Releasing`, `Released`. Nếu provisioning thất bại sau khi DB commit, reservation vẫn được giữ để retry không cấp trùng capacity. Chỉ delete/admin cleanup đã dọn workload trong Cluster mới chuyển reservation sang `Released`; không release capacity chỉ vì controller tạm thời báo lỗi.
+Một quy tắc xuyên suốt: nếu provisioning thất bại sau khi DB đã commit, reservation và CIDR **vẫn được giữ** để retry không cấp trùng. Chỉ delete/admin cleanup đã dọn xong workload trong Cluster mới release; không release chỉ vì controller tạm thời báo lỗi.
 
 ### 17.1 Create workflow
 
@@ -1695,7 +1623,7 @@ Không chỉ làm happy-path UI.
 - user gán group của Organization khác vào Workspace;
 - remove Owner cuối cùng;
 - OrgAdmin tự gọi transfer-ownership, xóa Organization hoặc remove OrgOwner;
-- user tự tạo thêm Organization để nhân free tier;
+- user gửi nhiều yêu cầu tạo Organization cùng lúc để giữ chỗ slug hoặc nhân quota mặc định;
 - stale group token sau revoke;
 - direct API và Capsule Proxy cho kết quả quyền khác nhau ngoài phần filter dự kiến;
 - list Namespace/Node/PV tenant khác;
@@ -1973,7 +1901,7 @@ Thời gian thực hiện linh hoạt (một người làm, quỹ thời gian ~1
 ### Stretch (mọi phase)
 
 - CLI riêng của platform (wrap kubeconfig/login);
-- user gửi request tạo Organization/xin nâng quota (ticket) trong portal;
+- user xin nâng quota cho Organization đã `Active` (ticket) trong portal;
 - soft-delete Workspace với grace period/restore;
 - email service thật cho invitation;
 - iframe Headlamp experiment;
@@ -2015,7 +1943,7 @@ Không cắt: tenant isolation test, resource reservation, group mapping, delete
 Demo được toàn bộ flow không sửa YAML thủ công:
 
 1. PlatformAdmin đăng ký Cluster, cấu hình onboarding policy, quota, pools, nodes, network;
-2. Alice login qua Keycloak, có Organization và quota mặc định;
+2. Alice login qua Keycloak, xin tạo Organization; Admin duyệt và Organization có quota mặc định;
 3. Alice mời Joe và Bob qua invite link;
 4. Alice tạo group, add member;
 5. Alice tạo Shared Workspace qua wizard; platform tạo Capsule Tenant/ResourcePool/IPPool/RBAC;
@@ -2104,6 +2032,8 @@ Demo được toàn bộ flow không sửa YAML thủ công:
 18. Vì sao user không tự tạo thêm Organization và Organization chỉ có một Owner?
 19. Vì sao Namespace UI đi qua CR khai báo thay vì portal gọi Kubernetes API bằng token user?
 20. Vì sao Ingress dùng vùng hostname per Workspace với wildcard cert từ CA nội bộ?
+21. Vì sao PostgreSQL kiêm kho phiên, hàng đợi và idempotency, không thêm Redis?
+22. Vì sao phiên portal gắn với SSO session của Keycloak thay vì có thời hạn riêng?
 
 Mỗi ADR ghi context, decision, alternatives, consequences và validation/test.
 
@@ -2156,6 +2086,8 @@ Mỗi ADR ghi context, decision, alternatives, consequences và validation/test.
 31. delete Workspace xóa ngay kể cả PVC, confirm gõ tên; chỉ Admin được force finalizer;
 32. Namespace UI khai báo qua `spec.namespaces`; OrgOwner/OrgAdmin + TenantOwner-group được thao tác;
 33. NetworkPool có thể là pool chung (không gắn Organization) để phục vụ onboarding;
-34. storage `standard` = NFS subdir provisioner.
+34. storage `standard` = NFS subdir provisioner;
+35. phiên portal sống theo SSO session của Keycloak, một bộ thời hạn duy nhất ở realm; không Redis;
+36. central plane không đọc Node: kiểm node, label/taint và capacity đi qua CRD phụ do operator reconcile.
 
 Bộ scope này đủ lớn để thể hiện kiến trúc platform, identity, Kubernetes controller, networking, scheduling, policy và UX; đồng thời đủ gọn để một người hoàn thành như một đồ án tốt nghiệp, với đường mở rộng multi-cluster đã được thiết kế sẵn.
