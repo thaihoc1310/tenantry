@@ -11,6 +11,9 @@ export DATABASE_URL
 # Tests create and drop their own database on this server; they never touch DATABASE_URL's data.
 TEST_DATABASE_URL ?= $(DATABASE_URL)
 export TEST_DATABASE_URL
+# Logs are JSON by default (for the cluster); text reads better in a terminal.
+TENANTRY_LOG_FORMAT ?= text
+export TENANTRY_LOG_FORMAT
 
 .PHONY: help
 help: ## Show targets

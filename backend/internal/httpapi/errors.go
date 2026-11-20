@@ -33,7 +33,7 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 			body.Details = &e.Details
 		}
 	} else {
-		slog.ErrorContext(r.Context(), "request failed", "err", err, "path", r.URL.Path, "request_id", body.RequestId)
+		slog.ErrorContext(r.Context(), "request failed", "err", err, "route", routePattern(r), "request_id", body.RequestId)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

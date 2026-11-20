@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -12,19 +13,31 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/thaihoc1310/tenantry/backend/internal/config"
 	"github.com/thaihoc1310/tenantry/backend/internal/outbox"
 )
 
 func main() {
-	log := slog.Default()
+	if err := run(); err != nil {
+		slog.Error("tenantry-worker stopped", "err", err)
+		os.Exit(1)
+	}
+}
 
-	pool, err := pgxpool.New(context.Background(), os.Getenv("DATABASE_URL"))
+func run() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	log := cfg.Logger()
+	slog.SetDefault(log)
+
+	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
 	if err == nil {
 		err = pool.Ping(context.Background())
 	}
 	if err != nil {
-		log.Error("database unreachable", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("database unreachable: %w", err)
 	}
 	defer pool.Close()
 
@@ -35,4 +48,5 @@ func main() {
 	log.Info("outbox worker started", "poll", outbox.PollInterval, "batch", outbox.BatchSize)
 	outbox.NewWorker(pool, outbox.LogHandler(log), log).Run(ctx)
 	log.Info("outbox worker stopped")
+	return nil
 }

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -17,11 +19,16 @@ import (
 	"github.com/thaihoc1310/tenantry/backend/migrations"
 )
 
+var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
+
 func TestHealthz(t *testing.T) {
 	rec := httptest.NewRecorder()
-	routes(nil, httpapi.Options{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	routes(nil, httpapi.Options{}, quiet).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if rec.Code != http.StatusOK || rec.Body.String() != "ok" {
 		t.Fatalf("got %d %q, want 200 \"ok\"", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("X-Request-Id") == "" {
+		t.Fatal("no X-Request-Id: the middleware chain is not mounted")
 	}
 }
 
@@ -71,7 +78,7 @@ func TestBodyIsCapped(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	h := routes(pool, httpapi.Options{DevAuth: true})
+	h := routes(pool, httpapi.Options{DevAuth: true}, quiet)
 
 	send := func(size int) *httptest.ResponseRecorder {
 		body := `{"slug":"acme","displayName":"` + strings.Repeat("x", size) + `"}`
@@ -89,5 +96,26 @@ func TestBodyIsCapped(t *testing.T) {
 	// Under the cap the request reaches validation as usual (displayName max 100).
 	if rec := send(200); rec.Code != http.StatusBadRequest || strings.Contains(rec.Body.String(), "too large") {
 		t.Fatalf("small body: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// /readyz follows the database: ready while it answers, 503 once it is gone.
+func TestReadyz(t *testing.T) {
+	pool, err := pgxpool.New(context.Background(), migrated(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := routes(pool, httpapi.Options{}, quiet)
+	probe := func() *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+		return rec
+	}
+	if rec := probe(); rec.Code != http.StatusOK {
+		t.Fatalf("with a database: %d %s", rec.Code, rec.Body)
+	}
+	pool.Close() // stands in for losing the database
+	if rec := probe(); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("without a database: %d %s", rec.Code, rec.Body)
 	}
 }

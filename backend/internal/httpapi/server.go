@@ -5,7 +5,6 @@ package httpapi
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"net/http"
 	"slices"
@@ -225,6 +224,7 @@ type ctxKey int
 const (
 	requestIDKey ctxKey = iota
 	principalKey
+	requestLogKey
 )
 
 // principal is the authenticated caller. Only authenticate builds it, so
@@ -232,19 +232,6 @@ const (
 type principal struct {
 	user          store.User
 	platformAdmin bool
-}
-
-// WithRequestID tags every request with an id that is echoed in the
-// X-Request-Id header and in error bodies, so a user report can be matched to logs.
-func WithRequestID(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := r.Header.Get("X-Request-Id")
-		if id == "" || len(id) > 64 {
-			id = rand.Text()
-		}
-		w.Header().Set("X-Request-Id", id)
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey, id)))
-	})
 }
 
 func requestID(ctx context.Context) string { s, _ := ctx.Value(requestIDKey).(string); return s }
@@ -271,6 +258,7 @@ func authenticate(users *user.Service, opts Options) oapi.MiddlewareFunc {
 				roles[i] = strings.TrimSpace(roles[i])
 			}
 			p := principal{user: u, platformAdmin: slices.Contains(roles, RolePlatformAdmin)}
+			noteUser(r.Context(), u.ID)
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey, p)))
 		})
 	}

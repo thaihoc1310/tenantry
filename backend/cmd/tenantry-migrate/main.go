@@ -18,6 +18,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
+	"github.com/thaihoc1310/tenantry/backend/internal/config"
 	"github.com/thaihoc1310/tenantry/backend/migrations"
 )
 
@@ -68,17 +69,18 @@ func run() error {
 	if !ok {
 		return fmt.Errorf("unknown command %q, want up, down or status", name)
 	}
-	url := os.Getenv("DATABASE_URL")
-	if url == "" {
-		return errors.New("DATABASE_URL is required")
+	cfg, err := config.Load()
+	if err != nil {
+		return err
 	}
+	slog.SetDefault(cfg.Logger())
 
 	// Cancel on SIGTERM so a job killed by helm rolls back its transaction
 	// instead of dying mid-statement.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
 
-	db, err := sql.Open("pgx", url)
+	db, err := sql.Open("pgx", cfg.DatabaseURL)
 	if err != nil {
 		return err
 	}

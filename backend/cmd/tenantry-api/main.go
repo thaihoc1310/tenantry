@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/thaihoc1310/tenantry/backend/internal/config"
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi"
 )
 
@@ -25,16 +26,18 @@ func main() {
 }
 
 // run returns only on shutdown; a non-nil error means the API could not serve
-// (port taken, database unreachable) and must end with a failing exit code.
+// (bad config, port taken, database unreachable) and must end with a failing exit code.
 func run() error {
-	addr := os.Getenv("TENANTRY_ADDR")
-	if addr == "" {
-		addr = ":8080"
+	cfg, err := config.Load()
+	if err != nil {
+		return err
 	}
+	log := cfg.Logger()
+	slog.SetDefault(log)
 
 	// pgxpool connects lazily; Ping makes a wrong DATABASE_URL fail at start
 	// instead of on the first request.
-	pool, err := pgxpool.New(context.Background(), os.Getenv("DATABASE_URL"))
+	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
 	if err == nil {
 		err = pool.Ping(context.Background())
 	}
@@ -43,12 +46,23 @@ func run() error {
 	}
 	defer pool.Close()
 
-	opts := httpapi.Options{DevAuth: os.Getenv("TENANTRY_AUTH_DEV_HEADER") == "true"}
+	opts := httpapi.Options{DevAuth: cfg.DevAuth}
 	if opts.DevAuth {
-		slog.Warn("dev auth enabled: any client can act as any user, Platform Admin included, via " + httpapi.DevUserHeader + " and " + httpapi.DevRolesHeader)
+		log.Warn("dev auth enabled: any client can act as any user, Platform Admin included, via " + httpapi.DevUserHeader + " and " + httpapi.DevRolesHeader)
 	}
 
-	srv := &http.Server{Addr: addr, Handler: routes(pool, opts), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           routes(pool, opts, log),
+		ReadHeaderTimeout: 10 * time.Second,
+		// Bodies are at most maxBodyBytes, so 30s only cuts off a client that
+		// trickles one in to hold a connection open.
+		ReadTimeout: 30 * time.Second,
+		// Handlers are short database calls. A streaming endpoint (SSE) must
+		// lift this for its own response with http.ResponseController.
+		WriteTimeout: time.Minute,
+		IdleTimeout:  2 * time.Minute,
+	}
 
 	// SIGTERM is how Kubernetes asks for a shutdown; without this the pod drops
 	// in-flight requests on every rollout.
@@ -57,7 +71,7 @@ func run() error {
 
 	serveErr := make(chan error, 1)
 	go func() {
-		slog.Info("listening", "addr", addr)
+		log.Info("listening", "addr", cfg.Addr)
 		serveErr <- srv.ListenAndServe()
 	}()
 
@@ -66,7 +80,7 @@ func run() error {
 		return fmt.Errorf("serve: %w", err)
 	case <-ctx.Done():
 	}
-	slog.Info("shutting down")
+	log.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -79,11 +93,25 @@ func run() error {
 // without a cap one authenticated client could send gigabytes.
 const maxBodyBytes = 1 << 20
 
-func routes(db *pgxpool.Pool, opts httpapi.Options) http.Handler {
+func routes(db *pgxpool.Pool, opts httpapi.Options, log *slog.Logger) http.Handler {
 	r := chi.NewRouter()
+	r.Use(httpapi.WithRequestID, httpapi.LogRequests(log), httpapi.Recover)
+	// Liveness: the process answers. It never touches the database, so an
+	// outage of PostgreSQL does not make Kubernetes restart every API pod.
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
+	// Readiness: take the pod out of the Service while it cannot reach the database.
+	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := db.Ping(ctx); err != nil {
+			log.WarnContext(ctx, "not ready", "err", err)
+			http.Error(w, "database unreachable", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte("ok"))
+	})
 	httpapi.Register(r, db, opts)
-	return http.MaxBytesHandler(httpapi.WithRequestID(r), maxBodyBytes)
+	return http.MaxBytesHandler(r, maxBodyBytes)
 }
