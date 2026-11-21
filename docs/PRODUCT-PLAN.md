@@ -22,6 +22,7 @@
 10. **Traefik** thay ingress-nginx (dự án đã ngừng và archive từ tháng 3/2026).
 11. **Custom domain** có quy tắc nghiệp vụ (xác minh TXT, cert tự xin), làm sau Route cơ bản (7.6).
 12. **Tài liệu**: mỗi chủ đề một nơi định nghĩa. Mục 15 (database) và phần state của mục 17 chuyển hẳn sang `architecture/`; `architecture/*` đã theo mô hình "xin tạo Organization" của v0.7.
+13. **Thư xác minh email đi vào hộp thư giả trong cụm (Mailpit)** ở MVP. Keycloak vẫn bắt xác minh email khi tự đăng ký, vì lời mời tin vào email của phiên; chỉ việc gửi thư ra ngoài là chưa làm. Đổi sang SMTP thật là cấu hình realm. Chi tiết ở `architecture/06-security-and-identity.md` mục 3.
 
 ### v0.6 → v0.7
 

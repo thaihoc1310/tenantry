@@ -75,7 +75,7 @@ sequenceDiagram
 **Điểm cần review**
 
 - Bước 13: identity key duy nhất là `(issuer, sub)`; email/display name chỉ là snapshot [4.1]. Upsert nên login hai lần, hoặc hai callback song song, không tạo hai user.
-- Bước 10–12: `email_verified=true` là điều kiện tạo phiên, để flow Invitation (mục 3) tin được email của phiên (Keycloak required action Verify Email).
+- Bước 10–12: `email_verified=true` là điều kiện tạo phiên, để flow Invitation (mục 3) tin được email của phiên (Keycloak required action Verify Email). Thư xác minh ở cụm MVP đi vào Mailpit, xem `06-security-and-identity.md` mục 3.
 - Bước 3, 7, 14, 16: cơ chế cookie, phiên, refresh và logout định nghĩa ở `06-security-and-identity.md` mục 3; sơ đồ này không lặp lại.
 - User có `users.status = Disabled` không qua được bước 16 ở request kế tiếp: API trả 401 và xóa phiên.
 

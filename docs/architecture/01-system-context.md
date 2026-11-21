@@ -144,7 +144,7 @@ flowchart TB
 
   subgraph SYS["system pool — label tenantry.io/compute-pool=system, taint NoSchedule cho tenant"]
     NS1["ns tenantry-system<br/>Portal, API, Provisioning Worker,<br/>Group Sync Worker, PostgreSQL"]:::ns
-    NS2["ns keycloak<br/>Keycloak (database riêng trên<br/>cùng instance PostgreSQL)"]:::ns
+    NS2["ns keycloak<br/>Keycloak (database riêng trên<br/>cùng instance PostgreSQL),<br/>Mailpit (hộp thư giả cho thư xác minh)"]:::ns
     NS3["ns capsule-system<br/>Capsule, Capsule Proxy,<br/>Workspace Controller"]:::ns
     NS4["ns headlamp-system<br/>Headlamp"]:::ns
     NS5["ns ingress-system (Traefik), cert-manager,<br/>monitoring; csi-driver-nfs ở kube-system"]:::ns

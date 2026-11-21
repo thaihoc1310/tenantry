@@ -71,7 +71,7 @@ Tài liệu này trả lời bốn câu hỏi: code đặt ở đâu (mục 2), 
 │   ├── charts/tenantry-operator/
 │   ├── charts/tenantry-web/
 │   ├── keycloak/                # realm export tenantry (3 client: portal, headlamp-{clusterId}, kubectl)
-│   └── cluster/                 # nền của Cluster: storage, Traefik, cert-manager, PostgreSQL, Keycloak, OIDC, Capsule, Headlamp
+│   └── cluster/                 # nền của Cluster: storage, Traefik, cert-manager, PostgreSQL, Keycloak, Mailpit, OIDC, Capsule, Headlamp
 │       ├── charts/postgres/     #   chart nhỏ tự viết: phần riêng (Job tạo role/database, Secret) chart nào cũng không có sẵn
 │       └── …                    #   script đánh số, values cho chart có sẵn (csi-driver-nfs, cert-manager, traefik,
 │                                #   keycloakx, capsule, capsule-proxy, headlamp) và values của 3 chart Tenantry cho Cluster này
@@ -375,7 +375,7 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
   5. **cert-manager** với ClusterIssuer `letsencrypt` (DNS-01, API token Cloudflare trong Secret): wildcard cert `*.mvp.tenantry.site` làm cert mặc định của Traefik, và cert cho host Keycloak/Headlamp/Proxy/Portal. Dùng endpoint staging của Let's Encrypt khi thử, chuyển production khi chạy ổn.
   6. PostgreSQL bằng một chart nhỏ tự viết trong `deploy/cluster/` (image `postgres` chính thức, ghim phiên bản): StatefulSet một replica trên PVC `standard`, Service, mật khẩu đưa vào bằng file (`*_FILE`) thay vì biến môi trường, và một Job chạy sau mỗi lần install/upgrade để tạo role và database `tenantry`, `keycloak` nếu chưa có. Chart có template Secret: mật khẩu sinh ngẫu nhiên ở lần cài đầu, các lần upgrade đọc lại Secret đang có bằng `lookup` nên không đổi; Secret mang `helm.sh/resource-policy: keep` để gỡ chart không làm mất mật khẩu của dữ liệu còn trên PVC. Không dùng chart Bitnami (image miễn phí không còn ghim được phiên bản). Keycloak dùng database `keycloak` trên instance này.
   7. Keycloak bằng chart cộng đồng `keycloakx` của codecentric (ghim phiên bản chart; image chính thức `quay.io/keycloak/keycloak`), cấu hình qua file values trong `deploy/cluster/`: một replica với `KC_CACHE=local`, chạy HTTP sau Traefik, database `keycloak` trên instance PostgreSQL ở bước 6 (mật khẩu lấy từ Secret có sẵn), file realm gắn vào bằng volume. Ingress `auth.tenantry.site` chỉ mở `/realms/tenantry` và `/resources` — trang admin **và realm `master`** không ra internet (client `admin-cli` của `master` nhận mật khẩu trực tiếp, mở ra là cho dò mật khẩu admin); vào admin bằng port-forward. Không dùng operator của Keycloak hay chart Bitnami.
-  8. Realm `deploy/keycloak/realm-tenantry.json` viết mới theo `architecture/06-security-and-identity.md` mục 2–3, nạp lúc Keycloak khởi động (`--import-realm` chỉ nạp khi realm chưa tồn tại; sửa file sau đó không tự áp vào realm đang chạy): 3 client (`portal`, `headlamp-cluster-a`, `kubectl`), realm role `platform-admin`, user demo, bật chống brute-force. Mật khẩu user demo và client secret sinh lúc cài, không nằm trong repo. `kubectl` giữ là client public + PKCE, không bật direct grant; `cluster-verify` lấy token qua một client confidential riêng.
+  8. Realm `deploy/keycloak/realm-tenantry.json` viết mới theo `architecture/06-security-and-identity.md` mục 2–3, nạp lúc Keycloak khởi động (`--import-realm` chỉ nạp khi realm chưa tồn tại; từ M3 thay đổi của file được áp vào realm đang chạy bằng bước đồng bộ ở mục 10): 3 client (`portal`, `headlamp-cluster-a`, `kubectl`), realm role `platform-admin`, user demo, bật chống brute-force. Mật khẩu user demo và client secret sinh lúc cài, không nằm trong repo. `kubectl` giữ là client public + PKCE, không bật direct grant; `cluster-verify` lấy token qua một client confidential riêng.
   9. Bật OIDC (structured authentication config, 2 audience) và hai admission plugin `PodNodeSelector`, `PodTolerationRestriction` trên kube-apiserver, kèm script rollback; cài Capsule, Capsule Proxy (`kube-a.tenantry.site`), Headlamp (`console-a.tenantry.site`) bằng chart của dự án gốc.
   10. Viết `cluster-verify`: PVC bound trên `standard`, HTTPS với cert hợp lệ, cert-manager Ready, đăng nhập Keycloak lấy được token, kube-apiserver nhận token đó, `PodNodeSelector` đang bật. Ghi `deploy/cluster/README.md` gồm các bước làm tay (DNS, token Cloudflare, mở cổng).
 - **Đầu ra kiểm chứng**: `make cluster-up` từ cluster kubeadm sạch → verify pass; PVC bound; `https://demo.mvp.tenantry.site` trả về qua ingress với cert Let's Encrypt.
@@ -405,24 +405,35 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
 ### M3 — Portal auth + onboarding
 
 - **Mục tiêu**: user mới login xin được Organization, Platform Admin duyệt, Organization có grant dùng được.
-- **Công việc**:
-  1. `auth` theo `architecture/06-security-and-identity.md` mục 3: OIDC discovery, login/callback/logout, phiên trong PostgreSQL gắn với refresh token, CSRF. Migrations `sessions`, `idempotency_keys`, `audit_events`, `organization_entitlements`; vòng `housekeeping`.
-  2. First login chỉ upsert `users` theo `(issuer, subject)`. `POST /organizations` tạo yêu cầu `Pending` + OrgOwner membership. `RequirePlatformAdmin` tối thiểu (kéo từ M5) + `POST /admin/organizations/{id}:approve|reject`: duyệt → `Active`, 3 group mặc định `admins/developers/viewers` (chưa sync Keycloak — M4), ClusterGrant từ onboarding policy (bảng `clusters`, `onboarding_policies`, `organization_cluster_grants` migration ở đây, seed Cluster A); từ chối → `Rejected` + `review_note`.
-  3. `GET /me`, `GET /organizations`, `/entitlement`, `/usage` (usage = 0 lúc này).
-  4. Web: Vite scaffold, Mantine, layout, login redirect, màn trống "xin tạo Organization" + trạng thái yêu cầu, org switcher, Overview skeleton hiển thị grant/quota, trang Admin duyệt yêu cầu.
-  5. Rate limit theo `architecture/06-security-and-identity.md` mục 6.
-  6. Realm export dev + `tenantry-seed`.
-- **Đầu ra kiểm chứng**: đăng ký user mới trên Keycloak → portal hiện màn xin tạo Organization → Admin duyệt → user thấy Organization + quota mặc định; refresh trang vẫn login; để quá 5 phút rồi dùng tiếp vẫn login (refresh chạy); logout xóa phiên và kết thúc SSO session.
-- **Test bắt buộc**: first login idempotent (login hai lần không tạo hai user); phiên chết khi Keycloak từ chối refresh; user `Disabled` bị 401 ngay; request ghi thiếu CSRF bị từ chối; cùng `Idempotency-Key` trả lại response cũ, khác body bị `IDEMPOTENCY_KEY_REUSED`; yêu cầu `Pending` thứ hai của cùng user bị chặn; duyệt tạo đúng group + grant trong một transaction; từ chối nhả slug; integration OIDC với Keycloak container (testcontainers) hoặc mock issuer; Playwright login/logout.
+- **Công việc** (mỗi mục một commit):
+  1. **Đăng nhập OIDC** theo `architecture/06-security-and-identity.md` mục 3: migration `sessions`; `GET /auth/login` và `GET /auth/callback` (bắt buộc `email_verified=true`, upsert `users` theo `(issuer, subject)`, tạo phiên); middleware đọc phiên; CSRF double-submit. Dev header `X-Tenantry-Dev-User` của M2 bị bỏ hẳn; test tạo phiên thẳng trong DB. Dùng `github.com/coreos/go-oidc/v3` và `golang.org/x/oauth2`, không tự viết phần kiểm JWT.
+  2. **Refresh lười, logout, housekeeping**: refresh khi access token hết hạn, khóa row phiên trong lúc refresh; Keycloak từ chối refresh thì phiên chết; `POST /auth/logout` kết thúc cả SSO session. `tenantry-worker` nhận `--loops` và có vòng `housekeeping` xóa phiên hết hạn.
+  3. **Idempotency-Key, audit, rate limit**: migrations `idempotency_keys`, `audit_events`; rate limit theo `architecture/06-security-and-identity.md` mục 6 bằng `golang.org/x/time/rate`.
+  4. **Duyệt Organization**:
+     - Migrations cho mọi bảng mà bước duyệt ghi vào: `clusters`, `onboarding_policies`, `organization_entitlements`, `organization_cluster_grants`, `shared_compute_pools`, `network_pools`, `cluster_grant_shared_pools`, `cluster_grant_network_pools`, `groups`, `group_members` (đủ cột sync và tombstone).
+     - `tenantry-seed`: `cluster-a`, onboarding policy theo spec §5.2.1, shared pool `shared-general`, NetworkPool `onboarding-pod-network`.
+     - `RequirePlatformAdmin`; `GET /admin/organizations?status=Pending` trả kèm grant điền sẵn từ policy; `POST /admin/organizations/{id}:approve|reject`.
+     - Duyệt là một transaction: `Active`, entitlement, ClusterGrant đầy đủ (quota, compute mode, shared pool, NetworkPool), 3 group mặc định `admins/developers/viewers`, Owner vào `admins`, audit. Từ chối: `Rejected` + `review_note`, nhả slug.
+     - Ranh giới với milestone sau: group nằm ở `sync_status=Pending` cho tới khi Group Sync Worker có ở M4. Pool ở M3 chỉ có bảng và dữ liệu seed; API và UI quản lý pool, capacity math thuộc M5.
+  5. `GET /me`, `GET /organizations`, `/entitlement`, `/usage` (usage = 0 lúc này).
+  6. **Web**: `web/` dùng Vite, React, Mantine, React Router, TanStack Query, client TypeScript sinh từ OpenAPI (`make generate`). Gồm layout, login redirect, màn trống "xin tạo Organization" (báo `SLUG_TAKEN` tại chỗ), trạng thái yêu cầu (chờ, hoặc bị từ chối kèm lý do), org switcher, Overview hiển thị grant/quota, trang Admin duyệt yêu cầu.
+  7. **Deploy lên cụm**:
+     - Chart `tenantry-web` (nginx); Ingress `portal.tenantry.site` đưa `/api` và `/auth` vào API, còn lại vào web.
+     - Secret chứa client secret của `portal` và khóa mã hóa phiên do script sinh, không vào repo. Seed chạy trong cụm.
+     - **Mailpit** (hộp thư giả) trong namespace `keycloak`, không có Ingress; realm bật `verifyEmail: true` và trỏ SMTP vào Mailpit. Lý do và giới hạn: `architecture/06-security-and-identity.md` mục 3.
+     - Bước đồng bộ realm vào Keycloak đang chạy (mục 10).
+  8. **Playwright trên cụm**: đăng ký user mới (lấy link xác minh từ API của Mailpit), xin tạo Organization, Admin duyệt, user thấy Overview; F5 vẫn login; logout kết thúc SSO session.
+- **Đầu ra kiểm chứng**: đăng ký user mới trên Keycloak và xác minh email → portal hiện màn xin tạo Organization → Admin duyệt → user thấy Organization + quota mặc định; refresh trang vẫn login; để quá 5 phút rồi dùng tiếp vẫn login (refresh chạy); logout xóa phiên và kết thúc SSO session.
+- **Test bắt buộc**: first login idempotent (login hai lần không tạo hai user); callback với `email_verified=false` không tạo phiên; phiên chết khi Keycloak từ chối refresh; hai request đồng thời chỉ refresh một lần; user `Disabled` bị 401 ngay; request ghi thiếu CSRF bị từ chối; cùng `Idempotency-Key` trả lại response cũ, khác body bị `IDEMPOTENCY_KEY_REUSED`; vượt ngưỡng rate limit trả 429; yêu cầu `Pending` thứ hai của cùng user bị chặn; duyệt tạo đúng group + grant (kèm pool) trong một transaction; từ chối nhả slug; user thường gọi `/admin/*` bị 403. Integration test OIDC dùng một issuer giả chạy ngay trong tiến trình test (nhanh, không cần Docker); Keycloak thật được kiểm bằng Playwright trên cụm. `make deploy` hai lần và `make cluster-verify` vẫn qua hết.
 - **Phụ thuộc**: M1 (Keycloak realm), M2.
-- **Rủi ro chính**: cookie/redirect giữa `portal.tenantry.site` và `auth.tenantry.site` — chốt host và HTTPS local sớm.
+- **Rủi ro chính**: cookie/redirect giữa `portal.tenantry.site` và `auth.tenantry.site`; bước đồng bộ realm ghi đè nhầm (đổi client secret, mất user) — kiểm trên realm có user thật trước khi coi là xong.
 - **Ước lượng**: M.
 
 ### M4 — Invitation/member/group
 
 - **Mục tiêu**: Alice mời Joe, tạo group, token Joe có group claim.
 - **Công việc**:
-  1. Migrations `invitations`, `groups`, `group_members` (có tombstone và cột sync), `ownership_transfers`.
+  1. Migrations `invitations`, `ownership_transfers` (`groups`, `group_members` đã có từ M3).
   2. Invitation: tạo token (hash + expiry + one-time), hiển thị link, accept chỉ khi email verified khớp (spec §9.1).
   3. Member: patch role, remove (chặn Owner), `members/me:leave` (chặn Owner), transfer ownership hai bước trong một transaction.
   4. Group CRUD, add/remove member, chặn delete khi còn binding (bảng `workspace_group_bindings` migration tạo trước, dùng ở M6).
@@ -441,8 +452,8 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
 
 - **Mục tiêu**: Platform Admin cấp và điều chỉnh tài nguyên qua UI; capacity math có test.
 - **Công việc**:
-  1. Migrations `shared_compute_pools`, `cluster_grant_shared_pools`, `dedicated_node_grants`, `network_pools`.
-  2. `RequirePlatformAdmin`; endpoint §16.5 admin: organizations (tạo thẳng Org + Owner + grant ban đầu; approve/reject đã có từ M3), entitlement, clusters (register/patch trạng thái `Registered/Ready/Maintenance/Unavailable`), onboarding-policy, cluster-grants PUT/DELETE (chặn giảm dưới allocation, chặn delete khi còn Workspace), dedicated-nodes, shared-pools, network-pools.
+  1. Migration `dedicated_node_grants` (bảng pool và bảng nối với grant đã có từ M3, kèm dữ liệu seed).
+  2. Endpoint §16.5 admin (`RequirePlatformAdmin` đã có từ M3): organizations (tạo thẳng Org + Owner + grant ban đầu; approve/reject đã có từ M3), entitlement, clusters (register/patch trạng thái `Registered/Ready/Maintenance/Unavailable`), onboarding-policy, cluster-grants PUT/DELETE (chặn giảm dưới allocation, chặn delete khi còn Workspace), dedicated-nodes, shared-pools, network-pools.
   3. `reservation` capacity math: `reservable/reserved/remaining`, capacity state, soft ratio Shared; snapshot allocatable của node/pool do worker chép từ status của hai CRD phụ (mục 4.5); trước khi operator có ở M6, `tenantry-seed` nhập snapshot tay.
   4. Grant dedicated node: API ghi `dedicated_node_grants` (`node_state=NotReady`) + Operation `node.grant` + outbox. Việc kiểm Pod lạ (spec §6.3) và gắn label/taint là của operator, làm ở M8.
   5. Catalog endpoint §16.3 phía Org (filter theo grant, sanitize node).
@@ -688,8 +699,8 @@ gantt
 
 ## 10. Môi trường dev
 
-- **Chạy local trỏ vào lab cluster**: `tenantry-api` và `tenantry-worker` chạy trên máy dev với `KUBECONFIG` admin của lab (dev only), PostgreSQL và Keycloak dùng của lab qua `kubectl port-forward` hoặc `docker compose up postgres keycloak` local; operator chạy `make run-operator` (controller-runtime ngoài cluster). Web chạy Vite dev server proxy `/api` và `/auth` về API local.
-- **Host name dev**: chạy portal ở `http://localhost` (trình duyệt coi `localhost` là ngữ cảnh an toàn nên cookie `Secure` vẫn được đặt); thêm redirect URI `localhost` vào client `portal` của realm dev.
+- **Chạy local trỏ vào lab cluster**: `tenantry-api` và `tenantry-worker` chạy trên máy dev với `KUBECONFIG` admin của lab (dev only), PostgreSQL dùng của lab qua `kubectl port-forward` hoặc `docker compose up postgres` local, Keycloak dùng của lab qua `auth.tenantry.site`; operator chạy `make run-operator` (controller-runtime ngoài cluster). Web chạy Vite dev server proxy `/api` và `/auth` về API local.
+- **Host name dev**: Vite chạy ở `http://localhost:5173` (trình duyệt coi `localhost` là ngữ cảnh an toàn nên cookie `Secure` vẫn được đặt). Client `portal` của realm có thêm redirect URI `http://localhost:5173/auth/callback`. Máy dev giữ client secret của `portal` trong file ngoài repo.
 - **`make` targets (đề xuất)**:
 
 ```text
@@ -704,7 +715,11 @@ make realm-export / realm-import
 ```
 
 - **Migrations**: **goose** — SQL thuần, embed vào binary `tenantry-migrate`, chạy như Helm hook job trước API. golang-migrate là lựa chọn tương đương; chọn goose vì hỗ trợ migration Go khi cần backfill.
-- **Keycloak realm**: `deploy/keycloak/realm-tenantry.json` là nguồn; import lúc Keycloak khởi động (Keycloak `--import-realm`); `make realm-export` kéo thay đổi từ UI về file để commit. Realm dev chứa user `alice/joe/bob/mallory` + `admin` có realm role `platform-admin`.
+- **Keycloak realm**: `deploy/keycloak/realm-tenantry.json` là nguồn; client secret và mật khẩu không nằm trong file.
+  - Lần đầu, Keycloak nạp file lúc khởi động (`--import-realm`, chỉ nạp khi realm chưa tồn tại).
+  - Từ M3, mỗi lần chạy script cài Keycloak có thêm một bước đồng bộ chạy lại được nhiều lần: cài đặt realm và client theo đúng file; user, group, membership và client secret đang có giữ nguyên.
+  - Không bao giờ xóa realm rồi nạp lại: làm vậy `sub` của mọi user đổi, và row `users` của portal (khóa theo `(issuer, subject)`) mồ côi.
+  - `make realm-export` kéo thay đổi làm trên UI về file để commit. Realm chứa user demo `alice/joe/bob/mallory` + `admin` có realm role `platform-admin`.
 - **Seed**: `tenantry-seed` idempotent: insert `clusters` (cluster-a, endpoints proxy/console/ingress domain), `onboarding_policies` theo mẫu spec §5.2.1, `shared_compute_pools` (`shared-general`, nodeSelector `tenantry.io/compute-pool=shared-general`, ratio 3.0), `network_pools` (`onboarding-pod-network` 10.240.0.0/16 org null), Organization demo `acme` + grant nếu flag `--demo`.
 - **Pre-commit**: gofmt/golangci-lint, eslint/prettier, `make generate` diff check.
 
