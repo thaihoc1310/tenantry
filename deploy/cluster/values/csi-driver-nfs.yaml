@@ -1,0 +1,36 @@
+# csi-driver-nfs (architecture/05-network-and-scheduling.md §9). The NFS server
+# and share come from env.sh; 20-storage.sh passes them with --set.
+
+controller:
+  # Snapshots need the VolumeSnapshot CRDs and a snapshot controller; nothing
+  # in Tenantry takes snapshots, so the sidecar stays off.
+  enableSnapshotter: false
+  logLevel: 2
+  nodeSelector:
+    tenantry.io/compute-pool: system
+  tolerations:
+    - key: tenantry.io/compute-pool
+      operator: Equal
+      value: system
+      effect: NoSchedule
+
+# csi-nfs-node runs on every node (it mounts the share for the Pods there) and
+# already tolerates every taint, dedicated nodes included.
+node:
+  logLevel: 2
+
+storageClass:
+  create: true
+  name: standard
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+  parameters:
+    # One directory per volume, named after its PVC so the export can be read
+    # by a human: <namespace>-<pvc>-<pv>.
+    subDir: ${pvc.metadata.namespace}-${pvc.metadata.name}-${pv.metadata.name}
+    # Deleting the PVC deletes its data: "delete everything" in the UI means it.
+    onDelete: delete
+  reclaimPolicy: Delete
+  volumeBindingMode: Immediate
+  mountOptions:
+    - nfsvers=4.1

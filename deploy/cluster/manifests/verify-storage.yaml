@@ -1,0 +1,44 @@
+# Used by verify.sh: a PVC with no storageClassName (so it tests the default
+# class) and a Pod that writes and reads a file on it as a non-root user, the
+# way PostgreSQL and Keycloak will. Deleted again after the check.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: storage-probe
+  namespace: cluster-verify
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: storage-probe
+  namespace: cluster-verify
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 999
+    fsGroup: 999
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: probe
+      image: busybox:1.37.0
+      command: [sh, -c, 'echo ok > /data/probe && cat /data/probe']
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: storage-probe
