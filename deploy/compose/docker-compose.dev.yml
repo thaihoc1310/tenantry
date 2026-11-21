@@ -1,7 +1,7 @@
 # Local dev dependencies (IMPLEMENTATION-PLAN §10). Keycloak joins at M3.
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:17.11-alpine
     environment:
       POSTGRES_USER: tenantry
       POSTGRES_PASSWORD: tenantry
