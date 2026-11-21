@@ -38,3 +38,15 @@ capabilities:
 - name: TENANTRY_LOG_FORMAT
   value: json
 {{- end }}
+
+{{/* Pod placement shared by every Pod of the chart. */}}
+{{- define "tenantry.scheduling" -}}
+{{- with .Values.nodeSelector }}
+nodeSelector:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with .Values.tolerations }}
+tolerations:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}

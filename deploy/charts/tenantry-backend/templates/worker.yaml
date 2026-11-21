@@ -25,6 +25,7 @@ spec:
       # On SIGTERM the worker finishes the batch in hand, for up to 2 minutes
       # (outbox.batchTimeout); killing it earlier only means redelivery.
       terminationGracePeriodSeconds: 150
+      {{- with include "tenantry.scheduling" . | trim }}{{ . | nindent 6 }}{{ end }}
       securityContext:
         {{- include "tenantry.podSecurity" . | nindent 8 }}
       containers:

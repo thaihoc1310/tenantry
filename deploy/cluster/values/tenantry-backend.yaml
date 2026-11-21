@@ -1,0 +1,13 @@
+# tenantry-backend on this cluster (make deploy). The image is not in a
+# registry yet: it is loaded into each node's containerd by hand (README).
+database:
+  existingSecret: tenantry-db # written by 50-postgres.sh
+
+# Central plane: the system pool (architecture/05-network-and-scheduling.md §1).
+nodeSelector:
+  tenantry.io/compute-pool: system
+tolerations:
+  - key: tenantry.io/compute-pool
+    operator: Equal
+    value: system
+    effect: NoSchedule

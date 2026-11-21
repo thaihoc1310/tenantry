@@ -13,6 +13,11 @@ database:
 log:
   level: info          # debug, info, warn, error
 
+# Where every Pod of the chart runs (api, workers, migrate Job). Empty: any
+# node. A cluster with a system pool sets its label and taint here.
+nodeSelector: {}
+tolerations: []
+
 api:
   replicas: 1
   # Dev-only login by header (X-Tenantry-Dev-User): anyone reaching the API can

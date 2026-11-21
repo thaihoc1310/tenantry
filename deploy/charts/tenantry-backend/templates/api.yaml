@@ -37,6 +37,7 @@ spec:
       automountServiceAccountToken: false
       # Above the API's own 15 s graceful shutdown.
       terminationGracePeriodSeconds: 30
+      {{- with include "tenantry.scheduling" . | trim }}{{ . | nindent 6 }}{{ end }}
       securityContext:
         {{- include "tenantry.podSecurity" . | nindent 8 }}
       containers:

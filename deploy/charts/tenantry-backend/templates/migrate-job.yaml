@@ -25,6 +25,7 @@ spec:
       restartPolicy: Never
       # Migrate never calls Kubernetes.
       automountServiceAccountToken: false
+      {{- with include "tenantry.scheduling" . | trim }}{{ . | nindent 6 }}{{ end }}
       securityContext:
         {{- include "tenantry.podSecurity" . | nindent 8 }}
       containers:

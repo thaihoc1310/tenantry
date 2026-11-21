@@ -45,6 +45,10 @@ cluster-up: ## Build the cluster foundation on the lab (deploy/cluster); safe to
 cluster-verify: ## Check the cluster foundation
 	deploy/cluster/verify.sh
 
+.PHONY: deploy
+deploy: ## Install or upgrade the Tenantry charts on the lab (values in deploy/cluster/values)
+	deploy/cluster/deploy.sh
+
 .PHONY: image chart-lint
 IMAGE ?= tenantry/backend:dev
 image: ## Build the backend image (every binary, one image)
