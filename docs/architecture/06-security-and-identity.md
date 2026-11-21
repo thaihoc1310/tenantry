@@ -76,7 +76,7 @@ flowchart LR
     U["User alice<br/>sub 1f3a…<br/>realm roles: (platform-admin)<br/>groups: org_x:group_y…"]
     C1["client portal<br/>confidential, PKCE<br/>redirect portal.tenantry.site/auth/callback"]:::c
     C2["client headlamp-cluster-a<br/>confidential<br/>redirect console-a…/oidc-callback"]:::c
-    C3["client kubectl<br/>public, PKCE<br/>redirect http://localhost:8000"]:::c
+    C3["client kubectl<br/>public, PKCE<br/>redirect http://localhost:8000<br/>và :18000 (cổng dự phòng của kubelogin)"]:::c
   end
 
   T1["access token<br/>aud portal-api<br/>claims: sub, email, roles<br/>KHÔNG có groups"]:::t

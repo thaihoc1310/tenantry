@@ -442,7 +442,7 @@ flowchart TB
 
 **TLS dừng ở Traefik.** Keycloak, Capsule Proxy, Headlamp và Portal chạy HTTP phía sau Traefik; không dựng CA nội bộ riêng cho từng dịch vụ. Hệ quả chấp nhận ở MVP: mật khẩu và token đi dạng rõ trong mạng Pod giữa các node. Muốn mã hóa thì bật WireGuard của Calico một lần cho mọi traffic Pod (hardening, M12).
 
-**Đường vào ở cụm MVP.** Không có load balancer; IP public được hạ tầng NAT vào node control-plane. Traefik chạy trên chính node đó (nodeSelector, toleration cho taint control-plane, có giới hạn RAM) và nghe `hostPort` 80/443; cổng 80 chỉ redirect sang 443. Không đặt Traefik ở node khác rồi chuyển tiếp qua kube-proxy, vì khi đó Traefik mất IP thật của client và rate limit theo IP (`06-security-and-identity.md` mục 6) hết tác dụng.
+**Đường vào ở cụm MVP.** Không có load balancer; IP public được hạ tầng NAT vào node control-plane. Traefik chạy trên chính node đó (nodeSelector, toleration cho taint control-plane, có giới hạn RAM) và nghe `hostPort` 80/443; cổng 80 chỉ redirect vĩnh viễn sang HTTPS (mã 301 với GET, 308 với các method khác, để client giữ nguyên method và body). Vì Pod Security mức `baseline` và `restricted` đều cấm `hostPort`, namespace `ingress-system` chạy ở mức `privileged`; Pod Traefik vẫn chạy không root và bỏ hết capability. Không đặt Traefik ở node khác rồi chuyển tiếp qua kube-proxy, vì khi đó Traefik mất IP thật của client và rate limit theo IP (`06-security-and-identity.md` mục 6) hết tác dụng.
 
 **Custom domain** (sau MVP): Ingress của Route mang `tls.secretName`, Certificate nằm cùng Namespace và do controller tạo với solver HTTP-01; private key khi đó nằm trong Namespace của tenant, chấp nhận vì đó là domain của chính họ.
 
@@ -478,16 +478,16 @@ flowchart LR
   C3 -->|"token aud=portal-api"| U3
 
   subgraph CLUSTERA["Cluster A"]
-    PX["Capsule Proxy<br/>public HTTPS (kubectl)<br/>+ ClusterIP (Headlamp)<br/>authPreferredTypes BearerToken"]
+    PX["Capsule Proxy<br/>một endpoint: kube-a.tenantry.site<br/>(HTTPS ở Traefik, HTTP phía sau)<br/>authPreferredTypes BearerToken"]
     API["kube-apiserver<br/>AuthenticationConfiguration:<br/>issuer auth.tenantry.site/realms/tenantry<br/>audiences [kubernetes, headlamp-cluster-a]<br/>username claim sub, prefix oidc:<br/>groups claim groups, prefix oidc:"]
     RBAC["RBAC + Capsule webhook<br/>owner group → Tenant owner<br/>Developer/Viewer → custom ClusterRole<br/>oidc:tenantry:tenant-users = Capsule user group"]
     PAPI["Platform API"]
-    HL["Headlamp<br/>không có cluster-admin SA<br/>kubernetes host = Capsule Proxy service"]
+    HL["Headlamp<br/>không có cluster-admin SA<br/>kubernetes host = kube-a.tenantry.site"]
   end
 
   U1 -->|"Bearer token"| PX
   U2 -->|"Bearer token"| HL
-  HL -->|"Bearer token của user"| PX
+  HL -->|"Bearer token của user<br/>HTTPS qua Traefik"| PX
   PX -->|"forward token, lọc response"| API
   API --> RBAC
   U3 -->|"session cookie"| PAPI
@@ -506,7 +506,7 @@ flowchart LR
 | Đường | OIDC client | Audience | Đi qua | Ghi chú |
 |---|---|---|---|---|
 | kubectl | `kubectl` | `kubernetes` | kubeconfig → Capsule Proxy public endpoint | Không static token; kubelogin cache/refresh |
-| Headlamp | `headlamp-cluster-a` | `headlamp-cluster-a` | Headlamp → Capsule Proxy ClusterIP | Một instance per Cluster; SSO nhờ session Keycloak từ portal |
+| Headlamp | `headlamp-cluster-a` | `headlamp-cluster-a` | Headlamp → `kube-a.tenantry.site` (Traefik) → Capsule Proxy | Một instance per Cluster; SSO nhờ session Keycloak từ portal |
 | Portal | `portal` | `portal-api` | Portal BFF → Platform API | Token không hợp lệ với kube-apiserver vì audience không khớp |
 | Provisioning Worker | (ServiceAccount) | — | apiserver trực tiếp | Chỉ quyền trên CRD `tenantry.io`; Phase 2 thay bằng Cluster Agent |
 
@@ -514,7 +514,7 @@ flowchart LR
 
 - Lab bản đầu dùng `username.claim: preferred_username`, `prefix: ""`, audiences `[headlamp, kubernetes]`; plan yêu cầu `sub` + prefix `oidc:` và audience `headlamp-{clusterId}`. Lab viết mới ở M1 dùng luôn cấu hình của plan; mọi RoleBinding/Tenant owner và `userGroups` của Capsule phải mang prefix `oidc:`.
 - Với Shared mode "không grant Node List" (plan 6.2) nhưng Proxy vẫn lọc theo nodeSelector: Headlamp trang Nodes sẽ rỗng hoặc lỗi 403 — chọn hành vi nào cho UX.
-- Capsule Proxy cần hai Service/Ingress (public cho kubectl, ClusterIP cho Headlamp) hay một public endpoint cho cả hai? Sơ đồ vẽ hai để Headlamp không đi vòng ra ngoài.
+- Capsule Proxy chỉ có một endpoint, `kube-a.tenantry.site`, cho cả kubectl và Headlamp. Headlamp không gọi thẳng Service của Proxy được: nó dùng cấu hình in-cluster của client-go, vốn luôn nói HTTPS, còn Proxy chạy HTTP phía sau Traefik (mục 7). Để request không đi vòng ra NAT public rồi quay lại, Pod Headlamp có `hostAliases` trỏ `kube-a.tenantry.site` về IP nội bộ của node chạy Traefik. Hệ quả: Headlamp phụ thuộc Traefik, và đổi node ingress thì phải cài lại Headlamp để cập nhật IP đó.
 - Thời hạn token và contract thu hồi quyền: `06-security-and-identity.md` mục 3 và 5.
 
 ---
