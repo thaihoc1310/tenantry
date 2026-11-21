@@ -1,0 +1,80 @@
+{{- /*
+After every install and upgrade: make sure each database in .Values.databases
+exists with an owner role of the same name, and that the role's password is
+the one in the Secret. Every statement is idempotent, so running it again
+changes nothing; adding a name to .Values.databases and upgrading is how a new
+consumer gets its database. REVOKE ... FROM PUBLIC leaves the owner as the
+only role that can connect: keycloak cannot open tenantry, nor the reverse.
+*/ -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: postgres-init
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    # A failed Job stays for `kubectl logs`; the next upgrade replaces it.
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: init
+          image: {{ .Values.image }}
+          env:
+            - name: PGHOST
+              value: postgres
+            - name: PGUSER
+              value: postgres
+            - name: PGPASSFILE
+              value: /tmp/pgpass
+          command: [bash, -ec]
+          args:
+            - |
+              # libpq reads the superuser password from a pgpass file, so it
+              # never appears in the environment or on a command line.
+              printf '*:*:*:postgres:%s\n' "$(cat /run/secrets/postgres/postgres-password)" > "$PGPASSFILE"
+              chmod 600 "$PGPASSFILE"
+              until pg_isready --timeout=5; do echo "waiting for postgres"; sleep 2; done
+              psql --set=ON_ERROR_STOP=1 --no-psqlrc --quiet <<'SQL'
+              {{- range .Values.databases }}
+              \set pw `cat /run/secrets/postgres/{{ . }}-password`
+              SELECT format('CREATE ROLE %I LOGIN', '{{ . }}')
+                WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{{ . }}') \gexec
+              ALTER ROLE "{{ . }}" WITH LOGIN PASSWORD :'pw';
+              SELECT format('CREATE DATABASE %I OWNER %I', '{{ . }}', '{{ . }}')
+                WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ . }}') \gexec
+              REVOKE ALL ON DATABASE "{{ . }}" FROM PUBLIC;
+              {{- end }}
+              SQL
+              echo "databases ready: {{ join ", " .Values.databases }}"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: secret
+              mountPath: /run/secrets/postgres
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: secret
+          secret:
+            secretName: postgres
+        - name: tmp
+          emptyDir: {}

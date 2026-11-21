@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/traefik/traefik-helm-chart/v42.3.1/traefik/values.schema.json
 # Traefik, the only way into the cluster from outside
 # (architecture/05-network-and-scheduling.md §7). The node and the public IP
 # come from env.sh; 40-traefik.sh passes them with --set.

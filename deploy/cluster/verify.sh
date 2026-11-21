@@ -15,9 +15,9 @@ check() {
   if out="$("$@" 2>&1)"; then pass "${name}"; else fail "${name}" "${out}"; fi
 }
 
-field_is() { # resource (kind/name), jsonpath, expected value
+field_is() { # resource (kind/name), jsonpath, expected value[, namespace]
   local got
-  got="$(kubectl get "$1" -o jsonpath="$2")"
+  got="$(kubectl get "$1" ${4:+-n "$4"} -o jsonpath="$2")"
   [[ "${got}" == "$3" ]] || { echo "got '${got}', want '$3'"; return 1; }
 }
 
@@ -39,20 +39,23 @@ ensure_namespace cluster-verify restricted
 check "standard is the default StorageClass" \
   field_is storageclass/standard '{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}' true
 
+# probe MANIFEST NAMESPACE POD: run a one-shot Pod (with whatever else the
+# manifest holds) and pass when it prints "ok". The manifest is deleted again
+# either way, leftovers of an interrupted run first.
 # Probes run inside `if` (in check), where bash ignores set -e: every step
 # that can fail ends with `|| return 1`.
-storage_probe() {
-  local manifest="${CLUSTER_DIR}/manifests/verify-storage.yaml" out
-  kubectl delete -f "${manifest}" --ignore-not-found --wait >/dev/null || return 1 # leftovers of a failed run
+probe() {
+  local manifest="${CLUSTER_DIR}/manifests/$1" ns="$2" pod="$3" out phase
+  kubectl delete -f "${manifest}" --ignore-not-found --wait >/dev/null || return 1
   kubectl apply -f "${manifest}" >/dev/null || return 1
-  kubectl -n cluster-verify wait pvc/storage-probe --for=jsonpath='{.status.phase}'=Bound --timeout=1m >/dev/null || return 1
-  kubectl -n cluster-verify wait pod/storage-probe --for=jsonpath='{.status.phase}'=Succeeded --timeout=2m >/dev/null \
-    || { kubectl -n cluster-verify logs storage-probe; return 1; }
-  out="$(kubectl -n cluster-verify logs storage-probe)" || return 1
+  kubectl -n "${ns}" wait "pod/${pod}" --for=jsonpath='{.status.phase}'=Succeeded --timeout=2m >/dev/null
+  phase="$(kubectl -n "${ns}" get pod "${pod}" -o jsonpath='{.status.phase}' 2>&1)"
+  out="$(kubectl -n "${ns}" logs "${pod}" 2>&1)"
   kubectl delete -f "${manifest}" --wait >/dev/null || return 1
-  [[ "${out}" == ok ]] || { echo "read back '${out}'"; return 1; }
+  [[ "${phase}" == Succeeded && "${out}" == ok ]] || { echo "Pod ${phase}: ${out}"; return 1; }
 }
-check "a PVC on standard binds and a non-root Pod writes to it" storage_probe
+check "a PVC on standard binds and a non-root Pod writes to it" \
+  probe verify-storage.yaml cluster-verify storage-probe
 
 certificates_ready() {
   local all not_ready
@@ -88,5 +91,10 @@ redirects_to_https() { # host
 }
 check "https://demo.${APPS_DOMAIN} answers with a valid certificate" https_ok "https://demo.${APPS_DOMAIN}/" "Hostname: whoami"
 check "http://demo.${APPS_DOMAIN} redirects to HTTPS" redirects_to_https "demo.${APPS_DOMAIN}"
+
+check "PostgreSQL is ready" \
+  field_is statefulset/postgres '{.status.readyReplicas}' 1 tenantry-system
+check "each role opens its own database and only that one" \
+  probe verify-postgres.yaml tenantry-system postgres-probe
 
 exit "${failed}"

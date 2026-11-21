@@ -1,0 +1,43 @@
+# Used by verify.sh: each role logs in to its own database with the password
+# from the Secret, and is refused by the other one.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: postgres-probe
+  namespace: tenantry-system
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 999
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: probe
+      image: postgres:17.11-trixie
+      env:
+        - {name: PGHOST, value: postgres}
+        - {name: PGCONNECT_TIMEOUT, value: "5"}
+      command: [bash, -c]
+      args:
+        - |
+          as() { PGPASSWORD="$(cat /run/secrets/postgres/$1-password)" psql -U "$1" -d "$2" -tAc 'SELECT 1' 2>&1; }
+          for db in tenantry keycloak; do
+            [[ "$(as "$db" "$db")" == 1 ]] || { echo "$db cannot open its database: $(as "$db" "$db")"; exit 1; }
+          done
+          out="$(as tenantry keycloak)"
+          [[ "$out" == *"permission denied"* ]] || { echo "tenantry opened keycloak: $out"; exit 1; }
+          echo ok
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+      volumeMounts:
+        - {name: secret, mountPath: /run/secrets/postgres, readOnly: true}
+  volumes:
+    - name: secret
+      secret:
+        secretName: postgres

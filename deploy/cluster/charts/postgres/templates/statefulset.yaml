@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      # UID 999 is the postgres user of the image. fsGroup makes the kubelet
+      # hand the volume to group 999, which is what lets a non-root process
+      # write to the NFS share.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      # The preStop hook below needs up to a minute for a fast shutdown.
+      terminationGracePeriodSeconds: 90
+      containers:
+        - name: postgres
+          image: {{ .Values.image }}
+          env:
+            # The volume is mounted at /var/lib/postgresql and the cluster
+            # lives in a directory named after the major version, the layout
+            # the image uses from PostgreSQL 18 on: a later pg_upgrade can put
+            # the next version beside this one on the same volume.
+            - name: PGDATA
+              value: /var/lib/postgresql/17/docker
+            # Read from a file, not an environment variable: env shows up in
+            # `kubectl describe` and in /proc of every process in the container.
+            - name: POSTGRES_PASSWORD_FILE
+              value: /run/secrets/postgres/postgres-password
+          ports:
+            - name: postgres
+              containerPort: 5432
+          # initdb on NFS takes a while on the first start; startupProbe
+          # covers it so that livenessProbe can stay strict afterwards.
+          # 127.0.0.1, not the socket: ready means accepting TCP connections.
+          startupProbe:
+            exec:
+              command: [pg_isready, -h, 127.0.0.1, -U, postgres]
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            exec:
+              command: [pg_isready, -h, 127.0.0.1, -U, postgres]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            exec:
+              command: [pg_isready, -h, 127.0.0.1, -U, postgres]
+            periodSeconds: 5
+            timeoutSeconds: 5
+          # SIGTERM asks PostgreSQL for a "smart" shutdown, which waits for
+          # every client to disconnect; the API keeps its pool open, so the
+          # kubelet would end up killing the server. A fast shutdown rolls
+          # back open transactions and stops cleanly instead.
+          lifecycle:
+            preStop:
+              exec:
+                command: [pg_ctl, stop, --mode=fast, --wait, --timeout=60]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql
+            - name: secret
+              mountPath: /run/secrets/postgres
+              readOnly: true
+            # Writable places PostgreSQL needs besides its data directory,
+            # since the root filesystem is read-only.
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
+            # The container runtime gives /dev/shm 64 MiB; parallel queries
+            # allocate shared memory there and fail with "could not resize
+            # shared memory segment" when it runs out.
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: secret
+          secret:
+            secretName: postgres
+            items:
+              - key: postgres-password
+                path: postgres-password
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 256Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: {{ .Values.storage.className }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.size }}

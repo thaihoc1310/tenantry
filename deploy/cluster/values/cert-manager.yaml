@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/cert-manager/cert-manager/v1.21.3/deploy/charts/cert-manager/values.schema.json
 # cert-manager (architecture/05-network-and-scheduling.md §7). Issues every
 # certificate of the platform from Let's Encrypt with the DNS-01 challenge,
 # so Let's Encrypt never has to reach into the cluster.

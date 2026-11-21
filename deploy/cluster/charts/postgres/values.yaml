@@ -1,0 +1,22 @@
+# Official image, pinned. The Debian variant runs as UID 999.
+image: postgres:17.11-trixie
+
+# One database per consumer, owned by a role of the same name. Each role gets
+# its own generated password (Secret postgres, key <name>-password).
+databases: [tenantry, keycloak]
+
+storage:
+  className: standard
+  size: 10Gi
+
+resources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {memory: 1Gi}
+
+nodeSelector:
+  tenantry.io/compute-pool: system
+tolerations:
+  - key: tenantry.io/compute-pool
+    operator: Equal
+    value: system
+    effect: NoSchedule
