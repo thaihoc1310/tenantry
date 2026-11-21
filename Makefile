@@ -39,6 +39,12 @@ run-api: ## Run the Platform API locally
 run-worker: ## Run the outbox worker locally (logs events; no cluster yet)
 	cd $(BACKEND) && go run ./cmd/tenantry-worker
 
+.PHONY: cluster-up cluster-verify
+cluster-up: ## Build the cluster foundation on the lab (deploy/cluster); safe to re-run
+	deploy/cluster/up.sh
+cluster-verify: ## Check the cluster foundation
+	deploy/cluster/verify.sh
+
 .PHONY: image chart-lint
 IMAGE ?= tenantry/backend:dev
 image: ## Build the backend image (every binary, one image)
