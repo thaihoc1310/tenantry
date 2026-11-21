@@ -14,6 +14,9 @@ export HELM_KUBECONTEXT="${KUBE_CONTEXT}"
 # control-plane node, where the public IP lands; central plane and cluster
 # components on the system pool; tenant workloads on the shared pool.
 INGRESS_NODE="${INGRESS_NODE:-fdp-k8s-cp1}"
+# SSH host of the control-plane node, for the kube-apiserver flags that only
+# its static Pod manifest can carry (70-apiserver.sh). Needs passwordless sudo.
+CONTROL_PLANE_SSH="${CONTROL_PLANE_SSH:-fdp-k8s-cp1}"
 SYSTEM_NODES="${SYSTEM_NODES:-fdp-k8s-wk1}"
 SHARED_NODES="${SHARED_NODES:-fdp-k8s-wk2 fdp-k8s-wk3}"
 

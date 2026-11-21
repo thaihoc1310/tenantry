@@ -1,0 +1,95 @@
+# Used by verify.sh, with `kubectl apply --dry-run=server`: kube-apiserver runs
+# admission on them but stores nothing. The first two Pods break the rule their
+# namespace sets and must be refused; the last one keeps it and must pass. The namespaces are
+# only for this probe; no real namespace carries these annotations in M1.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cluster-verify-node-selector
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+  annotations:
+    # PodNodeSelector: Pods here must stay on the shared pool.
+    scheduler.alpha.kubernetes.io/node-selector: tenantry.io/compute-pool=shared-general
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cluster-verify-tolerations
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+  annotations:
+    # PodTolerationRestriction: only these tolerations are allowed here. An
+    # empty list would mean no restriction at all. The two node.kubernetes.io
+    # ones are added to every Pod by Kubernetes itself (DefaultTolerationSeconds)
+    # before this check runs: leave them out and every Pod is refused.
+    scheduler.alpha.kubernetes.io/tolerationsWhitelist: >-
+      [{"key": "tenantry.io/dedicated-org", "operator": "Equal", "value": "org-mine", "effect": "NoSchedule"},
+       {"key": "node.kubernetes.io/not-ready", "operator": "Exists", "effect": "NoExecute"},
+       {"key": "node.kubernetes.io/unreachable", "operator": "Exists", "effect": "NoExecute"}]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: asks-for-the-system-pool
+  namespace: cluster-verify-node-selector
+  labels: {probe: node-selector}
+spec:
+  nodeSelector:
+    tenantry.io/compute-pool: system
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile: {type: RuntimeDefault}
+  containers:
+    - name: c
+      image: busybox:1.37.0
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tolerates-another-organization
+  namespace: cluster-verify-tolerations
+  labels: {probe: tolerations}
+spec:
+  tolerations:
+    - key: tenantry.io/dedicated-org
+      operator: Equal
+      value: org-someone-else
+      effect: NoSchedule
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile: {type: RuntimeDefault}
+  containers:
+    - name: c
+      image: busybox:1.37.0
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tolerates-its-own-organization
+  namespace: cluster-verify-tolerations
+  labels: {probe: own-toleration}
+spec:
+  tolerations:
+    - key: tenantry.io/dedicated-org
+      operator: Equal
+      value: org-mine
+      effect: NoSchedule
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile: {type: RuntimeDefault}
+  containers:
+    - name: c
+      image: busybox:1.37.0
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities: {drop: [ALL]}

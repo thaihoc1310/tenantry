@@ -133,4 +133,41 @@ check "the master realm is not reachable from outside" status_is "https://${AUTH
 check "the admin console is not reachable from outside" status_is "https://${AUTH_HOST}/admin/" 404
 check "Keycloak issues a token for the kubernetes audience" token_for_kubernetes
 
+# apiserver_accepts_keycloak_token: present the token alone (a kubeconfig
+# with this cluster and nothing else, so the admin certificate is not sent too)
+# and ask kube-apiserver who that is.
+apiserver_accepts_keycloak_token() {
+  local token sub dir got
+  token="$(keycloak_token)" || return 1
+  sub="$(jwt_claim "${token}" sub | tr -d '"')"
+  dir="$(mktemp -d)" && chmod 700 "${dir}"
+  command kubectl config view --raw --minify --context "${KUBE_CONTEXT}" \
+    -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d >"${dir}/ca.crt"
+  KUBECONFIG="${dir}/kubeconfig" command kubectl config set-cluster c --certificate-authority="${dir}/ca.crt" \
+    --server="$(command kubectl config view --minify --context "${KUBE_CONTEXT}" -o jsonpath='{.clusters[0].cluster.server}')" >/dev/null
+  printf 'users:\n- name: u\n  user:\n    token: %s\n' "${token}" >"${dir}/user"
+  KUBECONFIG="${dir}/kubeconfig" command kubectl config set-context c --cluster=c --user=u >/dev/null
+  got="$(KUBECONFIG="${dir}/kubeconfig:${dir}/user" command kubectl --context c auth whoami -o jsonpath='{.status.userInfo.username}' 2>&1)"
+  rm -rf "${dir}"
+  [[ "${got}" == "oidc:${sub}" ]] || { echo "got '${got}', want 'oidc:${sub}'"; return 1; }
+}
+check "kube-apiserver accepts that token as oidc:<sub>" apiserver_accepts_keycloak_token
+
+# refused_by MESSAGE SELECTOR: the probe Pod with that label is refused, and
+# the refusal names the admission plugin's rule.
+refused_by() {
+  local out
+  if out="$(kubectl apply --dry-run=server -l "$2" -f "${CLUSTER_DIR}/manifests/verify-placement.yaml" 2>&1)"; then
+    echo "accepted: ${out}"; return 1
+  fi
+  [[ "${out}" == *"$1"* ]] || { echo "refused for another reason: ${out}"; return 1; }
+}
+kubectl apply -l '!probe' -f "${CLUSTER_DIR}/manifests/verify-placement.yaml" >/dev/null
+check "PodNodeSelector refuses a Pod that leaves its namespace's nodes" \
+  refused_by "conflicts with its namespace node label selector" probe=node-selector
+check "PodTolerationRestriction refuses a toleration its namespace does not allow" \
+  refused_by "conflict with its namespace whitelist" probe=tolerations
+check "PodTolerationRestriction accepts a toleration its namespace allows" \
+  kubectl apply --dry-run=server -l probe=own-toleration -f "${CLUSTER_DIR}/manifests/verify-placement.yaml"
+
 exit "${failed}"
