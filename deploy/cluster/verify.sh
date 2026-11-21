@@ -97,4 +97,40 @@ check "PostgreSQL is ready" \
 check "each role opens its own database and only that one" \
   probe verify-postgres.yaml tenantry-system postgres-probe
 
+status_is() { # url, expected HTTP status
+  local got
+  got="$(curl -sS --max-time 10 "${ca_args[@]}" -o /dev/null -w '%{http_code}' "$1")" || return 1
+  [[ "${got}" == "$2" ]] || { echo "got ${got}"; return 1; }
+}
+
+# keycloak_token: an access token from the confidential client cluster-verify
+# (client credentials). The secret reaches curl on stdin, not on its command line.
+keycloak_token() {
+  local secret
+  secret="$(kubectl -n keycloak get secret keycloak-realm -o jsonpath='{.data.CLUSTER_VERIFY_CLIENT_SECRET}' | base64 -d)" || return 1
+  printf 'user = "cluster-verify:%s"\n' "${secret}" |
+    curl -fsS --max-time 10 "${ca_args[@]}" --config - -d grant_type=client_credentials \
+      "https://${AUTH_HOST}/realms/tenantry/protocol/openid-connect/token" |
+    python3 -c 'import json, sys; print(json.load(sys.stdin)["access_token"])'
+}
+jwt_claim() { # token, claim: the claim of the token's payload, as JSON
+  python3 -c 'import base64, json, sys
+p = sys.argv[1].split(".")[1]
+print(json.dumps(json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4))).get(sys.argv[2])))' "$1" "$2"
+}
+token_for_kubernetes() {
+  local token iss aud
+  token="$(keycloak_token)" || return 1
+  iss="$(jwt_claim "${token}" iss)" aud="$(jwt_claim "${token}" aud)"
+  [[ "${iss}" == "\"https://${AUTH_HOST}/realms/tenantry\"" && "${aud}" == *'"kubernetes"'* ]] ||
+    { echo "iss ${iss}, aud ${aud}"; return 1; }
+}
+
+check "Keycloak is ready" field_is statefulset/keycloak '{.status.readyReplicas}' 1 keycloak
+check "https://${AUTH_HOST} serves the tenantry realm" \
+  https_ok "https://${AUTH_HOST}/realms/tenantry/.well-known/openid-configuration" "\"issuer\":\"https://${AUTH_HOST}/realms/tenantry\""
+check "the master realm is not reachable from outside" status_is "https://${AUTH_HOST}/realms/master/.well-known/openid-configuration" 404
+check "the admin console is not reachable from outside" status_is "https://${AUTH_HOST}/admin/" 404
+check "Keycloak issues a token for the kubernetes audience" token_for_kubernetes
+
 exit "${failed}"

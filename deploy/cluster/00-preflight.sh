@@ -2,7 +2,7 @@
 # Stop before changing anything if the tools, the permissions or the nodes are not there.
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
-for tool in kubectl helm; do
+for tool in kubectl helm openssl curl python3; do
   command -v "${tool}" >/dev/null || { echo "missing tool: ${tool}" >&2; exit 1; }
 done
 

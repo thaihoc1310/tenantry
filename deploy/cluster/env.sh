@@ -25,6 +25,12 @@ NFS_SHARE="${NFS_SHARE:-/srv/tenantry}"
 PUBLIC_IP="${PUBLIC_IP:-203.29.16.150}"
 APPS_DOMAIN="${APPS_DOMAIN:-mvp.tenantry.site}" # tenant Routes: <name>-<workspace>.APPS_DOMAIN
 DNS_ZONE="${DNS_ZONE:-tenantry.site}"           # platform hosts live directly under it
+# Platform hosts (architecture/01-system-context.md §3). kube-a and console-a
+# carry the cluster's letter; a second cluster adds kube-b, console-b.
+PORTAL_HOST="portal.${DNS_ZONE}"
+AUTH_HOST="auth.${DNS_ZONE}"
+KUBE_HOST="kube-a.${DNS_ZONE}"
+CONSOLE_HOST="console-a.${DNS_ZONE}"
 
 # Let's Encrypt account (ClusterIssuers letsencrypt-staging and letsencrypt).
 # Certificates use CLUSTER_ISSUER; stay on staging until everything works,
@@ -37,6 +43,7 @@ CLOUDFLARE_TOKEN_FILE="${CLOUDFLARE_TOKEN_FILE:-${HOME}/.config/tenantry/cloudfl
 CSI_DRIVER_NFS_VERSION=4.13.6
 CERT_MANAGER_VERSION=v1.21.3
 TRAEFIK_VERSION=42.3.1 # Traefik v3.7.17
+KEYCLOAKX_VERSION=7.4.0 # image pinned in values/keycloak.yaml
 
 CLUSTER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -51,4 +58,26 @@ fi
 ensure_namespace() {
   kubectl create namespace "$1" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   kubectl label namespace "$1" "pod-security.kubernetes.io/enforce=$2" --overwrite >/dev/null
+}
+
+# ensure_generated_secret NAMESPACE NAME KEY...: create the Secret with a random
+# value per key (128 bits, 32 hex characters), only if it does not exist yet; an existing one is
+# never touched, so a re-run keeps every password. Values go through printf (a
+# shell builtin) into stdin: never on a command line, never printed.
+ensure_generated_secret() {
+  local ns="$1" name="$2" key
+  shift 2
+  kubectl -n "${ns}" get secret "${name}" >/dev/null 2>&1 && return 0
+  for key in "$@"; do
+    printf '%s=%s\n' "${key}" "$(openssl rand -hex 16)"
+  done | kubectl -n "${ns}" create secret generic "${name}" --from-env-file=/dev/stdin >/dev/null
+  echo "secret/${name} generated in ${ns}"
+}
+
+# copy_secret_key FROM_NS FROM_NAME FROM_KEY TO_NS TO_NAME TO_KEY: make TO hold
+# the same value, through a pipe.
+copy_secret_key() {
+  kubectl -n "$1" get secret "$2" -o jsonpath="{.data.${3}}" | base64 -d |
+    kubectl -n "$4" create secret generic "$5" --from-file="$6=/dev/stdin" --dry-run=client -o yaml |
+    kubectl apply -f - >/dev/null
 }

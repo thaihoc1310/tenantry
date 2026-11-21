@@ -1,0 +1,128 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/codecentric/helm-charts/keycloakx-7.4.0/charts/keycloakx/values.schema.json
+# Keycloak with the codecentric keycloakx chart (IMPLEMENTATION-PLAN M1.7).
+# Host names and the issuer come from env.sh; 60-keycloak.sh passes them
+# under tenantry.* with --set-string.
+
+fullnameOverride: keycloak # Service keycloak-http, not keycloak-keycloakx-http
+
+image:
+  tag: "26.8.2"
+
+# Import the realm file on start. --import-realm only creates a realm that does
+# not exist yet: editing realm-tenantry.json later does not change the running
+# realm (change it in the admin console, then export).
+args: [start, --import-realm]
+
+# HTTP behind Traefik, which terminates TLS and sends X-Forwarded-* headers.
+http:
+  relativePath: /
+proxy:
+  enabled: true
+  mode: xforwarded
+  http:
+    enabled: true
+
+# One replica with a local cache: no cluster of Keycloak nodes to keep in sync.
+# (Any value other than "default" stops the chart from setting KC_CACHE=ispn.)
+cache:
+  stack: local
+
+database:
+  vendor: postgres
+  hostname: postgres.tenantry-system.svc
+  port: 5432
+  database: keycloak
+  username: keycloak
+  existingSecret: keycloak-db # copied from the postgres Secret by 60-keycloak.sh
+  existingSecretKey: password
+
+extraEnv: |
+  - name: KC_CACHE
+    value: local
+  # Public URL of the tenantry realm (the issuer in every token).
+  - name: KC_HOSTNAME
+    value: https://{{ .Values.tenantry.authHost }}
+  # The admin console is not exposed: it is reached with
+  # `kubectl -n keycloak port-forward svc/keycloak-http 8080:80`, and must
+  # then build its links for that address instead of the public one.
+  - name: KC_HOSTNAME_ADMIN
+    value: http://localhost:8080
+  # Temporary admin of the master realm, used to reach the admin console.
+  - name: KC_BOOTSTRAP_ADMIN_USERNAME
+    valueFrom:
+      secretKeyRef: {name: keycloak-admin, key: username}
+  - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+    valueFrom:
+      secretKeyRef: {name: keycloak-admin, key: password}
+  # Values of the ${...} placeholders in realm-tenantry.json.
+  - name: PORTAL_HOST
+    value: {{ .Values.tenantry.portalHost }}
+  - name: CONSOLE_HOST
+    value: {{ .Values.tenantry.consoleHost }}
+# Client secrets and demo passwords for the placeholders, generated at install.
+extraEnvFrom: |
+  - secretRef:
+      name: keycloak-realm
+
+extraVolumes: |
+  - name: realm
+    configMap:
+      name: keycloak-realm
+extraVolumeMounts: |
+  - name: realm
+    mountPath: /opt/keycloak/data/import
+    readOnly: true
+
+# Only the tenantry realm and the static files of its pages go out. Not
+# /realms: the master realm's admin-cli client takes a password directly, so
+# exposing it would let anyone guess the admin password. Not /admin either.
+ingress:
+  enabled: true
+  ingressClassName: platform-shared
+  annotations:
+    cert-manager.io/cluster-issuer: '{{ .Values.tenantry.clusterIssuer }}'
+  rules:
+    - host: '{{ .Values.tenantry.authHost }}'
+      paths:
+        - path: /realms/tenantry
+          pathType: Prefix
+        - path: /resources
+          pathType: Prefix
+  tls:
+    - hosts: ['{{ .Values.tenantry.authHost }}']
+      secretName: keycloak-tls
+
+serviceAccount:
+  automountServiceAccountToken: false
+enableServiceLinks: false
+
+podSecurityContext:
+  fsGroup: 1000
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  runAsUser: 1000
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+
+resources:
+  requests: {cpu: 250m, memory: 768Mi}
+  limits: {memory: 1536Mi}
+
+nodeSelector:
+  tenantry.io/compute-pool: system
+tolerations:
+  - key: tenantry.io/compute-pool
+    operator: Equal
+    value: system
+    effect: NoSchedule
+
+# Set by 60-keycloak.sh from env.sh.
+tenantry:
+  authHost: ""
+  portalHost: ""
+  consoleHost: ""
+  clusterIssuer: ""
