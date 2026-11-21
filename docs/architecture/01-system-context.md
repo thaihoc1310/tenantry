@@ -111,7 +111,7 @@ flowchart TB
 
   Kubectl -->|"exec plugin → browser"| KC
   Kubectl -->|"bearer token"| CP
-  Browser -->|"console-cluster-a"| HL
+  Browser -->|"console-a"| HL
   HL --> CP
   CP -->|"impersonation-free forward"| APIS
   Browser -->|"web.acme-solar.apps..."| Ing
@@ -165,8 +165,8 @@ flowchart TB
 
   DNS -->|"portal.tenantry.site"| NS1
   DNS -->|"auth.tenantry.site"| NS2
-  DNS -->|"kube-cluster-a.tenantry.site"| NS3
-  DNS -->|"console-cluster-a.tenantry.site"| NS4
+  DNS -->|"kube-a.tenantry.site"| NS3
+  DNS -->|"console-a.tenantry.site"| NS4
   DNS -->|"*.mvp.tenantry.site"| NS5
   T1 --- S1
   T2 --- S2
@@ -180,15 +180,15 @@ Bảng endpoint public (TLS bởi cert-manager, Let's Encrypt). Mọi request đ
 |---|---|---|---|
 | `portal.tenantry.site` | Portal Web + Platform API | mọi user, Admin | `portal` |
 | `auth.tenantry.site` | Keycloak | browser, kubelogin, Headlamp | — (issuer) |
-| `kube-cluster-a.tenantry.site` | Capsule Proxy | kubectl, Headlamp | `kubectl` |
-| `console-cluster-a.tenantry.site` | Headlamp | browser | `headlamp-cluster-a` |
+| `kube-a.tenantry.site` | Capsule Proxy | kubectl, Headlamp | `kubectl` |
+| `console-a.tenantry.site` | Headlamp | browser | `headlamp-cluster-a` |
 | `*.mvp.tenantry.site` | Route của tenant → app | người dùng cuối của tenant | — |
 
 **Điểm cần review**
 
 - System pool cần **taint** để tenant workload không rơi vào (Capsule Tenant nodeSelector không đủ nếu user bỏ được selector; taint là lớp bảo vệ thứ hai).
 - Keycloak dùng **chung instance PostgreSQL, database riêng** để tiết kiệm tài nguyên lab; tách khi Phase 2.
-- Phase 2 chỉ di chuyển khối `tenantry-system` + `keycloak` ra ngoài và thêm Cluster Agent vào `capsule-system`; các hostname theo Cluster (`kube-cluster-b`, `console-cluster-b`) được thêm theo mẫu.
+- Phase 2 chỉ di chuyển khối `tenantry-system` + `keycloak` ra ngoài và thêm Cluster Agent vào `capsule-system`; các hostname theo Cluster (`kube-b`, `console-b`) được thêm theo mẫu.
 
 ## 4. Component view — bên trong Platform API
 

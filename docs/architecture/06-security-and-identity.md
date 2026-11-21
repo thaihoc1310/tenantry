@@ -75,7 +75,7 @@ flowchart LR
   subgraph Realm["Keycloak realm tenantry"]
     U["User alice<br/>sub 1f3a…<br/>realm roles: (platform-admin)<br/>groups: org_x:group_y…"]
     C1["client portal<br/>confidential, PKCE<br/>redirect portal.tenantry.site/auth/callback"]:::c
-    C2["client headlamp-cluster-a<br/>confidential<br/>redirect console-cluster-a…/oidc-callback"]:::c
+    C2["client headlamp-cluster-a<br/>confidential<br/>redirect console-a…/oidc-callback"]:::c
     C3["client kubectl<br/>public, PKCE<br/>redirect http://localhost:8000"]:::c
   end
 

@@ -23,7 +23,7 @@ Tên và alias được giữ nguyên trong mọi sơ đồ; sơ đồ nào khô
 | `CTRL` | Workspace Controller | controller-runtime trong Cluster, reconcile CR `tenantry.io` |
 | `CAP` | Capsule | Capsule Operator: Tenant, ResourcePool, TenantResource, admission |
 | `CAL` | Calico | IPPool, IPAM, NetworkPolicy enforcement |
-| `PROXY` | Capsule Proxy | Endpoint `kube-cluster-a.tenantry.site`, filter cluster-scoped |
+| `PROXY` | Capsule Proxy | Endpoint `kube-a.tenantry.site`, filter cluster-scoped |
 | `HL` | Headlamp | Web console per Cluster, client OIDC `headlamp-cluster-a` |
 | `KL` | kubectl + kubelogin | CLI của user với exec plugin OIDC, client `kubectl` |
 | `ING` | Traefik | Shared ingress controller, cert wildcard `*.mvp.tenantry.site` |
@@ -694,7 +694,7 @@ sequenceDiagram
   SPA->>API: GET /workspaces/ws-01jxyz/kubeconfig
   API->>DB: Authz user có binding tại Solar, lấy proxy endpoint
   API->>DB: INSERT audit KubeconfigDownloaded, không lưu token
-  API-->>SPA: kubeconfig server kube-cluster-a..., exec kubelogin
+  API-->>SPA: kubeconfig server kube-a..., exec kubelogin
   Note over SPA,KL: Không có static token, chỉ exec plugin + CA data
   U->>KL: kubectl get pods -n acme-solar-frontend
   KL->>KL: Chưa có token cache → oidc-login get-token
@@ -757,7 +757,7 @@ sequenceDiagram
   alt Cluster Unavailable
     API-->>SPA: 409 CLUSTER_NOT_READY, disable nút kèm lý do
   else Cluster Ready hoặc Maintenance
-    API-->>SPA: URL console-cluster-a.tenantry.site + deep link
+    API-->>SPA: URL console-a.tenantry.site + deep link
     SPA-->>U: Mở tab mới, không truyền token trong URL
   end
   U->>HL: GET /c/cluster-a/namespaces/acme-solar-frontend

@@ -372,7 +372,7 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
   4. Cài **Traefik** class `platform-shared` theo `architecture/05-network-and-scheduling.md` mục 7 (hostPort 80/443 trên node control-plane, chỉ bật provider Ingress). Tạo bản ghi DNS trên Cloudflare (DNS only): `*.mvp.tenantry.site` và các host platform.
   5. **cert-manager** với ClusterIssuer `letsencrypt` (DNS-01, API token Cloudflare trong Secret): wildcard cert `*.mvp.tenantry.site` làm cert mặc định của Traefik, và cert cho host Keycloak/Headlamp/Proxy/Portal. Dùng endpoint staging của Let's Encrypt khi thử, chuyển production khi chạy ổn.
   6. PostgreSQL (Bitnami/CloudNativePG đơn giản) + Keycloak dùng PVC `standard` thay storage tạm.
-  7. Capsule Proxy expose HTTPS qua Traefik (`kube-cluster-a.tenantry.site`), Headlamp `console-cluster-a.tenantry.site`, Keycloak `auth.tenantry.site`.
+  7. Capsule Proxy expose HTTPS qua Traefik (`kube-a.tenantry.site`), Headlamp `console-a.tenantry.site`, Keycloak `auth.tenantry.site`.
   8. Đổi realm Keycloak thành `deploy/keycloak/realm-tenantry.json` với 3 client (`portal`, `headlamp-cluster-a`, `kubectl`), realm role `platform-admin`, giữ user demo; structured authentication config nhận 2 audience.
   9. Bật OIDC (structured authentication config) và admission `PodNodeSelector` trên kube-apiserver, kèm script rollback; cài Capsule, Capsule Proxy, Headlamp.
   10. Viết `cluster-verify`: PVC bound trên `standard`, HTTPS với cert hợp lệ, cert-manager Ready, đăng nhập Keycloak lấy được token, kube-apiserver nhận token đó, `PodNodeSelector` đang bật. Ghi `deploy/cluster/README.md` gồm các bước làm tay (DNS, token Cloudflare, mở cổng).

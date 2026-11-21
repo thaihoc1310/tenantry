@@ -382,7 +382,7 @@ Nguyên tắc "không tin label tenant tự sửa": mọi selector chỉ dùng `
 ```mermaid
 flowchart TB
   subgraph DNSL["DNS (Cloudflare, DNS only)"]
-    D1["*.mvp.tenantry.site → IP ingress<br/>portal / auth / kube-cluster-a / console-cluster-a<br/>.tenantry.site → IP ingress"]
+    D1["*.mvp.tenantry.site → IP ingress<br/>portal / auth / kube-a / console-a<br/>.tenantry.site → IP ingress"]
   end
 
   subgraph EDGE["Namespace ingress-system (node control-plane)"]
@@ -447,7 +447,7 @@ flowchart TB
 **Điểm cần review**
 
 - Luật admission ở lớp 2 chưa được chạy thử: cần test âm ở M11 (tenant `kubectl apply` Ingress và Certificate đều bị từ chối; controller và HTTP-01 solver vẫn ghi được).
-- Capsule Proxy cần TLS passthrough hay terminate tại Traefik rồi mã hóa lại? Ảnh hưởng cách khai Ingress cho `kube-cluster-a.tenantry.site`.
+- Capsule Proxy cần TLS passthrough hay terminate tại Traefik rồi mã hóa lại? Ảnh hưởng cách khai Ingress cho `kube-a.tenantry.site`.
 - Let's Encrypt giới hạn số cert mỗi domain mỗi tuần; MVP chỉ cần năm cert nên không chạm, custom domain thì xin trên domain của khách.
 
 ---
@@ -460,12 +460,12 @@ flowchart TB
 flowchart LR
   subgraph KC["Keycloak realm capsule"]
     C1["client kubectl<br/>public + PKCE, localhost callback<br/>audience kubernetes<br/>group mapper: có"]
-    C2["client headlamp-cluster-a<br/>confidential, callback console-cluster-a<br/>audience headlamp-cluster-a<br/>group mapper: có"]
+    C2["client headlamp-cluster-a<br/>confidential, callback console-a<br/>audience headlamp-cluster-a<br/>group mapper: có"]
     C3["client portal<br/>confidential BFF + PKCE<br/>audience portal-api<br/>group mapper: không"]
   end
 
-  U1["kubectl + kubelogin<br/>kubeconfig từ portal:<br/>server https://kube-cluster-a.tenantry.site<br/>exec kubectl oidc-login"]
-  U2["Browser → Headlamp<br/>https://console-cluster-a.tenantry.site<br/>SSO từ session portal"]
+  U1["kubectl + kubelogin<br/>kubeconfig từ portal:<br/>server https://kube-a.tenantry.site<br/>exec kubectl oidc-login"]
+  U2["Browser → Headlamp<br/>https://console-a.tenantry.site<br/>SSO từ session portal"]
   U3["Browser → Portal"]
 
   U1 -->|"browser login"| C1

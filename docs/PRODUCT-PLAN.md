@@ -734,7 +734,7 @@ Giới hạn:
 - tenant bị admission chặn tạo/sửa/xóa Ingress và mọi tài nguyên cert-manager trong Namespace của mình; Helm chart có sẵn Ingress phải tắt phần đó;
 - Route chỉ có host → Service:cổng; chia theo path, timeout, giới hạn body chưa có.
 
-Hostname của chính platform (`portal.tenantry.site`, `auth.tenantry.site`, `kube-cluster-a.tenantry.site`, `console-cluster-a.tenantry.site`) nằm **ngoài** apps domain, nên không Route nào trùng được với chúng.
+Hostname của chính platform (`portal.tenantry.site`, `auth.tenantry.site`, `kube-a.tenantry.site`, `console-a.tenantry.site`) nằm **ngoài** apps domain, nên không Route nào trùng được với chúng.
 
 **Custom domain** (làm sau Route cơ bản, không thuộc MVP). Là một Route mà hostname do user nhập trọn, ví dụ `shop.acme.com`:
 
@@ -962,7 +962,7 @@ Lý do: built-in `edit` thường rộng hơn nhu cầu, bao gồm quyền với
 Kubeconfig trỏ tới public HTTPS endpoint của Capsule Proxy trong Cluster chứa Workspace, không trỏ trực tiếp vào kube-apiserver:
 
 ```text
-https://kube-cluster-a.tenantry.site
+https://kube-a.tenantry.site
 ```
 
 Mỗi Cluster có endpoint riêng. Capsule Proxy xác thực bearer token, filter cluster-scoped responses và forward identity tới Kubernetes API cục bộ. Portal lấy endpoint từ `workspace.cluster_id`; user không tự nhập endpoint.
@@ -1021,7 +1021,7 @@ Cụ thể:
 
 - portal có nút `Open Web Console` tại Workspace;
 - mỗi Cluster chạy một Headlamp trong system namespace, ví dụ `headlamp-system`;
-- mỗi instance có subdomain riêng, ví dụ `https://console-cluster-a.tenantry.site` (MVP chỉ có một instance);
+- mỗi instance có subdomain riêng, ví dụ `https://console-a.tenantry.site` (MVP chỉ có một instance);
 - portal lấy console URL từ `workspace.cluster_id`, user không chọn lại Cluster;
 - các Headlamp dùng cùng Keycloak realm; mỗi Cluster có OIDC client/callback riêng để giới hạn audience và secret;
 - Headlamp gửi token của user tới Capsule Proxy trong cùng Cluster;
