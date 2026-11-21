@@ -72,7 +72,10 @@ Tài liệu này trả lời bốn câu hỏi: code đặt ở đâu (mục 2), 
 │   ├── charts/tenantry-web/
 │   ├── keycloak/                # realm export tenantry (3 client: portal, headlamp-{clusterId}, kubectl)
 │   └── cluster/                 # nền của Cluster: storage, Traefik, cert-manager, PostgreSQL, Keycloak, OIDC, Capsule, Headlamp
-│                                #   (script đánh số + values Helm + manifest) và values của 3 chart cho Cluster này
+│       ├── charts/postgres/     #   hai chart nhỏ tự viết cho thứ không có chart chính thức dùng được
+│       ├── charts/keycloak/
+│       └── …                    #   script đánh số, values cho chart có sẵn (csi-driver-nfs, cert-manager, traefik,
+│                                #   capsule, capsule-proxy, headlamp) và values của 3 chart Tenantry cho Cluster này
 ├── test/
 │   ├── e2e/                     # Go test chạy trên lab cluster thật (persona §24.3, isolation §24.4, concurrency §24.5)
 │   └── bench/                   # script benchmark §24.6 + baseline kind/vcluster
@@ -371,10 +374,10 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
   3. Dựng NFS server cho lab, cài **`csi-driver-nfs`** → StorageClass `standard` (default) theo `architecture/05-network-and-scheduling.md` mục 9; tùy chọn local-path.
   4. Cài **Traefik** class `platform-shared` theo `architecture/05-network-and-scheduling.md` mục 7 (hostPort 80/443 trên node control-plane, chỉ bật provider Ingress). Tạo bản ghi DNS trên Cloudflare (DNS only): `*.mvp.tenantry.site` và các host platform.
   5. **cert-manager** với ClusterIssuer `letsencrypt` (DNS-01, API token Cloudflare trong Secret): wildcard cert `*.mvp.tenantry.site` làm cert mặc định của Traefik, và cert cho host Keycloak/Headlamp/Proxy/Portal. Dùng endpoint staging của Let's Encrypt khi thử, chuyển production khi chạy ổn.
-  6. PostgreSQL (Bitnami/CloudNativePG đơn giản) + Keycloak dùng PVC `standard` thay storage tạm.
-  7. Capsule Proxy expose HTTPS qua Traefik (`kube-a.tenantry.site`), Headlamp `console-a.tenantry.site`, Keycloak `auth.tenantry.site`.
-  8. Đổi realm Keycloak thành `deploy/keycloak/realm-tenantry.json` với 3 client (`portal`, `headlamp-cluster-a`, `kubectl`), realm role `platform-admin`, giữ user demo; structured authentication config nhận 2 audience.
-  9. Bật OIDC (structured authentication config) và admission `PodNodeSelector` trên kube-apiserver, kèm script rollback; cài Capsule, Capsule Proxy, Headlamp.
+  6. PostgreSQL bằng một chart nhỏ tự viết trong `deploy/cluster/` (image `postgres` chính thức, ghim phiên bản): StatefulSet một replica trên PVC `standard`, Service, và một Job chạy sau mỗi lần install/upgrade để tạo role và database `tenantry`, `keycloak` nếu chưa có. Chart có template Secret: mật khẩu sinh ngẫu nhiên ở lần cài đầu, các lần upgrade đọc lại Secret đang có bằng `lookup` nên không đổi; Secret mang `helm.sh/resource-policy: keep` để gỡ chart không làm mất mật khẩu của dữ liệu còn trên PVC. Không dùng chart Bitnami (image miễn phí không còn ghim được phiên bản). Keycloak dùng database `keycloak` trên instance này.
+  7. Keycloak bằng một chart nhỏ tự viết trong `deploy/cluster/` (image chính thức `quay.io/keycloak/keycloak`, ghim phiên bản): Deployment một replica, Service, Secret mật khẩu admin (cùng cách giữ mật khẩu như chart PostgreSQL), Ingress `auth.tenantry.site` chỉ mở `/realms` và `/resources` — trang admin không ra internet, vào bằng port-forward. Không dùng operator của Keycloak hay chart Bitnami.
+  8. Realm `deploy/keycloak/realm-tenantry.json` viết mới theo `architecture/06-security-and-identity.md` mục 2–3, nạp lúc Keycloak khởi động: 3 client (`portal`, `headlamp-cluster-a`, `kubectl`), realm role `platform-admin`, user demo, bật chống brute-force. Mật khẩu user demo và client secret sinh lúc cài, không nằm trong repo. `kubectl` giữ là client public + PKCE, không bật direct grant; `cluster-verify` lấy token qua một client confidential riêng.
+  9. Bật OIDC (structured authentication config, 2 audience) và hai admission plugin `PodNodeSelector`, `PodTolerationRestriction` trên kube-apiserver, kèm script rollback; cài Capsule, Capsule Proxy (`kube-a.tenantry.site`), Headlamp (`console-a.tenantry.site`) bằng chart của dự án gốc.
   10. Viết `cluster-verify`: PVC bound trên `standard`, HTTPS với cert hợp lệ, cert-manager Ready, đăng nhập Keycloak lấy được token, kube-apiserver nhận token đó, `PodNodeSelector` đang bật. Ghi `deploy/cluster/README.md` gồm các bước làm tay (DNS, token Cloudflare, mở cổng).
 - **Đầu ra kiểm chứng**: `make cluster-up` từ cluster kubeadm sạch → verify pass; PVC bound; `https://demo.mvp.tenantry.site` trả về qua ingress với cert Let's Encrypt.
 - **Test bắt buộc**: `make cluster-verify` qua hết trên cụm vừa dựng và khi chạy `make cluster-up` lần thứ hai.
@@ -467,7 +470,7 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
 - **Đầu ra kiểm chứng**: `POST .../workspaces` qua curl → Operation Running → Tenant `acme-solar` xuất hiện với owners đúng → `POST .../namespaces {frontend}` → Namespace `acme-solar-frontend` tạo; `kubectl create ns acme-solar-scratch` bằng token owner → hiện trên `GET .../namespaces` với `source=kubectl`.
 - **Test bắt buộc**: envtest reconcile idempotent (apply hai lần không đổi); worker restart giữa apply → không duplicate; unit state machine Workspace; permission matrix Developer/Viewer.
 - **Phụ thuộc**: M4 (group sync để có subject), M5 (grant/cluster).
-- **Rủi ro chính**: độ phức tạp controller + Capsule schema 0.13.x; giữ mỗi sub-reconciler dưới ~200 dòng, render tách khỏi apply.
+- **Rủi ro chính**: độ phức tạp controller + Capsule schema 0.15.x; giữ mỗi sub-reconciler dưới ~200 dòng, render tách khỏi apply.
 - **Ước lượng**: XL.
 
 ### M7 — Resource lifecycle
@@ -485,7 +488,7 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
 - **Đầu ra kiểm chứng**: tạo Workspace 4 CPU/8 GiB → Pod vượt quota bị từ chối với message; tăng quota → chạy được; xóa Workspace có PVC → Namespace/PVC mất, reservation `Released`.
 - **Test bắt buộc**: unit quota math; integration reservation tx với PostgreSQL thật; concurrency hai create sát quota (chỉ một pass); e2e delete cleanup (không còn Tenant/Namespace/PVC/ResourcePool).
 - **Phụ thuộc**: M6.
-- **Rủi ro chính**: ResourcePool/Claim semantics của Capsule 0.13 khác kỳ vọng — kiểm chứng sớm trên lab bằng một Tenant thử.
+- **Rủi ro chính**: ResourcePool/Claim semantics của Capsule 0.15 khác kỳ vọng — kiểm chứng sớm trên lab bằng một Tenant thử.
 - **Ước lượng**: L.
 
 ### M8 — Compute modes
@@ -712,7 +715,7 @@ make realm-export / realm-import
 
 | # | Rủi ro | Tác động | Giảm thiểu | Nổi lên ở |
 |---|---|---|---|---|
-| 1 | Capsule 0.13.x schema/hành vi (ResourcePool/Claim, `forceTenantPrefix`) khác giả định | Render sai, rework controller | Pin version trong chart; spike trên lab trước M6; golden test theo version | M6–M7 |
+| 1 | Capsule 0.15.x schema/hành vi (ResourcePool/Claim, `forceTenantPrefix`) khác giả định | Render sai, rework controller | Pin version trong chart; spike trên lab trước M6; golden test theo version | M6–M7 |
 | 2 | Controller phức tạp vượt sức một người | Trễ M6 kéo mọi thứ sau | Render tách apply; sub-reconciler nhỏ; envtest; làm tenant/namespaces/rbac trước, network/compute sau | M6 |
 | 3 | Keycloak Admin API lag/rate limit, group claim chỉ có ở token mới | Create Workspace bị `GROUP_SYNC_PENDING`, demo revoke gây hiểu nhầm | Sync worker retry + hiển thị `sync_status`; TTL token 5 phút; ghi contract revoke rõ trên UI | M4, M11 |
 | 4 | Phụ thuộc admission `PodNodeSelector` của kubeadm | Placement không enforce nếu plugin tắt | Test bắt buộc kiểm tra plugin bật; Capsule rule chặn nodeName/toleration làm lớp hai | M8 |

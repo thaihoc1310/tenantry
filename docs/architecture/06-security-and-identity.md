@@ -59,7 +59,7 @@ flowchart TB
 **Điểm cần review**
 
 - **Portal không bao giờ cầm token có thể gọi Kubernetes.** Token của client `portal` có audience `portal-api`, kube-apiserver không nhận. Nếu API bị chiếm, kẻ tấn công chỉ tạo được CR (qua worker), và CR bị controller giới hạn trong khuôn Tenant.
-- Capsule Proxy là **điểm vào duy nhất** của tenant tới kube-apiserver; kube-apiserver không expose public. Tenant Pod vẫn resolve được `kubernetes.default`: không chặn bằng NetworkPolicy (nhiều app dùng ServiceAccount hợp lệ), nhưng ServiceAccount tenant không có RoleBinding mặc định.
+- Capsule Proxy là **điểm vào duy nhất** của tenant tới kube-apiserver; cổng 6443 của kube-apiserver chỉ dành cho quản trị và phải giới hạn theo IP nguồn ở firewall của hạ tầng. Tenant gọi thẳng 6443 bằng token của mình vẫn bị RBAC và admission chặn như thường (chỉ mất phần lọc danh sách của Proxy), nên đây là giảm bề mặt tấn công chứ không phải lớp cách ly. Tenant Pod vẫn resolve được `kubernetes.default`: không chặn bằng NetworkPolicy (nhiều app dùng ServiceAccount hợp lệ), nhưng ServiceAccount tenant không có RoleBinding mặc định.
 - Zone 2 và Zone 3 ở MVP nằm cùng cluster; ranh giới là RBAC của ServiceAccount, không phải network. Phase 2 tách thành mạng khác.
 
 ## 2. OIDC clients và audience

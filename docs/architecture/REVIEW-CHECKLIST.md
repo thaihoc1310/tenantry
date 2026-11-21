@@ -33,7 +33,7 @@
 | B10 | Thứ tự delete: release NodeReservation (D6) trước xóa Tenant (D7) như plan, hay đảo? | Giữ như plan; reservation chỉ release sau khi Pod đã rời node | 04 §10 |
 | B11 | Release ClusterGrant reservation cùng lúc quarantine CIDR hay sớm hơn? | Cùng lúc (đơn giản, một bước cuối) | 04 §10 |
 | B12 | Capacity state của node lưu cột hay tính lúc đọc? | Lưu cột, tính lại trong mỗi transaction reservation | 04 §5 |
-| B13 | Mapping `Cordoned` → `Tenant.spec.cordoned` của Capsule | Xác nhận field tồn tại ở Capsule 0.13.x | 04 §1 |
+| B13 | Mapping `Cordoned` → `Tenant.spec.cordoned` của Capsule | Xác nhận field tồn tại ở Capsule 0.15.x | 04 §1 |
 
 ## C. Dữ liệu và transaction
 
@@ -47,7 +47,6 @@
 | # | Câu hỏi | Đề xuất | Ở đâu |
 |---|---|---|---|
 | D3 | System pool: label `tenantry.io/compute-pool=system` + taint NoSchedule | Giữ; lab hiện chưa có node system riêng → M1 phải tạo | 05 §1, 01 §3 |
-| D4 | Enforce scheduling: `PodNodeSelector` + `PodTolerationRestriction` (admission plugin kubeadm) hay validating webhook của controller? | MVP dùng hai admission plugin có sẵn + test bắt buộc; webhook là hardening sau | 05 §2 |
 | D5 | Shared ceiling tính trên `requests`; `limits` kiểm bằng ratio riêng | Giữ | 05 §4 |
 | D6 | Chia supernet `10.240.0.0/16`: `/18` pool chung, `/18` pool riêng đầu tiên | Chốt bảng chia để pool chung/riêng không overlap | 05 §5 |
 | D7 | Egress internet: replicate policy theo profile Workspace; deny metadata `169.254.169.254` | Mặc định cho phép internet egress (demo pull image), deny metadata luôn | 05 §6 |

@@ -104,7 +104,7 @@ Cách tính: `Ready` ⇔ tất cả Condition áp dụng đều `True` **và** `
 
 - `Draft` có cần persist để hỗ trợ "lưu wizard dở" không, hay chỉ là trạng thái logic trong request như giả định ở đây?
 - Reservation chuyển `Pending → Active` khi Workspace `Ready` (mục 3) hay ngay khi commit? Tài liệu chọn khi `Ready`, nhưng cả hai đều tính vào capacity.
-- `Cordoned` map sang `Tenant.spec.cordoned` của Capsule — cần xác nhận version Capsule 0.13.x hỗ trợ và hành vi với Namespace đang tồn tại.
+- `Cordoned` map sang `Tenant.spec.cordoned` của Capsule — cần xác nhận version Capsule 0.15.x hỗ trợ và hành vi với Namespace đang tồn tại.
 - Cluster `Unavailable` không đổi state Workspace, portal chỉ hiển thị "unknown" (plan 6.1). Có muốn thêm Condition `ClusterReady=Unknown` để UI phân biệt với `Degraded`?
 
 ---

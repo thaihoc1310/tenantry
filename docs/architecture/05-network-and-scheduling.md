@@ -129,7 +129,7 @@ Bảng tương ứng với lab bản đầu:
 
 **Điểm cần review**
 
-- Cơ chế inject toleration: `PodTolerationRestriction` (admission plugin có sẵn của kube-apiserver, cấu hình qua annotation Namespace) là lựa chọn đơn giản nhất cho kubeadm lab; thay thế là mutating webhook riêng trong Workspace Controller. Cần chốt một trong hai.
+- **Đã chốt**: ép vị trí Pod bằng hai admission plugin có sẵn của kube-apiserver, `PodNodeSelector` và `PodTolerationRestriction` (cấu hình qua annotation Namespace), bật cùng lúc ở M1 để chỉ khởi động lại kube-apiserver một lần. Ở M1 chưa Namespace nào mang annotation toleration nên hành vi chưa đổi; annotation được gắn từ M8. Whitelist toleration khi gắn phải gồm các taint `node.kubernetes.io/*` mà Kubernetes tự thêm vào Pod, nếu không mọi Pod bị từ chối. Webhook riêng là hardening về sau.
 - `spec.nodeName` bỏ qua scheduler và kubelet không kiểm tra taint `NoSchedule`, nên **bắt buộc** có lớp reject `nodeName` (A4); Capsule không làm việc này.
 - Nếu `PodNodeSelector`/`PodTolerationRestriction` bị tắt, enforcement hỏng im lặng — plan 6.4 yêu cầu test bắt buộc; test nên chạy trong `make cluster-verify`.
 - Với Shared mode, nếu Organization có nhiều Workspace cùng pool, `PodNodeSelector` không tách Workspace với nhau — đúng ý định (cô lập bằng Namespace/NetworkPolicy/quota), cần nói rõ trong luận văn.
@@ -431,7 +431,7 @@ flowchart TB
 **Ba lớp giữ hostname**
 
 1. **API ghép hostname** `<tên>-<k8s_name>.<apps domain>` và DB giữ `UNIQUE (hostname)`; user không nhập được phần đuôi. Hai cặp (tên, Workspace) khác nhau ghép ra cùng một chuỗi (ví dụ `a-b` + `c` và `a` + `b-c`) thì cái đến sau nhận `ROUTE_HOSTNAME_TAKEN`.
-2. **ValidatingAdmissionPolicy `tenantry-tenant-ingress-lockdown`**: trong mọi Namespace có label `capsule.clastix.io/tenant`, từ chối CREATE/UPDATE/DELETE trên `ingresses` (`networking.k8s.io`), mọi resource của `cert-manager.io`, `acme.cert-manager.io` và `gateway.networking.k8s.io`, trừ khi người gọi là ServiceAccount `tenantry-operator` hoặc ServiceAccount của cert-manager. Cần luật này vì ClusterRole `admin` mà Capsule cấp cho chủ Workspace có sẵn quyền ghi Ingress, và cert-manager tự gộp quyền ghi `Certificate`/`Issuer` vào `admin`. Không chặn thì tenant tự xin được cert cho hostname của người khác qua ClusterIssuer.
+2. **ValidatingAdmissionPolicy `tenantry-tenant-ingress-lockdown`**: trong mọi Namespace có label `capsule.clastix.io/tenant`, từ chối CREATE/UPDATE/DELETE trên `ingresses` (`networking.k8s.io`), mọi resource của `cert-manager.io`, `acme.cert-manager.io`, `gateway.networking.k8s.io` và `traefik.io`, trừ khi người gọi là ServiceAccount `tenantry-operator` hoặc ServiceAccount của cert-manager. Cần luật này vì ClusterRole `admin` mà Capsule cấp cho chủ Workspace có sẵn quyền ghi Ingress, và cert-manager tự gộp quyền ghi `Certificate`/`Issuer` vào `admin`. Không chặn thì tenant tự xin được cert cho hostname của người khác qua ClusterIssuer.
 3. **Service `NodePort`/`LoadBalancer`/`ExternalName` bị Capsule cấm**, nên Route là đường ra duy nhất.
 
 **TLS**
@@ -440,6 +440,8 @@ flowchart TB
 - Wildcard cert là **cert mặc định** của Traefik; Ingress của Route không mang `tls.secretName`, nên không có private key nào trong Namespace của tenant.
 - Traefik chỉ bật provider Kubernetes Ingress (tắt CRD `IngressRoute` và Gateway API) để chỉ có một loại object mở được đường vào.
 
+**TLS dừng ở Traefik.** Keycloak, Capsule Proxy, Headlamp và Portal chạy HTTP phía sau Traefik; không dựng CA nội bộ riêng cho từng dịch vụ. Hệ quả chấp nhận ở MVP: mật khẩu và token đi dạng rõ trong mạng Pod giữa các node. Muốn mã hóa thì bật WireGuard của Calico một lần cho mọi traffic Pod (hardening, M12).
+
 **Đường vào ở cụm MVP.** Không có load balancer; IP public được hạ tầng NAT vào node control-plane. Traefik chạy trên chính node đó (nodeSelector, toleration cho taint control-plane, có giới hạn RAM) và nghe `hostPort` 80/443; cổng 80 chỉ redirect sang 443. Không đặt Traefik ở node khác rồi chuyển tiếp qua kube-proxy, vì khi đó Traefik mất IP thật của client và rate limit theo IP (`06-security-and-identity.md` mục 6) hết tác dụng.
 
 **Custom domain** (sau MVP): Ingress của Route mang `tls.secretName`, Certificate nằm cùng Namespace và do controller tạo với solver HTTP-01; private key khi đó nằm trong Namespace của tenant, chấp nhận vì đó là domain của chính họ.
@@ -447,7 +449,6 @@ flowchart TB
 **Điểm cần review**
 
 - Luật admission ở lớp 2 chưa được chạy thử: cần test âm ở M11 (tenant `kubectl apply` Ingress và Certificate đều bị từ chối; controller và HTTP-01 solver vẫn ghi được).
-- Capsule Proxy cần TLS passthrough hay terminate tại Traefik rồi mã hóa lại? Ảnh hưởng cách khai Ingress cho `kube-a.tenantry.site`.
 - Let's Encrypt giới hạn số cert mỗi domain mỗi tuần; MVP chỉ cần năm cert nên không chạm, custom domain thì xin trên domain của khách.
 
 ---
@@ -458,7 +459,7 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-  subgraph KC["Keycloak realm capsule"]
+  subgraph KC["Keycloak realm tenantry"]
     C1["client kubectl<br/>public + PKCE, localhost callback<br/>audience kubernetes<br/>group mapper: có"]
     C2["client headlamp-cluster-a<br/>confidential, callback console-a<br/>audience headlamp-cluster-a<br/>group mapper: có"]
     C3["client portal<br/>confidential BFF + PKCE<br/>audience portal-api<br/>group mapper: không"]
@@ -589,5 +590,5 @@ Lifecycle khi xóa Workspace (plan 17.4): xóa Namespace → PVC bị xóa theo 
 
 **Điểm cần review**
 
-- Capsule Proxy lọc StorageClass theo allow-list, nên Headlamp chỉ hiện `standard`; cần xác nhận với Capsule 0.13.x rằng `storageClasses.allowed` hỗ trợ cả tên và regex.
+- Capsule Proxy lọc StorageClass theo allow-list, nên Headlamp chỉ hiện `standard`; cần xác nhận với Capsule 0.15.x rằng `storageClasses.allowed` hỗ trợ cả tên và regex.
 - `requests.storage` không có ở LimitRange mặc định; có nên đặt `max` per PVC trong LimitRange (type `PersistentVolumeClaim`) để một PVC không nuốt cả quota Workspace?
