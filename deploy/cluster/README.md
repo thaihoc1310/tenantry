@@ -72,18 +72,20 @@ DaemonSet chạy trên mọi node. Mọi namespace ở mức Pod Security `restr
 - **Image backend** chưa có registry: build bằng `make image`, nạp vào containerd của từng node
   (`docker save tenantry/backend:dev | ssh <node> sudo ctr -n k8s.io images import -`), rồi `make deploy`.
 
-## Chuyển Let's Encrypt từ staging sang production
+## Let's Encrypt: staging và production
 
-Cert staging không được trình duyệt tin; dùng khi đang dựng thử, vì production giới hạn số cert mỗi
-domain mỗi tuần. Khi mọi thứ đã chạy ổn:
+Mặc định là production (`CLUSTER_ISSUER=letsencrypt`). Khi dựng thử một cụm mới, dùng staging cho tới
+khi mọi thứ chạy ổn, vì production giới hạn số cert mỗi domain mỗi tuần; cert staging thì trình
+duyệt không tin:
 
 ```sh
-CLUSTER_ISSUER=letsencrypt make cluster-up     # hoặc đổi mặc định trong env.sh
-make cluster-verify
+CLUSTER_ISSUER=letsencrypt-staging make cluster-up
+CLUSTER_ISSUER=letsencrypt-staging make cluster-verify
 ```
 
-Certificate đổi issuer thì cert-manager xin lại cert; cấu hình xác thực của kube-apiserver bỏ phần CA
-staging và được nó tự nạp lại (không restart); Headlamp nhận bộ root mới và khởi động lại.
+Rồi chạy lại `make cluster-up` không có biến đó để chuyển sang production. Certificate đổi issuer thì
+cert-manager xin lại cert; cấu hình xác thực của kube-apiserver bỏ phần CA staging và được nó tự nạp
+lại (không restart); Headlamp nhận bộ root mới và khởi động lại.
 
 ## Rollback kube-apiserver
 

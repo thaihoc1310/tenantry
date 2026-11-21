@@ -36,9 +36,10 @@ KUBE_HOST="kube-a.${DNS_ZONE}"
 CONSOLE_HOST="console-a.${DNS_ZONE}"
 
 # Let's Encrypt account (ClusterIssuers letsencrypt-staging and letsencrypt).
-# Certificates use CLUSTER_ISSUER; stay on staging until everything works,
-# because production limits how many certificates a domain gets per week.
-CLUSTER_ISSUER="${CLUSTER_ISSUER:-letsencrypt-staging}"
+# Certificates use CLUSTER_ISSUER. On a new cluster, start with
+# CLUSTER_ISSUER=letsencrypt-staging until everything works: production limits
+# how many certificates a domain gets per week.
+CLUSTER_ISSUER="${CLUSTER_ISSUER:-letsencrypt}"
 # API token allowed to edit DNS records of DNS_ZONE only (DNS-01 challenge).
 CLOUDFLARE_TOKEN_FILE="${CLOUDFLARE_TOKEN_FILE:-${HOME}/.config/tenantry/cloudflare-token}"
 

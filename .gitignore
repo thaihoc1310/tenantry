@@ -15,3 +15,5 @@ web/dist/
 .idea/
 .vscode/
 *.tsbuildinfo
+# CodeGraph index (local tool)
+.codegraph/
