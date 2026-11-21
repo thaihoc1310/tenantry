@@ -3,7 +3,7 @@
 > Phiên bản: 0.8 — phiên portal gắn với Keycloak, tombstone cho group sync, gom tài liệu về một nơi định nghĩa mỗi chủ đề
 > Ngày: 2026-11-20
 > File này định nghĩa **nghiệp vụ**: phạm vi, khái niệm, quy tắc, danh sách endpoint, FR/NFR, roadmap. Schema, state machine, phiên/token và kế hoạch code nằm ở file khác — bản đồ ở [`README.md`](README.md).
-> Tên sản phẩm: **Tenantry** (API group `tenantry.io`, label prefix `tenantry.io/`, domain demo `*.tenantry.example`)
+> Tên sản phẩm: **Tenantry** (API group `tenantry.io`, label prefix `tenantry.io/`, domain `tenantry.site`)
 > Mục tiêu: xây một platform self-service cấp Kubernetes Tenant nhanh, rẻ trên cluster có sẵn, với Capsule là tenancy engine.
 
 ## 0. Changelog
@@ -16,7 +16,12 @@
 4. **`Idempotency-Key`** lưu ở bảng riêng theo `(user, key)`, ghi cùng transaction với thay đổi.
 5. **Không dùng Redis**, ghi thành quyết định có lý do (13.2, ADR 21).
 6. **Central plane không đọc Node**: việc kiểm node sạch, gắn label/taint và đọc capacity đi qua hai CRD phụ `PlatformNodeGrant`, `PlatformSharedPool`; cấp dedicated node trở thành một Operation.
-7. **Tài liệu**: mỗi chủ đề một nơi định nghĩa. Mục 15 (database) và phần state của mục 17 chuyển hẳn sang `architecture/`; `architecture/*` đã theo mô hình "xin tạo Organization" của v0.7.
+7. **Storage dùng `csi-driver-nfs`** thay cho NFS subdir provisioner (đã ngừng phát hành từ 2023); vẫn là NFS, StorageClass `standard` không đổi. Lý do ở `architecture/05-network-and-scheduling.md` mục 9.
+8. **Route thay cho Ingress do tenant tự viết.** Platform sở hữu toàn bộ đường vào HTTP: user tạo Route trên portal (Namespace, tên, Service, cổng), operator dựng Ingress; tenant bị chặn ghi Ingress. Hostname phẳng `<tên>-<org>-<ws>.mvp.tenantry.site`, một wildcard cert chung do platform giữ thay cho cert từng Workspace. Bỏ `allowedIngressClasses` khỏi ClusterGrant (7.6).
+9. **Domain thật `tenantry.site` và Let's Encrypt** thay cho `tenantry.example` và CA nội bộ của lab; DNS ở Cloudflare.
+10. **Traefik** thay ingress-nginx (dự án đã ngừng và archive từ tháng 3/2026).
+11. **Custom domain** có quy tắc nghiệp vụ (xác minh TXT, cert tự xin), làm sau Route cơ bản (7.6).
+12. **Tài liệu**: mỗi chủ đề một nơi định nghĩa. Mục 15 (database) và phần state của mục 17 chuyển hẳn sang `architecture/`; `architecture/*` đã theo mô hình "xin tạo Organization" của v0.7.
 
 ### v0.6 → v0.7
 
@@ -47,7 +52,7 @@ Sửa nhất quán tự phát hiện:
 12. Cluster `Maintenance`: Workspace hiện có **vẫn chạy và truy cập được**; chỉ chặn create/resize.
 13. Invitation chỉ accept khi **email đã verify của account đang login khớp** email trong invitation; bỏ nhánh "owner xác nhận identity" mơ hồ.
 14. Member (không phải Owner) có thể **tự rời** Organization không phải personal Org của mình.
-15. Storage MVP chốt **NFS subdir provisioner** làm StorageClass `standard` (RWX, không ghim Pod vào node); local-path là StorageClass tùy chọn.
+15. Storage MVP chốt **NFS qua `csi-driver-nfs`** làm StorageClass `standard` (RWX, không ghim Pod vào node); local-path là StorageClass tùy chọn.
 16. Operation retry: OrgOwner/OrgAdmin retry operation của Organization mình; Platform Admin retry/force mọi operation.
 
 ### v0.4 → v0.5
@@ -121,7 +126,7 @@ Luận điểm của đồ án:
 - Capsule ResourcePool, Namespace quota và policy;
 - portal quản lý Namespace của Workspace (list/create/delete/usage);
 - tenant PVC qua dynamic provisioner đơn giản và StorageClass allow-list;
-- tenant Ingress qua shared ingress controller + wildcard DNS;
+- Route: user khai báo trên portal, platform dựng Ingress trên shared ingress controller + wildcard DNS;
 - kubeconfig OIDC (kubelogin) qua Capsule Proxy;
 - Headlamp cho web console;
 - operation status, audit cơ bản và monitoring phục vụ demo/đánh giá;
@@ -157,7 +162,7 @@ Workspace hỗ trợ workload namespaced thông thường:
 - Service `ClusterIP`;
 - ConfigMap, Secret, ServiceAccount;
 - PVC theo StorageClass được cho phép (provisioner do platform cài);
-- Ingress qua ingress class được cho phép, hostname dưới wildcard domain của Cluster;
+- Route tạo trên portal để đưa Service ra HTTPS (tenant không tự tạo Ingress, xem 7.6);
 - HPA, PDB, NetworkPolicy;
 - Role/RoleBinding trong giới hạn role policy;
 - Helm chart không yêu cầu cluster-scoped resource.
@@ -285,7 +290,7 @@ Workspace là resource người dùng nhìn thấy trên portal và ánh xạ 1:
 Một Workspace có:
 
 - ID immutable và slug immutable (unique trong Organization);
-- tên Kubernetes-visible `<org-slug>-<ws-slug>`, ví dụ `acme-solar` — global-unique vì Organization slug global-unique; dùng làm tên Capsule Tenant, tiền tố Namespace, vùng hostname Ingress và tên CR;
+- tên Kubernetes-visible `<org-slug>-<ws-slug>`, ví dụ `acme-solar` — global-unique vì Organization slug global-unique; dùng làm tên Capsule Tenant, tiền tố Namespace, hậu tố hostname của Route và tên CR;
 - display name/description;
 - Organization owner;
 - CPU/RAM/Pod/storage allocation;
@@ -363,8 +368,6 @@ allowedNetworkPoolRefs:
   - acme-cluster-a-pod-network
 allowedStorageClasses:
   - standard
-allowedIngressClasses:
-  - platform-shared
 ```
 
 Một Organization có một hoặc nhiều ClusterGrant; đúng một grant được đánh dấu mặc định. Nếu chỉ có một grant, portal preselect Cluster đó (trường hợp mặc định của MVP). Nếu có nhiều grant, OrgOwner chọn Cluster khi tạo Workspace.
@@ -705,23 +708,41 @@ Deletion flow:
 
 Không release CIDR ngay khi API nhận lệnh delete.
 
-### 7.6 Tenant ingress
+### 7.6 Route: đưa app của tenant ra internet
 
-MVP triển khai một **shared ingress controller per Cluster** (ingress-nginx) với wildcard DNS dưới domain của Cluster:
+Platform sở hữu toàn bộ đường vào HTTP của Cluster. Tenant **không tạo Ingress**; họ tạo một **Route** trên portal và platform dựng Ingress tương ứng. Lý do: user không phải viết YAML Ingress, private key TLS không bao giờ nằm trong Namespace của tenant, và Ingress do tenant tự viết (kèm annotation tùy ý) là một đường tấn công ingress controller đã biết.
 
-```text
-*.apps.cluster-a.tenantry.example
-```
+Hạ tầng per Cluster:
 
-Hostname pattern và TLS:
+- một **shared ingress controller** (Traefik), nghe 80/443; cổng 80 chỉ redirect sang HTTPS;
+- một bản ghi DNS wildcard cho **apps domain** của Cluster trỏ về ingress, ví dụ Cluster A: `*.mvp.tenantry.site`;
+- một wildcard Certificate cho apps domain do cert-manager xin từ **Let's Encrypt** (DNS-01), là cert mặc định của ingress controller và chỉ nằm trong namespace của platform.
 
-- mỗi Workspace sở hữu một **vùng hostname** `*.<org-slug>-<ws-slug>.apps.<cluster>.<domain>`, ví dụ `web.acme-solar.apps.cluster-a.tenantry.example`. Vùng này global-unique vì `<org-slug>-<ws-slug>` global-unique;
-- controller tạo cho mỗi Workspace một cert-manager `Certificate` wildcard `*.acme-solar.apps.cluster-a.tenantry.example`, issuer là **CA nội bộ của lab** (ClusterIssuer từ `capsule-lab-ca`); Secret TLS được replicate vào mọi Namespace của Workspace qua Capsule `TenantResource` để Ingress tham chiếu;
-- Capsule `ingressOptions.allowedHostnames` khóa tenant chỉ tạo được hostname trong vùng của mình (regex `^[a-z0-9-]+\.acme-solar\.apps\.cluster-a\.tenantry\.example$`); `hostnameCollisionScope: Cluster` chặn trùng hostname toàn cluster như lớp bảo vệ thứ hai;
-- tenant tạo Ingress với ingress class trong `allowedIngressClasses` của grant;
-- DNS wildcard trong lab do CoreDNS/dnsmasq nội bộ hoặc dịch vụ kiểu `sslip.io` trả lời; browser demo import CA của lab một lần;
-- Service `NodePort`/`LoadBalancer` vẫn bị cấm — Ingress là đường expose duy nhất;
-- custom domain per Workspace và cert public (Let's Encrypt) là stretch.
+Route:
+
+- thuộc một Namespace của Workspace, gồm **tên**, **Service** và **cổng** đích;
+- hostname do platform ghép, user không nhập phần đuôi: `<tên>-<org-slug>-<ws-slug>.<apps domain>`, ví dụ `web-acme-solar.mvp.tenantry.site`. Nhãn đầu tối đa 63 ký tự;
+- hostname là duy nhất trên toàn nền tảng (constraint ở DB); hai Workspace không thể cùng giữ một hostname;
+- **được thao tác**: như Namespace — OrgOwner, OrgAdmin và member của group giữ role `TenantOwner` tại Workspace; Developer/Viewer chỉ xem;
+- tối đa 20 Route mỗi Workspace;
+- khai báo qua `PlatformWorkspace.spec.routes`, controller dựng Ingress và báo về `status.routes` (cùng mô hình với Namespace, mục 4.5);
+- Namespace bị xóa thì Route trong đó bị xóa theo.
+
+Giới hạn:
+
+- chỉ HTTP/HTTPS (gồm WebSocket và gRPC); TCP/UDP thuần không expose được. Service `NodePort`/`LoadBalancer` vẫn bị cấm — Route là đường expose duy nhất; truy cập tạm vào database dùng `kubectl port-forward`;
+- tenant bị admission chặn tạo/sửa/xóa Ingress và mọi tài nguyên cert-manager trong Namespace của mình; Helm chart có sẵn Ingress phải tắt phần đó;
+- Route chỉ có host → Service:cổng; chia theo path, timeout, giới hạn body chưa có.
+
+Hostname của chính platform (`portal.tenantry.site`, `auth.tenantry.site`, `kube-cluster-a.tenantry.site`, `console-cluster-a.tenantry.site`) nằm **ngoài** apps domain, nên không Route nào trùng được với chúng.
+
+**Custom domain** (làm sau Route cơ bản, không thuộc MVP). Là một Route mà hostname do user nhập trọn, ví dụ `shop.acme.com`:
+
+1. user nhập domain; portal trả về hai bản ghi DNS cần tạo: `TXT _tenantry-challenge.<domain>` chứa mã ngẫu nhiên, và `CNAME <domain>` trỏ về ingress của Cluster;
+2. worker kiểm tra bản ghi TXT; khớp thì Route được dựng. Chưa xác minh thì không có Ingress nào được tạo;
+3. cert-manager tự xin cert Let's Encrypt cho domain đó (HTTP-01); user không gửi cert hay key.
+
+Quy tắc: một domain chỉ thuộc một Workspace trên toàn nền tảng; không nhận `tenantry.site` và tên con của nó; không nhận wildcard; số custom domain mỗi Workspace có giới hạn; xóa Route hoặc Workspace thì nhả domain và xóa cert; không cần Admin duyệt vì xác minh DNS đã chứng minh quyền sở hữu. Tự tải cert lên là tùy chọn về sau.
 
 ## 8. Auth: account được tạo ở đâu?
 
@@ -941,7 +962,7 @@ Lý do: built-in `edit` thường rộng hơn nhu cầu, bao gồm quyền với
 Kubeconfig trỏ tới public HTTPS endpoint của Capsule Proxy trong Cluster chứa Workspace, không trỏ trực tiếp vào kube-apiserver:
 
 ```text
-https://kube-cluster-a.tenantry.example
+https://kube-cluster-a.tenantry.site
 ```
 
 Mỗi Cluster có endpoint riêng. Capsule Proxy xác thực bearer token, filter cluster-scoped responses và forward identity tới Kubernetes API cục bộ. Portal lấy endpoint từ `workspace.cluster_id`; user không tự nhập endpoint.
@@ -968,7 +989,7 @@ users:
         args:
           - oidc-login
           - get-token
-          - --oidc-issuer-url=https://id.tenantry.example/realms/tenantry
+          - --oidc-issuer-url=https://auth.tenantry.site/realms/tenantry
           - --oidc-client-id=kubectl
 ```
 
@@ -1000,7 +1021,7 @@ Cụ thể:
 
 - portal có nút `Open Web Console` tại Workspace;
 - mỗi Cluster chạy một Headlamp trong system namespace, ví dụ `headlamp-system`;
-- mỗi instance có subdomain riêng, ví dụ `https://console-cluster-a.tenantry.example` (MVP chỉ có một instance);
+- mỗi instance có subdomain riêng, ví dụ `https://console-cluster-a.tenantry.site` (MVP chỉ có một instance);
 - portal lấy console URL từ `workspace.cluster_id`, user không chọn lại Cluster;
 - các Headlamp dùng cùng Keycloak realm; mỗi Cluster có OIDC client/callback riêng để giới hạn audience và secret;
 - Headlamp gửi token của user tới Capsule Proxy trong cùng Cluster;
@@ -1105,9 +1126,9 @@ MVP: central plane chạy trên system pool của Cluster A; provisioning worker
 | Capsule Operator per Cluster | Namespace tenancy engine |
 | Capsule Proxy per Cluster | Kubernetes access endpoint/filter |
 | Headlamp per Cluster | Web Kubernetes data-plane console |
-| Ingress Controller per Cluster | Expose tenant app qua wildcard domain |
-| cert-manager per Cluster | Cấp wildcard Certificate per Workspace từ CA nội bộ; TLS cho Proxy/Headlamp/Portal |
-| Storage Provisioner per Cluster | Dynamic PVC cho tenant: NFS subdir provisioner (`standard`), local-path tùy chọn |
+| Ingress Controller per Cluster (Traefik) | Phục vụ Ingress do controller dựng từ Route; cert wildcard mặc định |
+| cert-manager per Cluster | Xin cert Let's Encrypt: wildcard của apps domain, cert cho Proxy/Headlamp/Portal/Keycloak |
+| Storage Provisioner per Cluster | Dynamic PVC cho tenant: NFS qua `csi-driver-nfs` (`standard`), local-path tùy chọn |
 | Prometheus/Grafana | Dashboard + metrics phục vụ đánh giá |
 | Cluster Agent per Cluster | **Phase 2** — outbound mTLS, kéo assignment, apply CR, report status |
 
@@ -1166,6 +1187,8 @@ spec:
     - frontend
     - backend
   namespacesToDelete: []
+  routes:                          # desired, do portal quản lý; host đã được API ghép sẵn
+    - {name: web, namespace: acme-solar-frontend, host: web-acme-solar.mvp.tenantry.site, service: web, port: 80}
   resources:
     requests.cpu: "4"
     requests.memory: 8Gi
@@ -1180,9 +1203,6 @@ spec:
   network:
     allocationRef: netalloc-01j123
     cidr: 10.240.12.0/24
-  ingress:
-    hostnameZone: acme-solar.apps.cluster-a.tenantry.example
-    ingressClasses: [platform-shared]
   storageClasses: [standard]
   accessBindings:
     - groupSubject: oidc:org_01jabc:group_01jadmin
@@ -1198,7 +1218,8 @@ status:
     - {name: acme-solar-frontend, source: portal}
     - {name: acme-solar-backend, source: portal}
     - {name: acme-solar-scratch, source: kubectl}
-  certificateRef: acme-solar-wildcard-tls
+  routes:
+    - {name: web, namespace: acme-solar-frontend, ready: true}
 ```
 
 Customer không được truy cập CRD này.
@@ -1304,6 +1325,9 @@ DELETE /api/v1/workspaces/{workspaceId}/bindings/{groupId}
 GET    /api/v1/workspaces/{workspaceId}/namespaces
 POST   /api/v1/workspaces/{workspaceId}/namespaces
 DELETE /api/v1/workspaces/{workspaceId}/namespaces/{name}
+GET    /api/v1/workspaces/{workspaceId}/routes
+POST   /api/v1/workspaces/{workspaceId}/routes
+DELETE /api/v1/workspaces/{workspaceId}/routes/{routeId}
 GET    /api/v1/workspaces/{workspaceId}/usage
 GET    /api/v1/workspaces/{workspaceId}/kubeconfig
 GET    /api/v1/workspaces/{workspaceId}/console-link
@@ -1474,8 +1498,8 @@ Không silently force-delete PVC/finalizer từ phía user.
 | NetworkAllocation | Calico IPPool + Namespace annotation |
 | Network baseline | GlobalTenantResource/TenantResource NetworkPolicy |
 | Storage allow-list | Capsule StorageClass allowed list |
-| Ingress allow-list | Capsule IngressClass + `allowedHostnames` regex theo vùng `<org>-<ws>.apps...` |
-| Ingress TLS | cert-manager `Certificate` wildcard per Workspace + Capsule TenantResource replicate Secret |
+| Route (`spec.routes`) | Ingress do controller dựng trong Namespace của tenant; ValidatingAdmissionPolicy chặn tenant ghi Ingress và tài nguyên cert-manager |
+| Ingress TLS | một `Certificate` wildcard của apps domain trong namespace ingress, làm cert mặc định của Traefik |
 | Namespace list (`spec.namespaces`) | Namespace có tiền tố `<org>-<ws>-`, owner = Tenant; observed về `status.namespaces` |
 | Security baseline | Capsule rules + Pod Security labels/policy |
 | Proxy access | Capsule Proxy configuration/reflector labels |
@@ -1513,6 +1537,7 @@ Organization switcher
 │       ├── Network / CIDR
 │       ├── Members & role bindings
 │       ├── Namespaces (list / create / delete / usage)
+│       ├── Routes (list / create / delete / URL)
 │       ├── Access / kubeconfig / Headlamp
 │       └── Danger zone
 ├── Members & invitations
@@ -1608,7 +1633,7 @@ Không chỉ làm happy-path UI.
 - default-deny cross-Workspace network;
 - protected node label + taint/toleration;
 - tenant không sửa CIDR/compute/isolation metadata;
-- StorageClass và IngressClass allow-list per grant;
+- StorageClass allow-list per grant; tenant không ghi được Ingress;
 - public Capsule Proxy chỉ HTTPS;
 - platform workload chạy system pool.
 
@@ -1630,7 +1655,7 @@ Không chỉ làm happy-path UI.
 - cross-Workspace network;
 - đổi Calico annotation/node selector/toleration;
 - tạo privileged Pod hoặc NodePort;
-- Ingress hostname collision/chiếm hostname ngoài vùng `*.<org>-<ws>.apps...` của mình;
+- tự tạo Ingress hoặc Certificate để chiếm hostname/xin cert cho tên không phải của mình;
 - vượt CPU/RAM/Pod/PVC/Namespace quota;
 - concurrent create làm vượt entitlement hoặc overlap CIDR;
 - (Phase 2) compromised Cluster Agent đọc assignment của Cluster khác; Cluster mất heartbeat nhưng vẫn nhận Workspace mới.
@@ -1712,7 +1737,7 @@ Ghi tối thiểu:
 - PlatformAdmin cấp một hoặc nhiều ClusterGrant, có một default;
 - onboarding policy là grant mặc định điền sẵn khi duyệt yêu cầu tạo Organization;
 - mỗi grant có CPU/RAM/Pod/storage/Workspace/Namespace quota;
-- mỗi grant chứa allowed shared pool, Organization-dedicated nodes, NetworkPool, StorageClass và IngressClass;
+- mỗi grant chứa allowed shared pool, Organization-dedicated nodes, NetworkPool và StorageClass;
 - Organization xem allocated/remaining theo Cluster.
 
 ### FR-05 Workspace
@@ -1731,6 +1756,7 @@ Ghi tối thiểu:
 - Namespace tạo bằng kubectl/Headlamp vẫn hiện trên portal (observed status);
 - quyền thao tác: OrgOwner/OrgAdmin + member của group TenantOwner tại Workspace; Developer/Viewer chỉ xem;
 - hiển thị quota usage per Namespace;
+- portal list/create/delete Route trong Namespace bằng cách sửa `spec.routes` của CR; cùng quyền thao tác với Namespace; hiển thị URL và trạng thái (7.6);
 - Capsule enforce tiền tố `<org>-<ws>-` và Namespace quota; portal không gọi Kubernetes API bằng token user.
 
 ### FR-07 Kubernetes access
@@ -1755,7 +1781,7 @@ Ghi tối thiểu:
 - Pod IP đúng CIDR;
 - network isolation;
 - PVC theo StorageClass được phép, trong storage quota;
-- Ingress theo class/hostname được phép;
+- app chỉ ra ngoài qua Route; tenant không ghi được Ingress;
 - metadata không override được.
 
 ### FR-10 Audit/monitoring
@@ -1809,15 +1835,15 @@ Các con số là target để đo trong đồ án, không phải SLA thương m
 - Capsule Tenant/ResourcePool ready;
 - Calico IPPool lifecycle;
 - PVC provisioning trong quota;
-- Ingress hostname policy.
+- Route → Ingress → URL HTTPS; tenant bị chặn ghi Ingress.
 
 ### 24.3 E2E personas
 
-- **PlatformAdmin** đăng ký Cluster A, cấu hình onboarding policy, shared pool, một dedicated node 8 CPU, NetworkPool và wildcard ingress domain.
+- **PlatformAdmin** đăng ký Cluster A, cấu hình onboarding policy, shared pool, một dedicated node 8 CPU, NetworkPool và apps domain.
 - **Alice** login, xin tạo Organization `acme`; PlatformAdmin duyệt với grant mặc định; Alice mời Joe/Bob qua invite link.
 - Alice tạo `backend`, `qa`, `admins` group và add member.
 - Alice tạo Shared Workspace Solar qua wizard (Cluster auto-select, network auto-allocate).
-- Joe tải kubeconfig, deploy app có PVC và Ingress; QA chỉ xem.
+- Joe tải kubeconfig, deploy app có PVC, tạo Route trên portal; QA chỉ xem.
 - Admin nâng quota và cấp dedicated node cho Organization của Alice.
 - Alice tạo Dedicated Workspace Water, chọn node đó và reserve 4 CPU.
 - Alice tạo thêm Dedicated Workspace Green trên cùng node, reserve 2 CPU; node còn 2 CPU.
@@ -1841,7 +1867,7 @@ Các con số là target để đo trong đồ án, không phải SLA thương m
 - direct Kubernetes API không bypass được admission;
 - Headlamp không bypass được Capsule Proxy/RBAC;
 - IPPool, node selector và trusted label không sửa được;
-- Ingress không chiếm được hostname của Workspace khác;
+- tenant không tạo được Ingress/Certificate, nên không chiếm được hostname của Workspace khác;
 - PVC không vượt storage quota, không dùng StorageClass ngoài allow-list;
 - quota và namespace max được enforce.
 
@@ -1879,7 +1905,7 @@ Thời gian thực hiện linh hoạt (một người làm, quỹ thời gian ~1
 ### Phase 1 — MVP một Cluster
 
 - **M0 — Chốt spec/ADR**: use case/persona, capability/non-goal, data model, threat model, các ADR ở mục 29. *Deliverable: specification và architecture diagram được chốt.*
-- **M1 — Lab foundation**: chuẩn hóa Cluster demo với system pool, NFS subdir provisioner (`standard`), ingress-nginx + wildcard DNS, cert-manager với ClusterIssuer từ CA lab, PostgreSQL/Keycloak persistent, giữ verification suite hiện tại chạy được. *Deliverable: cluster nền reproducible.*
+- **M1 — Cluster foundation**: chuẩn hóa Cluster demo với system pool, `csi-driver-nfs` (`standard`), Traefik + wildcard DNS `*.mvp.tenantry.site`, cert-manager với Let's Encrypt, PostgreSQL/Keycloak persistent, giữ verification suite hiện tại chạy được. *Deliverable: cluster nền reproducible.*
 - **M2 — Backend skeleton**: Go API, migrations, OpenAPI/error model, user/org/membership tables, operation/outbox framework. *Deliverable: API health + basic Organization CRUD.*
 - **M3 — Portal auth + onboarding**: OIDC client, signup/login/logout, BFF/session, first-login upsert, xin tạo Organization + màn duyệt của Admin, Organization dashboard skeleton. *Deliverable: user mới login xin được org, Admin duyệt, org có quota dùng được.*
 - **M4 — Invitation/member/group**: invite link flow, group CRUD/membership, Keycloak sync worker, group claim mapper, role enforcement. *Deliverable: Alice mời Joe, tạo group, token Joe có group claim.*
@@ -1889,7 +1915,7 @@ Thời gian thực hiện linh hoạt (một người làm, quỹ thời gian ~1
 - **M8 — Compute modes**: shared pool validation, dedicated node reservation state machine, protected labels/taints, admission guard, concurrent reservation tests. *Deliverable: nhiều Dedicated Workspace chung node không overbook.*
 - **M9 — Network/IPAM**: NetworkPool/allocation, overlap protection, Calico IPPool render, annotation lock, baseline policy, delete quarantine. *Deliverable: Workspace nhận CIDR tự động, cross-Workspace traffic bị chặn.*
 - **M10 — Wizard + Namespace UI**: create wizard đầy đủ, group-role selector, capacity preview, operation status UI, Workspace detail, Namespace list/create/delete. *Deliverable: OrgOwner tự phục vụ hoàn toàn trên portal.*
-- **M11 — Access & ingress**: Capsule Proxy public TLS, kubeconfig generation + kubelogin, Headlamp SSO, logout/revoke tests, per-Workspace wildcard Certificate + `allowedHostnames`, demo app có PVC + Ingress URL HTTPS thật. *Deliverable: user thao tác data plane bằng kubectl và web, app truy cập được qua URL trong vùng hostname của Workspace.*
+- **M11 — Access & ingress**: Capsule Proxy public TLS, kubeconfig generation + kubelogin, Headlamp SSO, logout/revoke tests, Route (API, UI, `spec.routes` → Ingress, admission chặn tenant ghi Ingress), demo app có PVC + URL HTTPS thật. *Deliverable: user thao tác data plane bằng kubectl và web, app truy cập được qua URL của Route.*
 - **M12 — Hardening & evaluation**: metrics/dashboard/audit, persona E2E, isolation/tenant-escape suite, concurrency/failure tests, benchmark + baseline comparison, secret/config cleanup. *Deliverable: test report, benchmark, known limitations.*
 
 ### Phase 2 — Multi-cluster
@@ -1905,7 +1931,7 @@ Thời gian thực hiện linh hoạt (một người làm, quỹ thời gian ~1
 - soft-delete Workspace với grace period/restore;
 - email service thật cho invitation;
 - iframe Headlamp experiment;
-- custom domain per Workspace;
+- custom domain cho Route (quy tắc ở 7.6);
 - workload usage charts nâng cao;
 - CI robot identity;
 - MFA enrollment UI;
@@ -1924,7 +1950,7 @@ Thời gian thực hiện linh hoạt (một người làm, quỹ thời gian ~1
 - Shared/Dedicated compute và per-Workspace capacity reservation trên Organization-dedicated node;
 - dynamic CIDR/IPPool (auto-allocate);
 - Namespace UI trên portal;
-- tenant PVC + Ingress hoạt động;
+- tenant PVC + Route hoạt động;
 - kubeconfig OIDC (kubelogin);
 - Headlamp SSO;
 - delete/release đầy đủ;
@@ -1947,7 +1973,7 @@ Demo được toàn bộ flow không sửa YAML thủ công:
 3. Alice mời Joe và Bob qua invite link;
 4. Alice tạo group, add member;
 5. Alice tạo Shared Workspace qua wizard; platform tạo Capsule Tenant/ResourcePool/IPPool/RBAC;
-6. Joe tải kubeconfig và deploy workload có PVC, expose qua Ingress URL;
+6. Joe tải kubeconfig và deploy workload có PVC, tạo Route trên portal để có URL;
 7. Bob Viewer không sửa được workload;
 8. user mở Headlamp từ portal qua SSO;
 9. Pod có IP đúng CIDR và chạy đúng shared pool;
@@ -1987,7 +2013,7 @@ Demo được toàn bộ flow không sửa YAML thủ công:
 ### Phần 4 — Data plane
 
 - Joe tải kubeconfig/login OIDC;
-- deploy app có PVC, tạo Namespace từ portal, expose qua Ingress và mở URL thật;
+- deploy app có PVC, tạo Namespace và Route từ portal, mở URL thật;
 - mở Headlamp từ portal;
 - Bob chỉ xem;
 - thử policy violation và bị deny.
@@ -2031,7 +2057,7 @@ Demo được toàn bộ flow không sửa YAML thủ công:
 17. Vì sao Shared là soft allocation có overcommit ratio còn Dedicated là hard reservation?
 18. Vì sao user không tự tạo thêm Organization và Organization chỉ có một Owner?
 19. Vì sao Namespace UI đi qua CR khai báo thay vì portal gọi Kubernetes API bằng token user?
-20. Vì sao Ingress dùng vùng hostname per Workspace với wildcard cert từ CA nội bộ?
+20. Vì sao tenant không tự tạo Ingress mà khai báo Route, và vì sao dùng một wildcard cert chung?
 21. Vì sao PostgreSQL kiêm kho phiên, hàng đợi và idempotency, không thêm Redis?
 22. Vì sao phiên portal gắn với SSO session của Keycloak thay vì có thời hạn riêng?
 
@@ -2064,13 +2090,13 @@ Mỗi ADR ghi context, decision, alternatives, consequences và validation/test.
 9. tên gọi thống nhất `Cluster` ở mọi nơi (code/DB/API/UI);
 10. MVP một Cluster; data model/API multi-cluster từ đầu; Organization có một hoặc nhiều ClusterGrant và đúng một default;
 11. onboarding policy là grant mặc định điền sẵn khi Admin duyệt yêu cầu tạo Organization, trên default Cluster;
-12. ClusterGrant giới hạn resource/Workspace/shared pool/dedicated node/network/StorageClass/IngressClass theo Cluster;
+12. ClusterGrant giới hạn resource/Workspace/shared pool/dedicated node/network/StorageClass theo Cluster;
 13. Dedicated Workspace chọn đúng một granted node trong MVP và reserve CPU/RAM/Pod; nhiều Workspace cùng org có thể dùng node nếu còn capacity;
 14. mỗi Workspace có Calico IPPool cấp từ NetworkPool, auto-allocate mặc định;
 15. Workspace không migrate Cluster trong scope đồ án;
 16. provisioning qua outbox → PlatformWorkspace CR → controller; worker dùng credential scoped; Cluster Agent mTLS là Phase 2;
 17. central plane chạy trên system pool của Cluster ở MVP, tách ra khi multi-cluster;
-18. tenant có PVC (provisioner đơn giản) và Ingress (shared controller + wildcard domain) từ MVP;
+18. tenant có PVC (provisioner đơn giản) và Route (shared controller + wildcard domain) từ MVP;
 19. kubeconfig dùng kubelogin và Capsule Proxy của Cluster;
 20. mỗi Cluster có Headlamp service/subdomain, portal mở qua Keycloak SSO; không iframe/fork;
 21. invitation bằng link trong portal; email thật là stretch;
@@ -2081,13 +2107,14 @@ Mỗi ADR ghi context, decision, alternatives, consequences và validation/test.
 26. user xin tạo Organization (`Pending`, tối đa một yêu cầu mỗi user), Admin duyệt kèm grant hoặc từ chối kèm lý do; Admin cũng tạo thẳng Org kèm Owner + grant;
 27. mỗi Organization đúng một OrgOwner, transfer hai bước; nhiều OrgAdmin;
 28. tên Kubernetes-visible `<org-slug>-<ws-slug>`; cả hai slug immutable; label mang immutable ID;
-29. Ingress hostname `<app>.<org>-<ws>.apps.<cluster>.<domain>`, wildcard Certificate per Workspace từ CA lab;
+29. app ra ngoài qua Route do platform dựng Ingress; hostname `<tên>-<org>-<ws>.<apps domain>`, một wildcard cert Let's Encrypt chung; tenant không ghi Ingress;
 30. Shared pool soft allocation với `allocationOvercommitRatio` per pool; Dedicated hard reservation;
 31. delete Workspace xóa ngay kể cả PVC, confirm gõ tên; chỉ Admin được force finalizer;
 32. Namespace UI khai báo qua `spec.namespaces`; OrgOwner/OrgAdmin + TenantOwner-group được thao tác;
 33. NetworkPool có thể là pool chung (không gắn Organization) để phục vụ onboarding;
-34. storage `standard` = NFS subdir provisioner;
+34. storage `standard` = NFS qua `csi-driver-nfs`;
 35. phiên portal sống theo SSO session của Keycloak, một bộ thời hạn duy nhất ở realm; không Redis;
-36. central plane không đọc Node: kiểm node, label/taint và capacity đi qua CRD phụ do operator reconcile.
+36. central plane không đọc Node: kiểm node, label/taint và capacity đi qua CRD phụ do operator reconcile;
+37. domain thật `tenantry.site`, cert Let's Encrypt, ingress controller Traefik.
 
 Bộ scope này đủ lớn để thể hiện kiến trúc platform, identity, Kubernetes controller, networking, scheduling, policy và UX; đồng thời đủ gọn để một người hoàn thành như một đồ án tốt nghiệp, với đường mở rộng multi-cluster đã được thiết kế sẵn.

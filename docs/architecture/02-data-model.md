@@ -45,6 +45,7 @@ erDiagram
   workspaces ||--o{ workspace_group_bindings : ""
   groups ||--o{ workspace_group_bindings : ""
   workspaces ||--o{ workspace_namespaces : ""
+  workspaces ||--o{ workspace_routes : ""
   organizations ||--o{ operations : ""
   operations ||--o{ outbox_events : ""
   clusters ||--o{ outbox_events : "target"
@@ -187,7 +188,7 @@ erDiagram
     text status "Registered|Ready|Maintenance|Unavailable"
     text proxy_endpoint
     text console_url
-    text apps_wildcard_domain
+    text apps_domain "mvp.tenantry.site"
     jsonb capabilities
     timestamptz last_health_check
   }
@@ -218,7 +219,6 @@ erDiagram
     bigint requests_storage_bytes
     text[] allowed_compute_modes
     text[] allowed_storage_classes
-    text[] allowed_ingress_classes
   }
   shared_compute_pools {
     text id PK
@@ -344,6 +344,17 @@ erDiagram
     text state
     jsonb usage_snapshot
   }
+  workspace_routes {
+    text id PK "rte-…"
+    text workspace_id FK
+    text namespace "tên Namespace đầy đủ"
+    text name "nhãn user đặt"
+    text hostname "UNIQUE khi state <> Deleted"
+    text service_name
+    int service_port
+    text state "Desired|Creating|Active|Deleting|Deleted"
+    text created_by FK
+  }
   operations {
     text id PK
     text org_id FK
@@ -386,6 +397,7 @@ erDiagram
   workspaces ||--|| network_allocations : ""
   workspaces ||--o{ workspace_group_bindings : ""
   workspaces ||--o{ workspace_namespaces : ""
+  workspaces ||--o{ workspace_routes : ""
   operations ||--o{ outbox_events : ""
 ```
 
@@ -400,6 +412,8 @@ erDiagram
 | Σ allocation Shared trên pool ≤ ratio × reservable | **transaction**: lock row `shared_compute_pools`, `SUM` cột tài nguyên của `workspaces` trên pool |
 | Σ allocation trong grant ≤ grant | **transaction**: lock row `organization_cluster_grants` |
 | CIDR không overlap trong cluster | `EXCLUDE USING gist (cluster_id WITH =, cidr inet_ops WITH &&) WHERE (state <> 'Released')` (extension `btree_gist`) |
+| Hostname của Route duy nhất toàn nền tảng | `UNIQUE (hostname) WHERE state <> 'Deleted'` trên `workspace_routes`; vi phạm trả `ROUTE_HOSTNAME_TAKEN` |
+| Tối đa 20 Route mỗi Workspace | **transaction**: lock row `workspaces`, `COUNT` Route chưa `Deleted` |
 | Event cùng resource giao đúng thứ tự | worker chỉ lấy event khi không còn event cũ hơn chưa giao cùng `ordering_key` |
 
 Thứ tự lock cố định để tránh deadlock: `organization_cluster_grants` → `shared_compute_pools` hoặc `dedicated_node_grants` → `network_pools`. Mọi transaction create/resize/delete lock theo đúng thứ tự này.
@@ -426,17 +440,18 @@ flowchart LR
   NA["network_allocations.cidr"]:::db
   GB["workspace_group_bindings<br/>+ groups.machine_name"]:::db
   WN["workspace_namespaces<br/>source = portal"]:::db
-  G["organization_cluster_grants<br/>allowed_storage_classes,<br/>allowed_ingress_classes"]:::db
-  C["clusters.apps_wildcard_domain"]:::db
+  G["organization_cluster_grants<br/>allowed_storage_classes"]:::db
+  WR["workspace_routes<br/>hostname đã ghép"]:::db
+  C["clusters.apps_domain"]:::db
 
-  CR["PlatformWorkspace<br/>metadata.name = k8s_name<br/>spec.resources<br/>spec.compute<br/>spec.network.cidr<br/>spec.accessBindings<br/>spec.namespaces<br/>spec.ingress.hostnameZone<br/>spec.storageClasses"]:::cr
+  CR["PlatformWorkspace<br/>metadata.name = k8s_name<br/>spec.resources<br/>spec.compute<br/>spec.network.cidr<br/>spec.accessBindings<br/>spec.namespaces<br/>spec.routes<br/>spec.storageClasses"]:::cr
 
-  T["Capsule Tenant k8s_name<br/>owners, nodeSelector,<br/>namespaceOptions.quota,<br/>storageClasses, ingressOptions"]:::k8s
+  T["Capsule Tenant k8s_name<br/>owners, nodeSelector,<br/>namespaceOptions.quota,<br/>storageClasses"]:::k8s
   RP["ResourcePool + LimitRange"]:::k8s
   IP["Calico IPPool + NetworkPolicy"]:::k8s
   RB["RoleBinding tenantry:tenant-developer / viewer"]:::k8s
   NS["Namespace k8s_name-*"]:::k8s
-  CERT["Certificate *.k8s_name.apps... + Secret"]:::k8s
+  ROUTE["Ingress của Route<br/>trong Namespace tenant"]:::k8s
   NODE["Node label workspaces.tenantry.io/ws-id"]:::k8s
 
   W --> CR
@@ -445,17 +460,18 @@ flowchart LR
   GB --> CR
   WN --> CR
   G --> CR
-  C --> CR
+  C -->|"API ghép hostname"| WR
+  WR --> CR
   CR --> T
   CR --> RP
   CR --> IP
   CR --> RB
   CR --> NS
-  CR --> CERT
+  CR --> ROUTE
   CR --> NODE
 ```
 
 **Điểm cần review**
 
-- CR chứa **giá trị đã resolve** (node name, CIDR, group subject, hostname zone), không chứa ID tham chiếu về DB mà controller phải tra. Điều này giữ controller không phụ thuộc DB và là nền cho Cluster Agent Phase 2.
+- CR chứa **giá trị đã resolve** (node name, CIDR, group subject, hostname của Route), không chứa ID tham chiếu về DB mà controller phải tra. Điều này giữ controller không phụ thuộc DB và là nền cho Cluster Agent Phase 2.
 - Nếu Admin đổi `allowed_storage_classes` của grant, mọi Workspace trong grant cần re-render CR → một "fan-out" trong service entitlement sinh nhiều outbox event. Task của M5/M7.

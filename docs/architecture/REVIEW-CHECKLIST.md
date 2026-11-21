@@ -51,14 +51,11 @@
 | D5 | Shared ceiling tính trên `requests`; `limits` kiểm bằng ratio riêng | Giữ | 05 §4 |
 | D6 | Chia supernet `10.240.0.0/16`: `/18` pool chung, `/18` pool riêng đầu tiên | Chốt bảng chia để pool chung/riêng không overlap | 05 §5 |
 | D7 | Egress internet: replicate policy theo profile Workspace; deny metadata `169.254.169.254` | Mặc định cho phép internet egress (demo pull image), deny metadata luôn | 05 §6 |
-| D8 | Certificate wildcard đặt ở `tenantry-system` rồi replicate Secret bằng **GlobalTenantResource** (plan ghi TenantResource) | Dùng GlobalTenantResource; sửa plan §7.6 | 03 §10, 05 §7 |
+| D8 | ValidatingAdmissionPolicy chặn tenant ghi Ingress/Certificate có chặn nhầm controller hoặc HTTP-01 solver không? | Test âm ở M11 | 05 §7 |
 | D9 | Annotation IPPool cho Namespace tạo bằng kubectl: Capsule replication có đặt kịp không? | Controller bù annotation nếu thiếu; test | 03 §7 |
 | D10 | Tenant Pod gọi `kubernetes.default` có chặn bằng NetworkPolicy không? | Không chặn; ServiceAccount tenant không có RoleBinding mặc định | 06 §1 |
 | D11 | Controller cần `nodes patch`: thu hẹp bằng ValidatingAdmissionPolicy chỉ cho đổi label/taint prefix `tenantry.io/` | Thêm ở M8 hardening | 06 §5 |
-| D12 | NFS `archiveOnDelete` tắt hay bật? | Tắt, khớp cảnh báo "xóa là mất dữ liệu" | 05 §9 |
-| D13 | Central plane (Keycloak/Prometheus/PostgreSQL) dùng chung StorageClass `standard` với tenant? | Class riêng `system-nfs` hoặc export NFS riêng, tránh tenant làm đầy ổ system | 05 §9 |
 | D14 | LimitRange thêm `max` per PVC? | Có, để một PVC không nuốt cả `requests.storage` | 05 §9 |
-| D16 | DNS wildcard cho máy demo | dnsmasq/CoreDNS nội bộ; `sslip.io` là phương án dự phòng | 01 §3, 05 §7 |
 
 ## E. Bảo mật / identity
 
@@ -66,5 +63,5 @@
 |---|---|---|---|
 | E3 | Client `tenantry-sync` với `manage-users` + `query-groups` có đủ để tạo group, thêm/gỡ member, logout user không? | Kiểm chứng trên Keycloak 26 của lab ở M4 | 06 §7 |
 | E6 | Keycloak có chạy lại group mapper khi refresh token không? Nếu có, token refresh ngay sau khi gỡ group đã mất group claim | Kiểm chứng ở M4; nếu đúng thì bỏ bước logout user để người bị gỡ không bị đăng xuất mọi nơi | 06 §5 |
-| E5 | Kích thước JWT header khi user thuộc ~20 group | Test với ingress-nginx `large-client-header-buffers` | 06 §2 |
+| E5 | Kích thước JWT header khi user thuộc ~20 group | Test qua Traefik, Capsule Proxy, Headlamp | 06 §2 |
 | E7 | Ba con số phiên (access 5 phút, SSO idle 8 giờ, SSO max 24 giờ) có hợp với buổi demo không? | Giữ; chỉnh trong realm export nếu cần | 06 §3 |

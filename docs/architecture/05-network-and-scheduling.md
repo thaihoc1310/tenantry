@@ -1,13 +1,13 @@
 # 05 — Network, scheduling, ingress, access và storage
 
-> Nơi định nghĩa cho node layout, capacity model, IP plan, NetworkPolicy, Ingress/TLS và storage; quy tắc nghiệp vụ nền ở `PRODUCT-PLAN.md` mục 6, 7, 11, 12, 18. Sơ đồ bám theo lab hiện có trong repo (Calico IPPool `Manual` per tenant, `PodNodeSelector`, NetworkPolicy replicate qua `GlobalTenantResource`) và thay tên lab (`solar`, `water`, `capsule.clastix.io/tenant=solar`) bằng tên Tenantry (`acme-solar`, `tenantry.io/...`).
+> Nơi định nghĩa cho node layout, capacity model, IP plan, NetworkPolicy, Route/Ingress/TLS và storage; quy tắc nghiệp vụ nền ở `PRODUCT-PLAN.md` mục 6, 7, 11, 12, 18. Sơ đồ kế thừa cách làm của lab bản đầu (nhánh `feat/tenantry-scaffold`) (Calico IPPool `Manual` per tenant, `PodNodeSelector`, NetworkPolicy replicate qua `GlobalTenantResource`) và thay tên lab (`solar`, `water`, `capsule.clastix.io/tenant=solar`) bằng tên Tenantry (`acme-solar`, `tenantry.io/...`).
 > Chỗ plan chưa nói rõ được đánh dấu **(giả định)**.
 
 Ví dụ dùng xuyên suốt:
 
 | Thực thể | Giá trị |
 |---|---|
-| Cluster | `cluster-a`, wildcard domain `*.apps.cluster-a.tenantry.example` |
+| Cluster | `cluster-a`, apps domain `mvp.tenantry.site` |
 | Organization | slug `acme`, id `org-01jabc` |
 | Workspace Shared | `acme-solar` (`ws-01jsol`), pool `shared-general`, CIDR `10.240.12.0/24` |
 | Workspace Dedicated | `acme-water` (`ws-01jxyz`, reserve 4 CPU) và `acme-green` (`ws-01jgrn`, reserve 2 CPU) trên node `worker-a-05` |
@@ -30,8 +30,8 @@ flowchart TB
     direction LR
     CENTRAL["Central plane<br/>Portal, Platform API, Provisioning Worker,<br/>Group Sync Worker, PostgreSQL, Keycloak"]
     TENANCY["Capsule Operator + webhook<br/>Capsule Proxy<br/>Workspace Controller"]
-    EDGE["ingress-nginx (class platform-shared)<br/>cert-manager<br/>Headlamp"]
-    OBS["Prometheus / Grafana<br/>NFS subdir provisioner"]
+    EDGE["Traefik (class platform-shared)<br/>cert-manager<br/>Headlamp"]
+    OBS["Prometheus / Grafana<br/>csi-nfs-controller"]
   end
 
   subgraph SHARED["Shared pool shared-general: wk-1, wk-2<br/>label tenantry.io/compute-pool=shared-general"]
@@ -58,13 +58,14 @@ flowchart TB
   class W,G,DS ded;
 ```
 
-Ánh xạ với lab hiện tại: lab gắn `capsule.clastix.io/tenant=solar` lên `wk1,wk2` và `=water` lên `wk3` (scripts/40-platform.sh), tức mỗi tenant một pool cứng. Tenantry tách thành hai kiểu: pool chung `tenantry.io/compute-pool=shared-general` cho Shared mode và label/taint theo Organization + membership label theo Workspace cho Dedicated mode (plan 6.2, 6.4).
+Ánh xạ với lab bản đầu: lab gắn `capsule.clastix.io/tenant=solar` lên `wk1,wk2` và `=water` lên `wk3` (scripts/40-platform.sh), tức mỗi tenant một pool cứng. Tenantry tách thành hai kiểu: pool chung `tenantry.io/compute-pool=shared-general` cho Shared mode và label/taint theo Organization + membership label theo Workspace cho Dedicated mode (plan 6.2, 6.4).
 
 **Điểm cần review**
 
-- System pool trong lab hiện chưa có node riêng; đề xuất label/taint `tenantry.io/compute-pool=system` là giả định để tenant workload không thể vào system node (plan 6.5 chỉ nói "không được schedule vào system/control-plane nodes").
+- **Cụm MVP**: một node worker riêng làm system pool, mang label `tenantry.io/compute-pool=system` và taint `tenantry.io/compute-pool=system:NoSchedule`; mọi Pod của central plane và thành phần nền khai nodeSelector cùng toleration cho taint đó. Hai worker còn lại là shared pool. Ngoại lệ duy nhất: Traefik chạy trên node control-plane, nơi IP public đi vào (mục 7).
+- Phase 2 tách central plane (Portal, API, worker, PostgreSQL, Keycloak) sang một cụm riêng. Mỗi cụm tenant vẫn giữ một system pool nhỏ cho thành phần theo cụm: Capsule, Capsule Proxy, operator, Traefik, cert-manager, Headlamp.
 - Cluster demo tối thiểu cần bao nhiêu node: 1 control-plane + 1–2 system + 2 shared + 1 dedicated = 5–6 node; đủ tài nguyên lab không?
-- Trên dedicated node, system DaemonSet cần toleration cho taint `tenantry.io/dedicated-org` — phải thêm vào Helm values của Calico/monitoring/NFS client, và tính vào `systemReserve`.
+- Trên dedicated node, system DaemonSet cần toleration cho taint `tenantry.io/dedicated-org` — phải thêm vào Helm values của Calico/monitoring, và tính vào `systemReserve`. `csi-nfs-node` mặc định đã tolerate mọi taint, chỉ cần tính vào `systemReserve`.
 - Có cho phép một node vừa là shared pool vừa là dedicated không? Plan hàm ý không (grant yêu cầu node sạch); nên enforce ở API.
 
 ---
@@ -117,7 +118,7 @@ flowchart LR
   end
 ```
 
-Bảng tương ứng với lab hiện tại:
+Bảng tương ứng với lab bản đầu:
 
 | Lớp | Lab (Solar/Water) | Tenantry |
 |---|---|---|
@@ -130,7 +131,7 @@ Bảng tương ứng với lab hiện tại:
 
 - Cơ chế inject toleration: `PodTolerationRestriction` (admission plugin có sẵn của kube-apiserver, cấu hình qua annotation Namespace) là lựa chọn đơn giản nhất cho kubeadm lab; thay thế là mutating webhook riêng trong Workspace Controller. Cần chốt một trong hai.
 - `spec.nodeName` bỏ qua scheduler và kubelet không kiểm tra taint `NoSchedule`, nên **bắt buộc** có lớp reject `nodeName` (A4); Capsule không làm việc này.
-- Nếu `PodNodeSelector`/`PodTolerationRestriction` bị tắt, enforcement hỏng im lặng — plan 6.4 yêu cầu test bắt buộc; test nên chạy trong `90-verify.sh`.
+- Nếu `PodNodeSelector`/`PodTolerationRestriction` bị tắt, enforcement hỏng im lặng — plan 6.4 yêu cầu test bắt buộc; test nên chạy trong `make cluster-verify`.
 - Với Shared mode, nếu Organization có nhiều Workspace cùng pool, `PodNodeSelector` không tách Workspace với nhau — đúng ý định (cô lập bằng Namespace/NetworkPolicy/quota), cần nói rõ trong luận văn.
 
 ---
@@ -333,7 +334,7 @@ flowchart LR
   end
 
   DNS["kube-system / kube-dns<br/>UDP+TCP 53"]
-  ING["ingress-nginx<br/>namespace ingress-system (giả định)"]
+  ING["Traefik<br/>namespace ingress-system"]
   NET["Internet<br/>0.0.0.0/0 trừ private + metadata"]
   META["Metadata endpoint<br/>169.254.169.254/32"]
 
@@ -341,7 +342,7 @@ flowchart LR
   SB -->|"allow: cùng tenant label"| SF
   SF -->|"allow egress DNS"| DNS
   SB -->|"allow egress DNS"| DNS
-  ING -->|"allow ingress từ ingress-nginx<br/>tới Pod được expose"| SF
+  ING -->|"allow ingress từ Traefik<br/>tới Pod được expose"| SF
   SF -->|"allow egress Internet<br/>nếu profile cho phép"| NET
   SF -. "deny: khác tenant label" .-x WA
   WA -. "deny: khác tenant label" .-x SB
@@ -359,7 +360,7 @@ Bộ rule replicate (kế thừa `manifests/tenant-resources.yaml`, mở rộng 
 | 1 | `tenant-default-deny` | `podSelector: {}`, `policyTypes: [Ingress, Egress]`, không rule → deny all | — |
 | 2 | `tenant-allow-same-workspace` | ingress + egress `namespaceSelector: capsule.clastix.io/tenant = {{tenant.name}}` | Label do Capsule gắn khi tạo Namespace; tenant không sửa được (Capsule webhook) |
 | 3 | `tenant-allow-dns` | egress tới `kube-system` `k8s-app=kube-dns` UDP/TCP 53 | Lab đã có |
-| 4 | `tenant-allow-ingress-controller` | ingress từ `namespaceSelector: kubernetes.io/metadata.name=ingress-system` (giả định tên) | Namespace label bất biến của Kubernetes |
+| 4 | `tenant-allow-ingress-controller` | ingress từ `namespaceSelector: kubernetes.io/metadata.name=ingress-system` | Namespace label bất biến của Kubernetes |
 | 5 | `tenant-allow-internet-egress` | egress `ipBlock 0.0.0.0/0` `except [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.169.254/32]` — chỉ replicate khi policy profile của Workspace bật (giả định: profile `internet-egress` mặc định bật cho MVP) | — |
 | 6 | (ẩn trong #5) deny metadata | `169.254.169.254/32` nằm trong `except` nên không có rule nào cho phép | — |
 
@@ -368,74 +369,86 @@ Nguyên tắc "không tin label tenant tự sửa": mọi selector chỉ dùng `
 **Điểm cần review**
 
 - Lab hiện không có rule Internet egress (Pod tenant không ra ngoài được); Tenantry thêm rule #5 theo profile — chốt mặc định bật hay tắt cho onboarding Organization.
-- Rule #4 cho phép mọi Pod trong Namespace nhận traffic từ ingress-nginx, không chỉ Pod "được expose"; muốn chặt hơn cần Pod label do user đặt (không tin được) hoặc chấp nhận trade-off này.
-- Ingress của Workspace Water trỏ backend sang Service của Solar bị chặn ở lớp Capsule (Ingress chỉ tham chiếu Service cùng Namespace theo Kubernetes) — không cần rule mạng riêng, nhưng nên ghi thành test.
+- Rule #4 cho phép mọi Pod trong Namespace nhận traffic từ Traefik, không chỉ Pod "được expose"; muốn chặt hơn cần Pod label do user đặt (không tin được) hoặc chấp nhận trade-off này.
+- Ingress của Water không trỏ được sang Service của Solar: Ingress chỉ tham chiếu Service cùng Namespace, và Ingress do controller tạo đúng Namespace của Route — không cần rule mạng riêng, nhưng nên ghi thành test.
 - Calico NetworkPolicy (CRD) có thể thay Kubernetes NetworkPolicy để dùng `GlobalNetworkPolicy` một lần thay vì replicate — plan chọn replicate qua Capsule để gắn với Tenant lifecycle; giữ hay đổi?
 
 ---
 
-## 7. Ingress và TLS
+## 7. Route, Ingress và TLS
 
-**Mục đích:** theo dõi request HTTPS từ browser tới Pod, và luồng cấp wildcard Certificate per Workspace từ CA lab rồi replicate Secret vào mọi Namespace.
+**Mục đích:** theo dõi request HTTPS từ browser tới Pod, ai được tạo Ingress, và cert nằm ở đâu. Quy tắc nghiệp vụ của Route ở `PRODUCT-PLAN.md` mục 7.6; mục này định nghĩa phần hiện thực trong cluster.
 
 ```mermaid
 flowchart TB
-  subgraph DNSL["DNS"]
-    D1["Wildcard *.apps.cluster-a.tenantry.example<br/>→ IP ingress-nginx<br/>(CoreDNS/dnsmasq lab hoặc sslip.io)"]
+  subgraph DNSL["DNS (Cloudflare, DNS only)"]
+    D1["*.mvp.tenantry.site → IP ingress<br/>portal / auth / kube-cluster-a / console-cluster-a<br/>.tenantry.site → IP ingress"]
   end
 
-  subgraph EDGE["System pool"]
-    ING["ingress-nginx<br/>IngressClass platform-shared"]
-    CM["cert-manager"]
-    CI["ClusterIssuer capsule-lab-ca<br/>(CA nội bộ của lab)"]
+  subgraph EDGE["Namespace ingress-system (node control-plane)"]
+    ING["Traefik<br/>IngressClass platform-shared<br/>chỉ bật provider Ingress"]
+    WC["Secret mvp-wildcard-tls<br/>*.mvp.tenantry.site<br/>cert mặc định của Traefik"]
+  end
+
+  subgraph CMG["cert-manager"]
+    CI["ClusterIssuer letsencrypt<br/>DNS-01 qua Cloudflare API token"]
   end
 
   subgraph CTRL["Workspace Controller"]
-    CERT["Certificate acme-solar-wildcard<br/>dnsNames *.acme-solar.apps.cluster-a.tenantry.example<br/>issuerRef ClusterIssuer capsule-lab-ca<br/>secretName acme-solar-wildcard-tls<br/>namespace tenantry-system (giả định)"]
-    TR["TenantResource (Tenant acme-solar)<br/>replicate Secret acme-solar-wildcard-tls<br/>vào mọi Namespace của Workspace"]
-    TEN["Tenant acme-solar<br/>ingressOptions.allowedClasses [platform-shared]<br/>allowedHostnames.allowedRegex<br/>^[a-z0-9-]+\\.acme-solar\\.apps\\.cluster-a\\.tenantry\\.example$<br/>hostnameCollisionScope Cluster"]
+    RT["spec.routes<br/>web → acme-solar-frontend / web:80<br/>host web-acme-solar.mvp.tenantry.site"]
   end
 
   subgraph WS["Namespace acme-solar-frontend"]
-    IR["Ingress web<br/>ingressClassName platform-shared<br/>host web.acme-solar.apps.cluster-a.tenantry.example<br/>tls.secretName acme-solar-wildcard-tls"]
-    SEC["Secret acme-solar-wildcard-tls<br/>(bản replicate)"]
+    IR["Ingress web (do controller tạo)<br/>ingressClassName platform-shared<br/>host web-acme-solar.mvp.tenantry.site<br/>không có tls.secretName"]
     SVC["Service web ClusterIP"]
     POD["Pod web"]
   end
 
-  U["Browser<br/>(đã import CA lab một lần)"] -->|"1. resolve"| D1
-  U -->|"2. HTTPS SNI web.acme-solar.apps..."| ING
-  ING -->|"3. TLS terminate bằng Secret của Ingress"| IR
+  U["Browser"] -->|"1. resolve"| D1
+  U -->|"2. HTTPS, SNI web-acme-solar.mvp…"| ING
+  ING -->|"3. TLS bằng cert mặc định"| WC
+  ING -->|"4. khớp host"| IR
   IR --> SVC --> POD
-  SEC --- IR
+  CI -->|"Certificate → Secret"| WC
+  RT -->|"server-side apply"| IR
 
-  CERT -->|"CertificateRequest"| CM
-  CM --> CI
-  CI -->|"Secret acme-solar-wildcard-tls"| CERT
-  CERT --> TR
-  TR --> SEC
-
-  subgraph REJ["Bị Capsule từ chối"]
-    X1["Ingress host api.acme-water.apps...<br/>trong Namespace Solar → ngoài regex"]
-    X2["Ingress host web.acme-solar.apps... lần hai<br/>ở Namespace khác → collision Cluster"]
-    X3["ingressClassName nginx-other<br/>→ không trong allowedClasses"]
-    X4["Service NodePort/LoadBalancer<br/>→ serviceOptions cấm"]
+  subgraph REJ["Bị admission từ chối"]
+    X1["Tenant kubectl apply Ingress<br/>→ ValidatingAdmissionPolicy"]
+    X2["Tenant tạo Certificate / Issuer<br/>→ ValidatingAdmissionPolicy"]
+    X3["Service NodePort/LoadBalancer<br/>→ Capsule serviceOptions"]
   end
-  X1 --x TEN
-  X2 --x TEN
-  X3 --x TEN
-  X4 --x TEN
 ```
 
-Chuỗi bảo vệ hostname: (1) regex `allowedHostnames` khóa tenant trong vùng `*.acme-solar.apps...`; (2) `hostnameCollisionScope: Cluster` chặn hai Ingress cùng host ở bất kỳ Namespace nào; (3) `allowedIngressClasses` của ClusterGrant → `allowedClasses` của Tenant; (4) Service `NodePort`/`LoadBalancer`/`ExternalName` bị cấm nên Ingress là đường expose duy nhất.
+**Ai ghi gì**
+
+| Object | Ai tạo | Ở đâu |
+|---|---|---|
+| Ingress của Route | Workspace Controller, từ `spec.routes` | Namespace của tenant |
+| Wildcard Certificate `*.mvp.tenantry.site` và Secret | cert-manager, cài lúc dựng lab | `ingress-system` |
+| Certificate của host platform (portal, auth, kube, console) | cert-manager, cài lúc dựng lab | namespace của từng thành phần |
+| Tenant | chỉ đọc Ingress | — |
+
+**Ba lớp giữ hostname**
+
+1. **API ghép hostname** `<tên>-<k8s_name>.<apps domain>` và DB giữ `UNIQUE (hostname)`; user không nhập được phần đuôi. Hai cặp (tên, Workspace) khác nhau ghép ra cùng một chuỗi (ví dụ `a-b` + `c` và `a` + `b-c`) thì cái đến sau nhận `ROUTE_HOSTNAME_TAKEN`.
+2. **ValidatingAdmissionPolicy `tenantry-tenant-ingress-lockdown`**: trong mọi Namespace có label `capsule.clastix.io/tenant`, từ chối CREATE/UPDATE/DELETE trên `ingresses` (`networking.k8s.io`), mọi resource của `cert-manager.io`, `acme.cert-manager.io` và `gateway.networking.k8s.io`, trừ khi người gọi là ServiceAccount `tenantry-operator` hoặc ServiceAccount của cert-manager. Cần luật này vì ClusterRole `admin` mà Capsule cấp cho chủ Workspace có sẵn quyền ghi Ingress, và cert-manager tự gộp quyền ghi `Certificate`/`Issuer` vào `admin`. Không chặn thì tenant tự xin được cert cho hostname của người khác qua ClusterIssuer.
+3. **Service `NodePort`/`LoadBalancer`/`ExternalName` bị Capsule cấm**, nên Route là đường ra duy nhất.
+
+**TLS**
+
+- Một ClusterIssuer `letsencrypt` dùng DNS-01 với API token Cloudflare (chỉ quyền sửa DNS của zone `tenantry.site`). DNS-01 không cần Let's Encrypt gọi vào cluster.
+- Wildcard cert là **cert mặc định** của Traefik; Ingress của Route không mang `tls.secretName`, nên không có private key nào trong Namespace của tenant.
+- Traefik chỉ bật provider Kubernetes Ingress (tắt CRD `IngressRoute` và Gateway API) để chỉ có một loại object mở được đường vào.
+
+**Đường vào ở cụm MVP.** Không có load balancer; IP public được hạ tầng NAT vào node control-plane. Traefik chạy trên chính node đó (nodeSelector, toleration cho taint control-plane, có giới hạn RAM) và nghe `hostPort` 80/443; cổng 80 chỉ redirect sang 443. Không đặt Traefik ở node khác rồi chuyển tiếp qua kube-proxy, vì khi đó Traefik mất IP thật của client và rate limit theo IP (`06-security-and-identity.md` mục 6) hết tác dụng.
+
+**Custom domain** (sau MVP): Ingress của Route mang `tls.secretName`, Certificate nằm cùng Namespace và do controller tạo với solver HTTP-01; private key khi đó nằm trong Namespace của tenant, chấp nhận vì đó là domain của chính họ.
 
 **Điểm cần review**
 
-- Certificate đặt ở Namespace của controller (`tenantry-system`) rồi replicate Secret, hay đặt trực tiếp trong Namespace đầu tiên của Workspace? Đặt ở controller namespace tránh tenant xóa/sửa Certificate; đây là giả định.
-- Capsule `TenantResource` replicate Secret kèm private key vào Namespace tenant — TenantOwner đọc được key wildcard của chính Workspace mình; chấp nhận (key chỉ bao vùng của họ) hay dùng cert-manager per-Ingress annotation thay thế?
-- Regex `allowedHostnames` phải escape dấu chấm; controller render từ `k8s_name` và wildcard domain của Cluster — cần unit test render.
-- DNS wildcard trong lab: CoreDNS `hosts`/`template` plugin hay sslip.io; ảnh hưởng tới hostname thật dùng trong demo.
-- cert-manager trong lab hiện dùng cho Keycloak (`capsule-lab-root-ca` trong `identity-system`); ClusterIssuer `capsule-lab-ca` cần được `10-cert-manager.sh` tạo theo M1.
+- Luật admission ở lớp 2 chưa được chạy thử: cần test âm ở M11 (tenant `kubectl apply` Ingress và Certificate đều bị từ chối; controller và HTTP-01 solver vẫn ghi được).
+- Capsule Proxy cần TLS passthrough hay terminate tại Traefik rồi mã hóa lại? Ảnh hưởng cách khai Ingress cho `kube-cluster-a.tenantry.site`.
+- Let's Encrypt giới hạn số cert mỗi domain mỗi tuần; MVP chỉ cần năm cert nên không chạm, custom domain thì xin trên domain của khách.
 
 ---
 
@@ -451,8 +464,8 @@ flowchart LR
     C3["client portal<br/>confidential BFF + PKCE<br/>audience portal-api<br/>group mapper: không"]
   end
 
-  U1["kubectl + kubelogin<br/>kubeconfig từ portal:<br/>server https://kube-cluster-a.tenantry.example<br/>exec kubectl oidc-login"]
-  U2["Browser → Headlamp<br/>https://console-cluster-a.tenantry.example<br/>SSO từ session portal"]
+  U1["kubectl + kubelogin<br/>kubeconfig từ portal:<br/>server https://kube-cluster-a.tenantry.site<br/>exec kubectl oidc-login"]
+  U2["Browser → Headlamp<br/>https://console-cluster-a.tenantry.site<br/>SSO từ session portal"]
   U3["Browser → Portal"]
 
   U1 -->|"browser login"| C1
@@ -465,7 +478,7 @@ flowchart LR
 
   subgraph CLUSTERA["Cluster A"]
     PX["Capsule Proxy<br/>public HTTPS (kubectl)<br/>+ ClusterIP (Headlamp)<br/>authPreferredTypes BearerToken"]
-    API["kube-apiserver<br/>AuthenticationConfiguration:<br/>issuer id.tenantry.example/realms/tenantry<br/>audiences [kubernetes, headlamp-cluster-a]<br/>username claim sub, prefix oidc:<br/>groups claim groups, prefix oidc:"]
+    API["kube-apiserver<br/>AuthenticationConfiguration:<br/>issuer auth.tenantry.site/realms/tenantry<br/>audiences [kubernetes, headlamp-cluster-a]<br/>username claim sub, prefix oidc:<br/>groups claim groups, prefix oidc:"]
     RBAC["RBAC + Capsule webhook<br/>owner group → Tenant owner<br/>Developer/Viewer → custom ClusterRole<br/>oidc:tenantry:tenant-users = Capsule user group"]
     PAPI["Platform API"]
     HL["Headlamp<br/>không có cluster-admin SA<br/>kubernetes host = Capsule Proxy service"]
@@ -482,7 +495,7 @@ flowchart LR
   subgraph FILTER["Capsule Proxy lọc (cluster-scoped LIST)"]
     F1["Namespace: chỉ Namespace của Tenant user sở hữu/được bind"]
     F2["Node: theo Tenant.spec.nodeSelector<br/>(Shared: không grant List → rỗng; Dedicated: node membership)"]
-    F3["StorageClass / IngressClass: theo allow-list của Tenant"]
+    F3["StorageClass: theo allow-list của Tenant"]
     F4["PersistentVolume, PriorityClass, RuntimeClass: theo Tenant"]
     F5["Namespaced resource: không lọc, RBAC thuần quyết định"]
   end
@@ -498,7 +511,7 @@ flowchart LR
 
 **Điểm cần review**
 
-- Lab hiện dùng `username.claim: preferred_username`, `prefix: ""`, audiences `[headlamp, kubernetes]`; plan yêu cầu `sub` + prefix `oidc:` và audience `headlamp-{clusterId}`. Đổi prefix làm mọi RoleBinding/Tenant owner phải mang `oidc:`; cần cập nhật `60-enable-oidc.sh`, `tenants.yaml`, `values/capsule.yaml` (`userGroups`) cùng lúc.
+- Lab bản đầu dùng `username.claim: preferred_username`, `prefix: ""`, audiences `[headlamp, kubernetes]`; plan yêu cầu `sub` + prefix `oidc:` và audience `headlamp-{clusterId}`. Lab viết mới ở M1 dùng luôn cấu hình của plan; mọi RoleBinding/Tenant owner và `userGroups` của Capsule phải mang prefix `oidc:`.
 - Với Shared mode "không grant Node List" (plan 6.2) nhưng Proxy vẫn lọc theo nodeSelector: Headlamp trang Nodes sẽ rỗng hoặc lỗi 403 — chọn hành vi nào cho UX.
 - Capsule Proxy cần hai Service/Ingress (public cho kubectl, ClusterIP cho Headlamp) hay một public endpoint cho cả hai? Sơ đồ vẽ hai để Headlamp không đi vòng ra ngoài.
 - Thời hạn token và contract thu hồi quyền: `06-security-and-identity.md` mục 3 và 5.
@@ -507,14 +520,29 @@ flowchart LR
 
 ## 9. Storage
 
-**Mục đích:** theo dõi PVC của tenant từ StorageClass `standard` (NFS subdir provisioner) tới ba lớp giới hạn: allow-list StorageClass của Tenant, `requests.storage` của ResourcePool, và `requests.storage` của ClusterGrant.
+**Mục đích:** theo dõi PVC của tenant từ StorageClass `standard` (NFS qua `csi-driver-nfs`) tới ba lớp giới hạn: allow-list StorageClass của Tenant, `requests.storage` của ResourcePool, và `requests.storage` của ClusterGrant.
+
+**Vì sao NFS.** Với Tenantry, storage chỉ là một StorageClass trong allow-list; đổi loại storage không đụng tới code. Tiêu chí chọn vì vậy là ít công vận hành nhất mà không phá kịch bản demo:
+
+| Phương án | Vì sao không làm mặc định |
+|---|---|
+| Block phân tán (Ceph, Longhorn) | Cụm kubeadm trần không có sẵn; tự dựng là nuôi thêm một hệ thống phân tán không phục vụ đề tài |
+| S3 qua CSI/FUSE | Mount được nhưng không đủ POSIX (ghi ngẫu nhiên, rename, lock), không chạy được PostgreSQL/Keycloak |
+| Local (local-path) | Ghim Pod vào một node, đụng kịch bản thu hồi dedicated node và drain; chỉ là class tùy chọn |
+| **NFS** | Một máy export một thư mục; Pod ở node nào cũng mount được; có RWX |
+
+Giới hạn chấp nhận cho lab: NFS **không ép dung lượng thật** (PVC 20Gi chỉ là con số tính quota, tenant vẫn ghi quá được cho tới khi đầy export), NFS server là một điểm chết, và database trên NFS chậm với fsync.
+
+**Một export, một StorageClass.** Lab có một NFS server (VM riêng ngoài cluster) export một thư mục `/srv/tenantry`, chỉ mở cho IP các node. Central plane (PostgreSQL, Keycloak, Prometheus) và tenant dùng chung StorageClass `standard`. Hệ quả chấp nhận: tenant ghi đầy export thì central plane cũng hết chỗ. Production tách export và thêm class `system-nfs`.
+
+**Vì sao `csi-driver-nfs`.** `nfs-subdir-external-provisioner` phát hành bản cuối tháng 3/2023; `csi-driver-nfs` còn phát triển, là giao diện chuẩn của Kubernetes, có snapshot/clone, và Pod `csi-nfs-node` tự mount nên node không cần cài `nfs-common`. Đổi lại có thêm một DaemonSet trên mọi node.
 
 ```mermaid
 flowchart LR
   subgraph INFRA["Hạ tầng (system pool)"]
-    NFS["NFS server<br/>export /srv/tenantry (giả định: VM lab hoặc Pod trong system pool)"]
-    PROV["nfs-subdir-external-provisioner<br/>chạy trên system pool"]
-    SC["StorageClass standard<br/>provisioner nfs-subdir<br/>reclaimPolicy Delete<br/>volumeBindingMode Immediate<br/>accessModes RWO/RWX"]
+    NFS["NFS server (VM ngoài cluster)<br/>export /srv/tenantry"]
+    PROV["csi-driver-nfs<br/>csi-nfs-controller trên system pool<br/>csi-nfs-node trên mọi node"]
+    SC["StorageClass standard<br/>provisioner nfs.csi.k8s.io<br/>reclaimPolicy Delete, onDelete delete<br/>volumeBindingMode Immediate<br/>accessModes RWO/RWX"]
     SC2["StorageClass local-path (tùy chọn)<br/>ghim Pod vào node, không nằm trong<br/>allowedStorageClasses mặc định"]
     NFS --- PROV --- SC
   end
@@ -557,11 +585,9 @@ flowchart LR
   R3 --x CG
 ```
 
-Lifecycle khi xóa Workspace (plan 17.4): xóa Namespace → PVC bị xóa theo → `reclaimPolicy Delete` → provisioner xóa subdir (hoặc archive theo cấu hình `archiveOnDelete` — giả định tắt để "xóa hết" đúng nghĩa). PVC kẹt finalizer (`kubernetes.io/pvc-protection` khi Pod còn dùng, hoặc NFS server không phản hồi) → Operation `Blocked`, chỉ Platform Admin `:force`.
+Lifecycle khi xóa Workspace (plan 17.4): xóa Namespace → PVC bị xóa theo → `reclaimPolicy Delete` → driver xóa subdir (`onDelete: delete`, không archive, để "xóa hết" đúng nghĩa và khớp cảnh báo UI). PVC kẹt finalizer (`kubernetes.io/pvc-protection` khi Pod còn dùng, hoặc NFS server không phản hồi) → Operation `Blocked`, chỉ Platform Admin `:force`.
 
 **Điểm cần review**
 
 - Capsule Proxy lọc StorageClass theo allow-list, nên Headlamp chỉ hiện `standard`; cần xác nhận với Capsule 0.13.x rằng `storageClasses.allowed` hỗ trợ cả tên và regex.
-- `archiveOnDelete` của NFS provisioner: tắt (mất dữ liệu thật, khớp cảnh báo UI) hay bật (giữ subdir để cứu, nhưng tốn dung lượng NFS và mâu thuẫn với "xóa hết")?
-- Lab hiện không có StorageClass (README "Lưu ý về dữ liệu"): Keycloak/Prometheus/PostgreSQL của central plane cũng nên dùng `standard` hay một class riêng để tenant và system không chung một NFS export?
 - `requests.storage` không có ở LimitRange mặc định; có nên đặt `max` per PVC trong LimitRange (type `PersistentVolumeClaim`) để một PVC không nuốt cả quota Workspace?

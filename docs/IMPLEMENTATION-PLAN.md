@@ -10,7 +10,7 @@ Tài liệu này trả lời bốn câu hỏi: code đặt ở đâu (mục 2), 
 ## 1. Nguyên tắc thực hiện
 
 - **Vertical slice theo milestone**: mỗi milestone M0–M12 (spec §25) đi xuyên DB → API → worker/controller → UI cho một nhóm tính năng, thay vì làm xong toàn bộ backend rồi mới làm UI. Deliverable của milestone là thứ demo được, đúng như spec định nghĩa.
-- **Luôn demo được**: nhánh `main` phải dựng lại được trên lab cluster bằng một lệnh (`make lab-up` + `make deploy`) tại mọi thời điểm; không merge thứ gì làm hỏng verification suite hiện có của lab.
+- **Luôn demo được**: nhánh `main` phải dựng lại được trên lab cluster bằng hai lệnh (`make cluster-up` + `make deploy`) tại mọi thời điểm; không merge thứ gì làm hỏng verification suite hiện có của lab.
 - **Test là deliverable lõi, không phải phần phụ**: spec §26.2 nói rõ isolation test, resource reservation, group mapping và delete cleanup là "lõi chứng minh đồ án". Mỗi milestone có mục "Test bắt buộc" và milestone chưa xong nếu test đó chưa chạy xanh.
 - **Một monorepo**: API, controller, web, Helm chart, lab script và tài liệu cùng một repo, cùng một tag; đơn giản cho một người làm và cho hội đồng xem code.
 - **Contract-first ở hai ranh giới**: OpenAPI (`/api/v1`) giữa web và API; CRD `PlatformWorkspace` (`tenantry.io/v1alpha1`) giữa central plane và Cluster. Hai contract này thay đổi theo migration/versioning rõ ràng, không sửa ad hoc.
@@ -56,7 +56,7 @@ Tài liệu này trả lời bốn câu hỏi: code đặt ở đâu (mục 2), 
 │   ├── api/v1alpha1/            # PlatformWorkspace types + deepcopy + CRD gen (backend/ import package này)
 │   ├── internal/
 │   │   ├── controller/          # PlatformWorkspaceReconciler + finalizer + status
-│   │   ├── subreconciler/       # compute, network, tenant, namespaces, policy, rbac, ingresscert, proxyaccess
+│   │   ├── subreconciler/       # compute, network, tenant, namespaces, policy, rbac, routes, proxyaccess
 │   │   ├── render/              # pure functions: spec → object mong muốn (unit test được, không cần cluster)
 │   │   └── observe/             # Namespace watch → status.namespaces, node/cert/IPPool observation
 │   └── config/                  # CRD, RBAC, ClusterRole tenantry:tenant-developer/viewer, kustomize base
@@ -71,8 +71,8 @@ Tài liệu này trả lời bốn câu hỏi: code đặt ở đâu (mục 2), 
 │   ├── charts/tenantry-operator/
 │   ├── charts/tenantry-web/
 │   ├── keycloak/                # realm export tenantry (3 client: portal, headlamp-{clusterId}, kubectl)
-│   └── kustomize/lab/           # overlay lab: ingress host, CA, PostgreSQL, Keycloak, values
-├── lab/                         # cluster, DNS, TLS, Capsule, PostgreSQL, Keycloak, OIDC — nền để chạy 3 thành phần trên
+│   └── cluster/                 # nền của Cluster: storage, Traefik, cert-manager, PostgreSQL, Keycloak, OIDC, Capsule, Headlamp
+│                                #   (script đánh số + values Helm + manifest) và values của 3 chart cho Cluster này
 ├── test/
 │   ├── e2e/                     # Go test chạy trên lab cluster thật (persona §24.3, isolation §24.4, concurrency §24.5)
 │   └── bench/                   # script benchmark §24.6 + baseline kind/vcluster
@@ -84,8 +84,7 @@ Một câu cho mỗi thư mục cấp một:
 - `backend/`: toàn bộ central plane bằng Go — HTTP API, BFF, hai worker loop, migrations, seed; một module, nhiều package nội bộ tách theo domain. Tên là `backend/` chứ không phải `api/` vì chỉ một trong bốn binary là HTTP server.
 - `operator/`: thứ chạy **trong** Cluster, chỉ biết CRD và các resource Kubernetes/Capsule/Calico, không biết PostgreSQL.
 - `web/`: portal SPA gọi API qua cookie phiên, không giữ token.
-- `deploy/`: mọi thứ để cài platform lên một Cluster đã có Capsule (Helm chart per component + realm Keycloak + overlay lab).
-- `lab/`: script dựng nền (Capsule/Proxy/Keycloak/Headlamp/Calico/monitoring/verify) làm nền M1 và regression; dựng lại ở M1, tham chiếu bản đã chạy được ở nhánh `feat/tenantry-scaffold`.
+- `deploy/`: mọi thứ để đưa platform lên một cụm kubeadm trần: `cluster/` dựng nền (storage, ingress, TLS, PostgreSQL, Keycloak, OIDC, Capsule, Headlamp), Helm chart cho từng thành phần của Tenantry, realm Keycloak. Không có thư mục `lab/` riêng: dựng nền cũng là deploy. `cluster/` **viết mới ở M1**; nhánh `feat/tenantry-scaffold` chỉ còn để tra cấu hình Capsule/OIDC đã từng chạy được.
 - `test/`: test cần cluster thật hoặc nhiều tiến trình; unit/integration test nằm cạnh code.
 - `docs/`: spec, kế hoạch, ADR, báo cáo test/benchmark cho luận văn.
 
@@ -197,11 +196,11 @@ COMMIT;
 |---|---|---|---|
 | 1 | `compute` | Dedicated: membership label `workspaces.tenantry.io/<ws-id>=true` trên `spec.compute.nodeName`; kiểm tra org label/taint `tenantry.io/dedicated-org` đã có (do node grant event); Shared: chỉ verify pool selector tồn tại | `ComputeReady` |
 | 2 | `network` | Calico `IPPool` (CIDR, `assignmentMode: Manual`, `allowedUses: [Workload]`, nodeSelector theo mode) | `NetworkReady` |
-| 3 | `tenant` | Capsule `Tenant` tên `<org>-<ws>`: owners (group `TenantOwner`), `namespaceOptions.quota` + `forceTenantPrefix` + annotation IPPool, `nodeSelector`, `ingressOptions` (allowedClasses, `allowedHostnames.allowedRegex`, `hostnameCollisionScope: Cluster`), `storageClasses.allowed`, container registry/service/QoS rules từ profile lab hiện tại | `CapsuleTenantReady` |
-| 4 | `namespaces` | Tạo Namespace `<org>-<ws>-<name>` cho `spec.namespaces`, gắn label tenant; xóa `spec.namespacesToDelete`; ResourcePoolClaim per Namespace (theo mẫu `lab/manifests/solar-claims.yaml`) | (góp vào `CapsuleTenantReady`) |
+| 3 | `tenant` | Capsule `Tenant` tên `<org>-<ws>`: owners (group `TenantOwner`), `namespaceOptions.quota` + `forceTenantPrefix` + annotation IPPool, `nodeSelector`, `storageClasses.allowed`, container registry/service/QoS rules từ profile lab hiện tại | `CapsuleTenantReady` |
+| 4 | `namespaces` | Tạo Namespace `<org>-<ws>-<name>` cho `spec.namespaces`, gắn label tenant; xóa `spec.namespacesToDelete`; ResourcePoolClaim per Namespace (một claim cho mỗi Namespace) | (góp vào `CapsuleTenantReady`) |
 | 5 | `policy` | Capsule `ResourcePool` (quota tổng), `TenantResource` replicate LimitRange + NetworkPolicy baseline (spec §7.4) + Pod Security label | `PolicyReady` |
 | 6 | `rbac` | `Tenant.additionalRoleBindings` cho Developer/Viewer → `tenantry:tenant-developer`/`tenantry:tenant-viewer` (ClusterRole cài sẵn bởi chart controller) | `IdentityBindingsReady` |
-| 7 | `ingresscert` | cert-manager `Certificate` wildcard `*.<org>-<ws>.apps.<cluster>.<domain>`, issuer ClusterIssuer lab CA; `TenantResource` replicate Secret TLS vào mọi Namespace | `IngressReady` **(đề xuất, spec chưa có condition riêng)** |
+| 7 | `routes` | Một `Ingress` cho mỗi entry của `spec.routes` trong Namespace tương ứng (class `platform-shared`, không `tls.secretName`); xóa Ingress mang managed label mà không còn trong `spec.routes`; ghi `status.routes` | không có condition riêng: trạng thái từng Route nằm ở `status.routes`, một Route lỗi không làm Workspace `Degraded` |
 | 8 | `proxyaccess` | Capsule Proxy `ProxySetting` cho group Developer/Viewer (đề xuất) và verify Tenant được Proxy nhận diện | `ProxyAccessReady` |
 
 `ClusterGrantValid`, `ClusterReady`, `ResourcesReserved`, `DedicatedNodeCapacityReserved` là condition **phía API/DB**, worker ghi vào `operations`; controller không biết grant.
@@ -211,7 +210,7 @@ COMMIT;
 ### 4.2 Kỹ thuật apply
 
 - **Server-side apply** với field manager `tenantry-workspace-controller`, `ForceOwnership: true` để restore drift (spec §14.4 "manual sửa resource managed phải được controller restore").
-- **Owner reference** từ PlatformWorkspace → Tenant, IPPool, Certificate, ResourcePool, TenantResource (cùng cluster-scoped hoặc namespaced trong system namespace của controller). Namespace do Capsule đặt ownerRef về Tenant.
+- **Owner reference** từ PlatformWorkspace → Tenant, IPPool, ResourcePool, TenantResource (cùng cluster-scoped hoặc namespaced trong system namespace của controller). Namespace do Capsule đặt ownerRef về Tenant.
 - `render/` là pure function `Render(spec) → []client.Object`, unit test bằng golden file; sub-reconciler chỉ apply + đọc status.
 - Managed labels theo spec §18 gắn lên mọi object render ra.
 
@@ -223,7 +222,7 @@ Finalizer `tenantry.io/workspace` thực thi thứ tự spec §17.4 bước 4–
 2. xóa Namespace của Tenant (cả portal và kubectl) → đợi biến mất (PVC bị xóa theo Namespace); quá ngưỡng (đề xuất 10 phút) → condition `Deleting=False, reason=BlockedByFinalizer` kèm tên object; worker map thành operation `Blocked`;
 3. đợi Calico: không còn `WorkloadEndpoint`/`IPAMBlock` thuộc IPPool → xóa IPPool;
 4. Dedicated: đợi không còn Pod có label Workspace trên node → gỡ membership label `workspaces.tenantry.io/<ws-id>` (giữ org label/taint);
-5. xóa Certificate/TenantResource/ResourcePool/Tenant (phần lớn qua ownerRef garbage collection, nhưng phải đợi bước 2–4 xong);
+5. xóa TenantResource/ResourcePool/Tenant (phần lớn qua ownerRef garbage collection, nhưng phải đợi bước 2–4 xong);
 6. gỡ finalizer. Worker thấy CR mất → chuyển reservation `Released`, CIDR `Quarantined`, Workspace `Deleted`.
 
 `:force` của Platform Admin = worker patch annotation `tenantry.io/force-delete=true`; controller bỏ qua chờ finalizer PVC ở bước 2 và ghi event (audit ở API).
@@ -231,7 +230,7 @@ Finalizer `tenantry.io/workspace` thực thi thứ tự spec §17.4 bước 4–
 ### 4.4 Quan sát Namespace
 
 - Watch `Namespace` với predicate label `capsule.clastix.io/tenant=<tenant>` (Capsule gắn) → map về PlatformWorkspace cùng tên → ghi `status.namespaces[{name, source}]`; `source=portal` nếu có trong `spec.namespaces`, ngược lại `kubectl`.
-- Đồng thời watch Tenant, IPPool, Certificate, Node (chỉ node có label `tenantry.io/dedicated-org`) bằng `Owns()`/`Watches()` với handler map về CR.
+- Đồng thời watch Tenant, IPPool, Ingress, Node (chỉ node có label `tenantry.io/dedicated-org`) bằng `Owns()`/`Watches()` với handler map về CR.
 
 ### 4.5 Hai CRD phụ: `PlatformNodeGrant` và `PlatformSharedPool`
 
@@ -363,24 +362,24 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
 - **Rủi ro chính**: tốn quá nhiều thời gian viết tài liệu; giới hạn M0 ở "đủ để code M1–M3".
 - **Ước lượng**: S.
 
-### M1 — Lab foundation
+### M1 — Cluster foundation
 
-- **Mục tiêu**: cluster nền reproducible cho toàn bộ đồ án; giữ verification suite hiện có.
+- **Mục tiêu**: cluster nền reproducible cho toàn bộ đồ án, dựng bằng một lệnh và có script kiểm tra.
 - **Công việc**:
-  1. Chuyển `scripts/ values/ manifests/ tests/` vào `lab/` (chỉ sửa path), `deploy.sh` vẫn chạy.
-  2. Gắn label system pool `tenantry.io/compute-pool=system` (đề xuất) cho node chạy central plane; taint để tenant không schedule.
-  3. Cài **NFS subdir provisioner** → StorageClass `standard` (default), reclaim `Delete`; tùy chọn local-path.
-  4. Cài **ingress-nginx** class `platform-shared`, wildcard DNS `*.apps.cluster-a.tenantry.example` (dnsmasq/CoreDNS lab hoặc sslip.io).
-  5. **cert-manager ClusterIssuer** từ `capsule-lab-root-ca` (đã có secret trong `identity-system`), cấp cert cho Keycloak/Headlamp/Proxy/Portal host.
+  1. Viết mới `deploy/cluster/`: script đánh số chạy được nhiều lần (idempotent), values Helm, manifest; `make cluster-up` chạy lần lượt, `make cluster-verify` kiểm tra.
+  2. Gắn label `tenantry.io/compute-pool=system` và taint `tenantry.io/compute-pool=system:NoSchedule` cho node system pool; mọi Pod central plane và thành phần nền khai nodeSelector và toleration tương ứng. Chi tiết ở `architecture/05-network-and-scheduling.md` mục 1.
+  3. Dựng NFS server cho lab, cài **`csi-driver-nfs`** → StorageClass `standard` (default) theo `architecture/05-network-and-scheduling.md` mục 9; tùy chọn local-path.
+  4. Cài **Traefik** class `platform-shared` theo `architecture/05-network-and-scheduling.md` mục 7 (hostPort 80/443 trên node control-plane, chỉ bật provider Ingress). Tạo bản ghi DNS trên Cloudflare (DNS only): `*.mvp.tenantry.site` và các host platform.
+  5. **cert-manager** với ClusterIssuer `letsencrypt` (DNS-01, API token Cloudflare trong Secret): wildcard cert `*.mvp.tenantry.site` làm cert mặc định của Traefik, và cert cho host Keycloak/Headlamp/Proxy/Portal. Dùng endpoint staging của Let's Encrypt khi thử, chuyển production khi chạy ổn.
   6. PostgreSQL (Bitnami/CloudNativePG đơn giản) + Keycloak dùng PVC `standard` thay storage tạm.
-  7. Capsule Proxy expose HTTPS qua ingress-nginx (`kube-cluster-a.tenantry.example`), Headlamp `console-cluster-a...`.
+  7. Capsule Proxy expose HTTPS qua Traefik (`kube-cluster-a.tenantry.site`), Headlamp `console-cluster-a.tenantry.site`, Keycloak `auth.tenantry.site`.
   8. Đổi realm Keycloak thành `deploy/keycloak/realm-tenantry.json` với 3 client (`portal`, `headlamp-cluster-a`, `kubectl`), realm role `platform-admin`, giữ user demo; structured authentication config nhận 2 audience.
-  9. Cập nhật `90-verify.sh` cho storage (PVC bound), ingress (curl HTTPS với CA lab), cert-manager.
-  10. Ghi lại bước `60-enable-oidc.sh`/`PodNodeSelector` thành tài liệu vận hành.
-- **Đầu ra kiểm chứng**: `make lab-up` từ cluster kubeadm sạch → verify pass; PVC bound; `https://demo.apps.cluster-a.tenantry.example` trả về qua ingress với cert từ CA lab.
-- **Test bắt buộc**: `lab/scripts/90-verify.sh` (RBAC/node/CIDR/network/policy hiện có) + case mới storage/ingress/TLS.
+  9. Bật OIDC (structured authentication config) và admission `PodNodeSelector` trên kube-apiserver, kèm script rollback; cài Capsule, Capsule Proxy, Headlamp.
+  10. Viết `cluster-verify`: PVC bound trên `standard`, HTTPS với cert hợp lệ, cert-manager Ready, đăng nhập Keycloak lấy được token, kube-apiserver nhận token đó, `PodNodeSelector` đang bật. Ghi `deploy/cluster/README.md` gồm các bước làm tay (DNS, token Cloudflare, mở cổng).
+- **Đầu ra kiểm chứng**: `make cluster-up` từ cluster kubeadm sạch → verify pass; PVC bound; `https://demo.mvp.tenantry.site` trả về qua ingress với cert Let's Encrypt.
+- **Test bắt buộc**: `make cluster-verify` qua hết trên cụm vừa dựng và khi chạy `make cluster-up` lần thứ hai.
 - **Phụ thuộc**: M0.
-- **Rủi ro chính**: NFS server cho lab; wildcard DNS trong môi trường demo offline.
+- **Rủi ro chính**: NFS server cho lab; cổng 80/443 của node control-plane phải mở ra internet; giới hạn số cert mỗi tuần của Let's Encrypt nếu xin lại nhiều lần trên production.
 - **Ước lượng**: M.
 
 ### M2 — Backend skeleton
@@ -397,7 +396,7 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
   8. Test harness: test đọc `TEST_DATABASE_URL`, mỗi test tự tạo rồi xóa một database riêng đã migrate (local: postgres của docker compose; CI: service postgres).
 - **Đầu ra kiểm chứng**: `GET /healthz`, `GET /api/v1/organizations/{id}` với auth giả (dev header) trả dữ liệu seed; chart cài lên lab.
 - **Test bắt buộc**: integration test repo/outbox với PostgreSQL thật; contract test OpenAPI examples.
-- **Phụ thuộc**: M0 (repo), M1 (PostgreSQL trên lab để deploy).
+- **Phụ thuộc**: M0 (repo), M1 (PostgreSQL trên cụm để deploy).
 - **Rủi ro chính**: chọn sai tool codegen gây rework; thử oapi-codegen trên 3 endpoint trước khi viết hết.
 - **Ước lượng**: M.
 
@@ -414,7 +413,7 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
 - **Đầu ra kiểm chứng**: đăng ký user mới trên Keycloak → portal hiện màn xin tạo Organization → Admin duyệt → user thấy Organization + quota mặc định; refresh trang vẫn login; để quá 5 phút rồi dùng tiếp vẫn login (refresh chạy); logout xóa phiên và kết thúc SSO session.
 - **Test bắt buộc**: first login idempotent (login hai lần không tạo hai user); phiên chết khi Keycloak từ chối refresh; user `Disabled` bị 401 ngay; request ghi thiếu CSRF bị từ chối; cùng `Idempotency-Key` trả lại response cũ, khác body bị `IDEMPOTENCY_KEY_REUSED`; yêu cầu `Pending` thứ hai của cùng user bị chặn; duyệt tạo đúng group + grant trong một transaction; từ chối nhả slug; integration OIDC với Keycloak container (testcontainers) hoặc mock issuer; Playwright login/logout.
 - **Phụ thuộc**: M1 (Keycloak realm), M2.
-- **Rủi ro chính**: cookie/redirect trên domain lab (`*.tenantry.example` + CA tự ký) — chốt host và HTTPS local sớm.
+- **Rủi ro chính**: cookie/redirect giữa `portal.tenantry.site` và `auth.tenantry.site` — chốt host và HTTPS local sớm.
 - **Ước lượng**: M.
 
 ### M4 — Invitation/member/group
@@ -486,7 +485,7 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
 - **Đầu ra kiểm chứng**: tạo Workspace 4 CPU/8 GiB → Pod vượt quota bị từ chối với message; tăng quota → chạy được; xóa Workspace có PVC → Namespace/PVC mất, reservation `Released`.
 - **Test bắt buộc**: unit quota math; integration reservation tx với PostgreSQL thật; concurrency hai create sát quota (chỉ một pass); e2e delete cleanup (không còn Tenant/Namespace/PVC/ResourcePool).
 - **Phụ thuộc**: M6.
-- **Rủi ro chính**: ResourcePool/Claim semantics của Capsule 0.13 khác kỳ vọng — kiểm chứng sớm trên lab (`lab/manifests/solar-claims.yaml`).
+- **Rủi ro chính**: ResourcePool/Claim semantics của Capsule 0.13 khác kỳ vọng — kiểm chứng sớm trên lab bằng một Tenant thử.
 - **Ước lượng**: L.
 
 ### M8 — Compute modes
@@ -496,7 +495,7 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
   1. Migration `workspace_node_reservations`; lock `dedicated_node_grants` trong transaction (mục 3.2); Dedicated bắt `requests = limits`, đúng một node.
   2. Shared: validate pool thuộc grant, soft ratio; render Tenant `nodeSelector` pool.
   3. Reconciler `PlatformNodeGrant` đầy đủ: kiểm node sạch, gắn/gỡ label + taint `tenantry.io/dedicated-org`; sub-reconciler `compute` gắn/gỡ membership label; `ComputeReady`.
-  4. Admission guard: PodNodeSelector (lab hiện có) + Capsule rule chặn `nodeName`/toleration/selector lạ; test bắt buộc khi plugin tắt (spec §6.4).
+  4. Admission guard: PodNodeSelector (bật ở M1) + Capsule rule chặn `nodeName`/toleration/selector lạ; test bắt buộc khi plugin tắt (spec §6.4).
   5. Capacity state, `Overcommitted` drift → `Degraded`, chặn reservation mới.
   6. Catalog `dedicated-nodes` trả reservable/reserved/remaining và Workspace đang giữ; UI node card.
   7. Web: bước compute của wizard (tạm dùng form đơn giản, wizard hoàn chỉnh ở M10), tab Compute.
@@ -513,7 +512,7 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
   1. Migration `network_allocations` + exclusion constraint; `ipam` service: auto-allocate theo `defaultPrefixLength`, advanced prefix/requested CIDR, containment/overlap với Pod/Service CIDR Cluster; state `Allocated/Releasing/Quarantined/Released`.
   2. Lock `network_pools` trong transaction reservation; error `CIDR_OUTSIDE_ALLOWED_POOL`, `CIDR_OVERLAP`.
   3. Sub-reconciler `network`: Calico IPPool + Namespace annotation qua Tenant `namespaceOptions.additionalMetadata`; Capsule cấm sửa annotation (đã có trong lab); `NetworkReady`.
-  4. Baseline NetworkPolicy qua `TenantResource` (spec §7.4) gồm allow từ ingress-nginx namespace, deny metadata endpoint.
+  4. Baseline NetworkPolicy qua `TenantResource` (spec §7.4) gồm allow từ namespace `ingress-system`, deny metadata endpoint.
   5. Finalizer: đợi WorkloadEndpoint/IPAMBlock sạch → xóa IPPool; worker đặt `Quarantined` (mặc định 10 phút), vòng `housekeeping` chuyển `Released`.
   6. `GET /network-pools/{id}/availability`; UI Network tab + Advanced trong wizard.
 - **Đầu ra kiểm chứng**: Solar và Water nhận /24 khác nhau từ pool `10.240.0.0/16`; Pod IP đúng CIDR; Solar không ping/curl Water; cùng Workspace khác Namespace gọi được; xóa Workspace → CIDR `Quarantined` rồi `Released`, cấp lại được.
@@ -542,21 +541,21 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
 
 ### M11 — Access & ingress
 
-- **Mục tiêu**: user thao tác data plane bằng kubectl/web; app truy cập được qua HTTPS trong vùng hostname của Workspace.
+- **Mục tiêu**: user thao tác data plane bằng kubectl/web; app truy cập được qua URL HTTPS của Route.
 - **Công việc**:
-  1. `GET /workspaces/{id}/kubeconfig`: server = proxy endpoint từ `clusters`, CA lab, exec `kubectl oidc-login` client `kubectl` (spec §11.2); audit download.
+  1. `GET /workspaces/{id}/kubeconfig`: server = proxy endpoint từ `clusters`, exec `kubectl oidc-login` client `kubectl` (spec §11.2); audit download.
   2. `GET /workspaces/{id}/console-link` → Headlamp URL của Cluster; disable khi Cluster `Unavailable`.
   3. Capsule Proxy public TLS + Headlamp cert từ ClusterIssuer; kiểm tra JWT header size khi user nhiều group.
-  4. Sub-reconciler `ingresscert`: Certificate wildcard per Workspace + TenantResource replicate Secret; `IngressReady`.
-  5. Tenant `ingressOptions`: allowedClasses từ grant, `allowedHostnames.allowedRegex` vùng `<org>-<ws>`, `hostnameCollisionScope: Cluster`.
+  4. Route theo `PRODUCT-PLAN.md` mục 7.6: migration `workspace_routes`, API list/create/delete, ghép hostname, `spec.routes`; sub-reconciler `routes` dựng Ingress, báo `status.routes`.
+  5. ValidatingAdmissionPolicy `tenantry-tenant-ingress-lockdown` (chart operator) theo `architecture/05-network-and-scheduling.md` mục 7.
   6. Sub-reconciler `proxyaccess` (ProxySetting cho Developer/Viewer) ; `ProxyAccessReady`.
-  7. Demo app chart nhỏ (Deployment + PVC `standard` + Ingress + TLS secret replicate) để Joe deploy.
+  7. Demo app chart nhỏ (Deployment + PVC `standard` + Service, không có Ingress) để Joe deploy rồi tạo Route trên portal.
   8. Revoke test theo contract ở `architecture/06-security-and-identity.md` mục 5: gỡ Joe → token cũ còn tới TTL, token mới không có group, Joe phải đăng nhập lại; ghi contract vào UI.
-  9. Web: Access tab (download kubeconfig, hướng dẫn cài kubelogin, Open Web Console).
-- **Đầu ra kiểm chứng**: Joe tải kubeconfig → `kubectl get ns` qua Proxy chỉ thấy Namespace Solar → deploy app → `https://web.acme-solar.apps.cluster-a.tenantry.example` mở được với CA lab; Ingress host ngoài vùng bị Capsule từ chối; Bob Viewer không sửa được; Alice mở Headlamp qua SSO không nhập lại password.
-- **Test bắt buộc**: e2e kubeconfig + Proxy filter (Namespace/Node/PV); ingress hostname collision negative test; PVC ngoài StorageClass allow-list bị chặn; revoke contract test đo thời gian.
+  9. Web: Access tab (download kubeconfig, hướng dẫn cài kubelogin, Open Web Console); Routes tab (list/create/delete, URL, trạng thái).
+- **Đầu ra kiểm chứng**: Joe tải kubeconfig → `kubectl get ns` qua Proxy chỉ thấy Namespace Solar → deploy app → tạo Route trên portal → `https://web-acme-solar.mvp.tenantry.site` mở được; `kubectl apply` Ingress hoặc Certificate bị từ chối; Bob Viewer không sửa được; Alice mở Headlamp qua SSO không nhập lại password.
+- **Test bắt buộc**: e2e kubeconfig + Proxy filter (Namespace/Node/PV); tenant ghi Ingress/Certificate bị chặn (controller và cert-manager vẫn ghi được); Route trùng hostname trả `ROUTE_HOSTNAME_TAKEN`; xóa Namespace xóa Route; PVC ngoài StorageClass allow-list bị chặn; revoke contract test đo thời gian.
 - **Phụ thuộc**: M6 (rbac), M9 (policy allow ingress), M1 (ingress/cert-manager).
-- **Rủi ro chính**: TLS chain trong browser/kubectl với CA tự ký; kubelogin cache token cũ khi test revoke (dùng `--oidc-... --force-refresh`/xóa cache).
+- **Rủi ro chính**: luật admission chặn nhầm controller; kubelogin cache token cũ khi test revoke (dùng `--oidc-... --force-refresh`/xóa cache).
 - **Ước lượng**: L.
 
 ### M12 — Hardening & evaluation
@@ -589,7 +588,7 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
 
 ```mermaid
 flowchart LR
-  M0[M0 Spec/ADR] --> M1[M1 Lab foundation]
+  M0[M0 Spec/ADR] --> M1[M1 Cluster foundation]
   M0 --> M2[M2 Backend skeleton]
   M1 --> M2
   M2 --> M3[M3 Auth + onboarding]
@@ -621,7 +620,7 @@ gantt
   axisFormat %m
   section Phase 1
   M0 Spec/ADR                :m0, 2026-10-01, 2w
-  M1 Lab foundation          :m1, after m0, 3w
+  M1 Cluster foundation          :m1, after m0, 3w
   M2 Backend skeleton        :m2, after m1, 3w
   M3 Auth + onboarding       :m3, after m2, 3w
   M4 Invitation/member/group :m4, after m3, 5w
@@ -652,7 +651,7 @@ gantt
 | CIDR | containment, overlap, next-free block theo prefix, quarantine transition | `backend/internal/ipam` |
 | Authz matrix | bảng role × endpoint × kỳ vọng (200/403/404), bao gồm realm role admin | `backend/internal/httpapi` |
 | State machine | Workspace, Operation, Reservation, NetworkAllocation transitions hợp lệ/không hợp lệ | `backend/internal/workspace` |
-| Render | spec → Tenant/IPPool/Certificate/NetworkPolicy golden files | `operator/internal/render` |
+| Render | spec → Tenant/IPPool/Ingress/NetworkPolicy golden files | `operator/internal/render` |
 | Keycloak mapping | machine name, group claim → subject `oidc:` | `backend/internal/keycloak` |
 | OpenAPI contract | examples validate theo schema | `backend/openapi` |
 | Frontend | wizard reducer, error code map, form validation | `web/src` (Vitest) |
@@ -669,7 +668,7 @@ gantt
 - Persona scenario spec §24.3 chạy tuần tự (Admin → Alice → Joe/Bob → Dedicated → revoke → delete) bằng API client sinh từ OpenAPI + `kubectl` qua kubeconfig Workspace + `client-go` admin để assert trạng thái cluster.
 - Isolation suite §24.4 dưới dạng table-driven test: mỗi hàng là một threat case §20.3 với kết quả kỳ vọng (deny + error code hoặc Kubernetes Forbidden).
 - Playwright cho luồng UI chính và các state §19.2.
-- Giữ `lab/scripts/90-verify.sh` chạy trước e2e như smoke test.
+- Chạy `make cluster-verify` trước e2e như smoke test.
 
 ### 9.4 Concurrency (integration + e2e)
 
@@ -688,22 +687,22 @@ gantt
 ## 10. Môi trường dev
 
 - **Chạy local trỏ vào lab cluster**: `tenantry-api` và `tenantry-worker` chạy trên máy dev với `KUBECONFIG` admin của lab (dev only), PostgreSQL và Keycloak dùng của lab qua `kubectl port-forward` hoặc `docker compose up postgres keycloak` local; operator chạy `make run-operator` (controller-runtime ngoài cluster). Web chạy Vite dev server proxy `/api` và `/auth` về API local.
-- **Host name dev**: thêm `portal.tenantry.example` → 127.0.0.1 vào `/etc/hosts`, cert dev cấp từ `capsule-lab-ca.crt` (mkcert-style) để cookie `Secure` hoạt động.
+- **Host name dev**: chạy portal ở `http://localhost` (trình duyệt coi `localhost` là ngữ cảnh an toàn nên cookie `Secure` vẫn được đặt); thêm redirect URI `localhost` vào client `portal` của realm dev.
 - **`make` targets (đề xuất)**:
 
 ```text
-make lab-up / lab-verify        # chạy lab/scripts/deploy.sh và 90-verify.sh
+make cluster-up / cluster-verify  # dựng nền Cluster và kiểm tra
 make generate                   # oapi-codegen, sqlc, openapi-typescript, controller-gen
 make migrate-up / migrate-new NAME=...
 make seed                       # Cluster A, onboarding policy, shared-general, onboarding-pod-network, admin role
 make run-api / run-worker / run-operator / run-web
 make test / test-integration / test-e2e / bench
-make deploy                     # helm upgrade --install 3 chart lên lab với deploy/kustomize/lab values
+make deploy                     # helm upgrade --install 3 chart lên Cluster với values trong deploy/cluster/
 make realm-export / realm-import
 ```
 
 - **Migrations**: **goose** — SQL thuần, embed vào binary `tenantry-migrate`, chạy như Helm hook job trước API. golang-migrate là lựa chọn tương đương; chọn goose vì hỗ trợ migration Go khi cần backfill.
-- **Keycloak realm**: `deploy/keycloak/realm-tenantry.json` là nguồn; import lúc Keycloak khởi động (như `lab/manifests/keycloak.yaml` hiện làm); `make realm-export` kéo thay đổi từ UI về file để commit. Realm dev chứa user `alice/joe/bob/mallory` + `admin` có realm role `platform-admin`.
+- **Keycloak realm**: `deploy/keycloak/realm-tenantry.json` là nguồn; import lúc Keycloak khởi động (Keycloak `--import-realm`); `make realm-export` kéo thay đổi từ UI về file để commit. Realm dev chứa user `alice/joe/bob/mallory` + `admin` có realm role `platform-admin`.
 - **Seed**: `tenantry-seed` idempotent: insert `clusters` (cluster-a, endpoints proxy/console/ingress domain), `onboarding_policies` theo mẫu spec §5.2.1, `shared_compute_pools` (`shared-general`, nodeSelector `tenantry.io/compute-pool=shared-general`, ratio 3.0), `network_pools` (`onboarding-pod-network` 10.240.0.0/16 org null), Organization demo `acme` + grant nếu flag `--demo`.
 - **Pre-commit**: gofmt/golangci-lint, eslint/prettier, `make generate` diff check.
 
@@ -713,15 +712,15 @@ make realm-export / realm-import
 
 | # | Rủi ro | Tác động | Giảm thiểu | Nổi lên ở |
 |---|---|---|---|---|
-| 1 | Capsule 0.13.x schema/hành vi (ResourcePool/Claim, `forceTenantPrefix`, `allowedHostnames`) khác giả định | Render sai, rework controller | Pin version trong chart; spike trên lab trước M6; golden test theo version | M6–M7 |
+| 1 | Capsule 0.13.x schema/hành vi (ResourcePool/Claim, `forceTenantPrefix`) khác giả định | Render sai, rework controller | Pin version trong chart; spike trên lab trước M6; golden test theo version | M6–M7 |
 | 2 | Controller phức tạp vượt sức một người | Trễ M6 kéo mọi thứ sau | Render tách apply; sub-reconciler nhỏ; envtest; làm tenant/namespaces/rbac trước, network/compute sau | M6 |
 | 3 | Keycloak Admin API lag/rate limit, group claim chỉ có ở token mới | Create Workspace bị `GROUP_SYNC_PENDING`, demo revoke gây hiểu nhầm | Sync worker retry + hiển thị `sync_status`; TTL token 5 phút; ghi contract revoke rõ trên UI | M4, M11 |
 | 4 | Phụ thuộc admission `PodNodeSelector` của kubeadm | Placement không enforce nếu plugin tắt | Test bắt buộc kiểm tra plugin bật; Capsule rule chặn nodeName/toleration làm lớp hai | M8 |
 | 5 | Calico IPAM release chậm khi delete | Delete kéo dài, CIDR bị giữ | Timeout + `Blocked` rõ ràng; quarantine; đo thời gian thật | M9 |
-| 6 | JWT header quá lớn khi user nhiều group (Proxy/ingress-nginx/Headlamp) | 431/WebSocket lỗi | Giới hạn group theo entitlement `maxGroups`; tăng `large-client-header-buffers`; test ở M11 | M11 |
+| 6 | JWT header quá lớn khi user nhiều group (Proxy/Traefik/Headlamp) | 431/WebSocket lỗi | Giới hạn group theo entitlement `maxGroups`; test ở M11 | M11 |
 | 7 | Scope creep UI (đẹp, chart, iframe) | Trễ M10 | Mantine mặc định; cắt theo §26.2; wizard trước, dashboard sau | M10 |
 | 8 | Race/overbook không bắt được trong test | Sai luận điểm reservation | Test concurrency với `-race` lặp; exclusion constraint + partial unique index như lưới an toàn | M7–M9 |
-| 9 | TLS/CA tự ký trong browser, kubectl, Headlamp, Proxy | Demo trục trặc, cookie Secure không set | Một ClusterIssuer từ lab CA ở M1; import CA vào máy demo; script kiểm tra chain | M1, M3, M11 |
+| 9 | Cụm phải mở ra internet (80/443) và phụ thuộc Cloudflare + Let's Encrypt | Không xin/gia hạn được cert thì HTTPS hỏng | DNS-01 không cần gọi vào cụm; thử trên staging trước; cert có hạn 90 ngày, cert-manager tự gia hạn | M1, M11 |
 | 10 | Lab cluster nhỏ không đủ cho benchmark 50 Workspace | Không có số liệu | Workspace benchmark không chạy workload; đo control plane; ghi rõ giới hạn | M12 |
 | 11 | Hai CRD phụ (mục 4.5) làm operator lớn thêm | Trễ M6/M8 | Reconciler của CRD phụ rất nhỏ (một object, không finalizer phức tạp); `PlatformSharedPool` chỉ quan sát | M6, M8 |
 | 12 | Drift giữa OpenAPI, DB và CR khi sửa spec | Bug tích hợp | Generate-check trong CI; một PR đổi contract phải đổi cả ba nơi | mọi M |

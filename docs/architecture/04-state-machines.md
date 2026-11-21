@@ -71,7 +71,7 @@ stateDiagram-v2
 | `Ready` | Cordon bởi OrgOwner hoặc Platform Admin | `Cordoned` | CR `spec.cordoned: true` → Capsule `Tenant.spec.cordoned` (giả định field mapping); mutation của tenant user bị chặn, workload vẫn chạy |
 | `Cordoned` | Uncordon cùng actor | `Ready` | Ngược lại |
 | `Ready` / `Cordoned` | `DELETE` với body gõ lại đúng `k8s_name`; portal đã hiển thị số Namespace/PVC sẽ mất | `Deleting` | Operation `delete` `Pending`; tự cordon nếu chưa; revoke binding; reservation `Active → Releasing`; NetworkAllocation `Allocated → Releasing` |
-| `Deleting` | Controller báo Namespace/PVC/IPPool/Certificate/Tenant/RBAC đã xóa; Pod đã rời dedicated node; Calico IPAM block đã release | `Deleted` | Xóa membership label; NodeReservation và ClusterGrant reservation `Released`; CIDR `Quarantined`; tombstone giữ `k8s_name`; audit |
+| `Deleting` | Controller báo Namespace/PVC/IPPool/Tenant/RBAC đã xóa; Pod đã rời dedicated node; Calico IPAM block đã release | `Deleted` | Xóa membership label; NodeReservation và ClusterGrant reservation `Released`; CIDR `Quarantined`; tombstone giữ `k8s_name`; audit |
 | `Deleting` | Finalizer/PVC kẹt quá ngưỡng | (giữ `Deleting`) | Operation `Blocked` kèm object đang giữ; chỉ Platform Admin `:force` |
 | `Ready` | Worker/controller phát hiện drift ngoài chu trình update: DedicatedNodeGrant `Overcommitted`, node `NotReady`/`Cordoned`, Condition nào đó chuyển False, managed resource bị xóa tay và chưa restore | `Degraded` | Không đổi reservation; portal hiển thị Condition lỗi và remediation |
 | `Degraded` | Drift được xử lý (Admin sửa system reserve, node Ready lại, controller restore xong) | `Ready` | Tự động, không cần Operation của user |
@@ -89,7 +89,7 @@ stateDiagram-v2
 | `ComputeReady` | Workspace Controller | Shared: Tenant nodeSelector trỏ đúng pool. Dedicated: node có org label/taint và membership label của Workspace |
 | `NetworkReady` | Workspace Controller | Calico IPPool tồn tại đúng CIDR, Namespace annotation được inject, baseline NetworkPolicy replicate |
 | `CapsuleTenantReady` | Workspace Controller | Tenant `acme-solar` tồn tại, ResourcePool/namespaceOptions render đúng generation |
-| `PolicyReady` | Workspace Controller | Rules (registry/QoS/Service), Pod Security label, ingress/storage allow-list đã áp |
+| `PolicyReady` | Workspace Controller | Rules (registry/QoS/Service), Pod Security label, storage allow-list, luật cấm Service `NodePort`/`LoadBalancer` đã áp |
 | `ProxyAccessReady` | Workspace Controller | RoleBinding có label reflection để Capsule Proxy lọc đúng; endpoint Proxy trả 200 cho synthetic check |
 
 Cách tính: `Ready` ⇔ tất cả Condition áp dụng đều `True` **và** `status.observedGeneration == metadata.generation`. Thiếu `DedicatedNodeCapacityReserved` với Shared mode không tính là lỗi.
@@ -339,7 +339,7 @@ stateDiagram-v2
 
 | State | Cho phép | Bị chặn |
 |---|---|---|
-| `Registered` | Admin sửa metadata, endpoint, wildcard domain; chạy bootstrap | Không nhận ClusterGrant hiệu lực; không tạo Workspace (giả định: grant có thể tạo trước nhưng wizard chưa liệt kê) |
+| `Registered` | Admin sửa metadata, endpoint, apps domain; chạy bootstrap | Không nhận ClusterGrant hiệu lực; không tạo Workspace (giả định: grant có thể tạo trước nhưng wizard chưa liệt kê) |
 | `Ready` | Mọi thao tác: create/resize/delete Workspace, kubectl/Headlamp | — |
 | `Maintenance` | Workspace hiện có **vẫn chạy và truy cập được** (kubectl/Headlamp/app); delete và retry vẫn xử lý (giả định) | Create Workspace và resize → `CLUSTER_NOT_READY`; wizard ẩn/disable Cluster |
 | `Unavailable` | Portal, Keycloak, Organization/member/group vẫn hoạt động | Create/resize → `CLUSTER_NOT_READY`; `Open Web Console` disable; Workspace ở Cluster này hiển thị "unknown"; outbox event cho Cluster này chờ (Operation giữ `Pending`) |
@@ -415,7 +415,7 @@ stateDiagram-v2
 
 ---
 
-## 9. Group sync status và Namespace record
+## 9. Group sync status, Namespace record và Route record
 
 ### 9.1 Group sync status
 
@@ -483,6 +483,40 @@ stateDiagram-v2
 
 ---
 
+### 9.3 Route record (`workspace_routes`)
+
+**Mục đích:** trạng thái một Route theo góc nhìn portal. Route chỉ được khai báo từ portal qua `spec.routes`; tenant không ghi được Ingress nên không có nguồn `kubectl` như Namespace.
+
+```mermaid
+stateDiagram-v2
+  [*] --> Desired : portal POST routes, thêm vào spec.routes
+  Desired --> Creating : Provisioning Worker apply CR generation mới
+  Creating --> Active : controller tạo Ingress, status.routes báo ready
+  Creating --> Desired : lỗi tạm, Operation Failed, retry
+  Active --> Deleting : portal DELETE, bỏ khỏi spec.routes
+  Deleting --> Deleted : controller xóa Ingress, biến mất khỏi status.routes
+  Active --> Deleted : Namespace chứa Route bị xóa
+  Deleted --> [*]
+```
+
+| From | Event / Guard | To | Side effects |
+|---|---|---|---|
+| `[*]` | `POST /workspaces/{id}/routes` bởi OrgOwner/OrgAdmin hoặc member group `TenantOwner`; guard: Workspace `Ready`, Namespace `Active`, tên hợp lệ, nhãn đầu của hostname ≤ 63 ký tự, chưa quá 20 Route, hostname chưa ai giữ | `Desired` | Row với `hostname` đã ghép; CR `spec.routes` thêm entry; Operation `route.create` |
+| `Desired` | Worker apply CR | `Creating` | — |
+| `Creating` | Controller tạo Ingress trong Namespace; `status.routes` có entry `ready: true` | `Active` | Operation `Succeeded`; portal hiện URL |
+| `Creating` | Apply Ingress lỗi | `Desired` | Operation `Failed` kèm lý do; user retry hoặc xóa |
+| `Active` | `DELETE /workspaces/{id}/routes/{routeId}` | `Deleting` | Bỏ khỏi `spec.routes`; Operation `route.delete` |
+| `Deleting` | Controller xóa Ingress không còn trong `spec.routes` | `Deleted` | Operation `Succeeded`; hostname được nhả |
+| `Active` | Namespace chứa Route chuyển `Deleting`/`Deleted` | `Deleted` | API bỏ Route khỏi `spec.routes` trong cùng transaction xóa Namespace |
+
+Ghi chú:
+
+- `Active` nghĩa là Ingress đã tồn tại, **không** bảo đảm Service đích có Pod chạy; khi đó URL trả 503. Portal không đọc Service của tenant.
+- Service và cổng không sửa được sau khi tạo; muốn đổi thì xóa Route và tạo lại.
+- Custom domain (sau MVP) thêm state `PendingVerification` đứng trước `Desired`: Route chỉ vào `spec.routes` sau khi bản ghi TXT khớp.
+
+---
+
 ## 10. Cross-machine: create và delete
 
 **Mục đích:** cho thấy bốn máy trạng thái Workspace, Operation, Reservation và NetworkAllocation chuyển động cùng nhau trong hai luồng chính, để tác giả kiểm tra không có bước nào release capacity/CIDR sớm.
@@ -512,7 +546,7 @@ flowchart TB
     D4["Đợi finalizer/PV release"]
     D5["Đợi Calico WEP/IPAM block release,<br/>Pod rời dedicated node"]
     D6["Gỡ membership label<br/>NodeReservation: Released<br/>tính lại remaining node"]
-    D7["Xóa IPPool, Certificate, Tenant,<br/>ResourcePool, RBAC"]
+    D7["Xóa IPPool, Tenant,<br/>ResourcePool, RBAC"]
     D8["NetworkAllocation: Quarantined<br/>ClusterGrant reservation: Released<br/>Workspace: Deleted<br/>Operation: Succeeded<br/>tombstone k8s_name"]
     D9["housekeeping sau quarantine_until<br/>NetworkAllocation: Released"]
     DB["Operation: Blocked<br/>kèm object đang giữ"]

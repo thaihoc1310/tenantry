@@ -23,7 +23,7 @@ flowchart LR
   K8s["Kubernetes Cluster A<br/>kube-apiserver, Capsule, Calico"]:::ext
   Proxy["Capsule Proxy<br/>endpoint kubectl/Headlamp"]:::ext
   HL["Headlamp<br/>web console per Cluster"]:::ext
-  Ing["ingress-nginx<br/>*.apps.cluster-a.tenantry.example"]:::ext
+  Ing["Traefik<br/>*.mvp.tenantry.site"]:::ext
   Mon["Prometheus / Grafana"]:::ext
 
   Admin -->|"đăng ký Cluster, tạo Org,<br/>cấp ClusterGrant/node/network"| T
@@ -81,11 +81,11 @@ flowchart TB
     WC["Workspace Controller<br/>controller-runtime"]:::svc
     Capsule["Capsule Operator<br/>Tenant, ResourcePool, policy"]:::k8s
     Calico["Calico<br/>IPPool per Workspace"]:::k8s
-    CM["cert-manager<br/>ClusterIssuer lab CA"]:::k8s
+    CM["cert-manager<br/>ClusterIssuer Let's Encrypt"]:::k8s
     CP["Capsule Proxy"]:::k8s
     HL["Headlamp"]:::k8s
-    Ing["ingress-nginx"]:::k8s
-    NFS["NFS subdir provisioner<br/>StorageClass standard"]:::k8s
+    Ing["Traefik"]:::k8s
+    NFS["csi-driver-nfs<br/>StorageClass standard"]:::k8s
     Mon["Prometheus / Grafana"]:::ext
     WL["Tenant Namespaces<br/>acme-solar-*, acme-water-*"]:::k8s
   end
@@ -136,7 +136,7 @@ flowchart TB
   classDef tenant fill:#e2f0d9,stroke:#2d6a4f,color:#000
   classDef dns fill:#fff3cd,stroke:#b58900,color:#000
 
-  DNS["DNS wildcard<br/>*.tenantry.example → LB/ingress<br/>*.apps.cluster-a.tenantry.example → ingress"]:::dns
+  DNS["DNS trên Cloudflare (DNS only)<br/>host platform và *.mvp.tenantry.site<br/>→ IP ingress"]:::dns
 
   subgraph CP["control-plane node(s)"]
     APIS["kube-apiserver + etcd<br/>authn: OIDC issuer Keycloak<br/>admission: PodNodeSelector"]:::node
@@ -147,7 +147,7 @@ flowchart TB
     NS2["ns keycloak<br/>Keycloak (database riêng trên<br/>cùng instance PostgreSQL)"]:::ns
     NS3["ns capsule-system<br/>Capsule, Capsule Proxy,<br/>Workspace Controller"]:::ns
     NS4["ns headlamp-system<br/>Headlamp"]:::ns
-    NS5["ns ingress-nginx, cert-manager,<br/>nfs-provisioner, monitoring"]:::ns
+    NS5["ns ingress-system (Traefik), cert-manager,<br/>monitoring; csi-driver-nfs ở kube-system"]:::ns
   end
 
   subgraph SHARED["shared pool — tenantry.io/compute-pool=shared-general<br/>soft allocation, overcommit ratio"]
@@ -163,32 +163,31 @@ flowchart TB
     T4["acme-green-*<br/>reserve 2 CPU"]:::tenant
   end
 
-  DNS -->|"portal.tenantry.example"| NS1
-  DNS -->|"id.tenantry.example"| NS2
-  DNS -->|"kube-cluster-a.tenantry.example"| NS3
-  DNS -->|"console-cluster-a.tenantry.example"| NS4
-  DNS -->|"*.apps.cluster-a.tenantry.example"| NS5
+  DNS -->|"portal.tenantry.site"| NS1
+  DNS -->|"auth.tenantry.site"| NS2
+  DNS -->|"kube-cluster-a.tenantry.site"| NS3
+  DNS -->|"console-cluster-a.tenantry.site"| NS4
+  DNS -->|"*.mvp.tenantry.site"| NS5
   T1 --- S1
   T2 --- S2
   T3 --- D1
   T4 --- D1
 ```
 
-Bảng endpoint public (TLS bởi cert-manager, CA lab):
+Bảng endpoint public (TLS bởi cert-manager, Let's Encrypt). Mọi request đi qua Traefik; host của platform nằm ngoài apps domain `mvp.tenantry.site` nên không Route nào của tenant trùng được:
 
 | Hostname | Trỏ tới | Ai dùng | OIDC client |
 |---|---|---|---|
-| `portal.tenantry.example` | Portal Web + Platform API | mọi user, Admin | `portal` |
-| `id.tenantry.example` | Keycloak | browser, kubelogin, Headlamp | — (issuer) |
-| `kube-cluster-a.tenantry.example` | Capsule Proxy | kubectl, Headlamp | `kubectl` |
-| `console-cluster-a.tenantry.example` | Headlamp | browser | `headlamp-cluster-a` |
-| `*.apps.cluster-a.tenantry.example` | ingress-nginx → tenant app | người dùng cuối của tenant | — |
+| `portal.tenantry.site` | Portal Web + Platform API | mọi user, Admin | `portal` |
+| `auth.tenantry.site` | Keycloak | browser, kubelogin, Headlamp | — (issuer) |
+| `kube-cluster-a.tenantry.site` | Capsule Proxy | kubectl, Headlamp | `kubectl` |
+| `console-cluster-a.tenantry.site` | Headlamp | browser | `headlamp-cluster-a` |
+| `*.mvp.tenantry.site` | Route của tenant → app | người dùng cuối của tenant | — |
 
 **Điểm cần review**
 
 - System pool cần **taint** để tenant workload không rơi vào (Capsule Tenant nodeSelector không đủ nếu user bỏ được selector; taint là lớp bảo vệ thứ hai).
 - Keycloak dùng **chung instance PostgreSQL, database riêng** để tiết kiệm tài nguyên lab; tách khi Phase 2.
-- Với lab kubeadm, cần một cách trả lời DNS wildcard cho máy demo (dnsmasq/CoreDNS nội bộ hoặc `sslip.io`). Điều này ảnh hưởng demo, không ảnh hưởng kiến trúc.
 - Phase 2 chỉ di chuyển khối `tenantry-system` + `keycloak` ra ngoài và thêm Cluster Agent vào `capsule-system`; các hostname theo Cluster (`kube-cluster-b`, `console-cluster-b`) được thêm theo mẫu.
 
 ## 4. Component view — bên trong Platform API
@@ -278,12 +277,12 @@ flowchart TB
   Main["Reconciler chính<br/>finalizer · observedGeneration · phase"]:::rec
 
   R1["node reconciler<br/>Dedicated: membership label ws-id<br/>(label/taint org: PlatformNodeGrant)"]:::rec
-  R2["tenant reconciler<br/>Capsule Tenant acme-solar<br/>owners, nodeSelector, quota,<br/>allowed StorageClass/IngressClass/hostnames"]:::rec
+  R2["tenant reconciler<br/>Capsule Tenant acme-solar<br/>owners, nodeSelector, quota,<br/>allowed StorageClass"]:::rec
   R3["namespace reconciler<br/>spec.namespaces → Namespace<br/>watch Namespace của Tenant → status.namespaces"]:::rec
   R4["resource reconciler<br/>ResourcePool, LimitRange,<br/>object quota"]:::rec
   R5["network reconciler<br/>Calico IPPool, annotation,<br/>NetworkPolicy baseline"]:::rec
   R6["rbac reconciler<br/>Developer/Viewer additional<br/>RoleBinding → tenantry ClusterRoles"]:::rec
-  R7["ingress-cert reconciler<br/>Certificate wildcard,<br/>TenantResource replicate Secret"]:::rec
+  R7["route reconciler<br/>spec.routes → Ingress<br/>→ status.routes"]:::rec
   R8["verify reconciler<br/>synthetic check → ProxyAccessReady"]:::rec
 
   O1["Node labels/taints"]:::out
@@ -293,7 +292,7 @@ flowchart TB
   O5["IPPool / NetworkPolicy"]:::out
   O6["RoleBindings"]:::out
   O7["Certificate / Secret"]:::out
-  Status["status.conditions<br/>ComputeReady · CapsuleTenantReady ·<br/>NetworkReady · PolicyReady ·<br/>IdentityBindingsReady · IngressReady ·<br/>ProxyAccessReady → phase Ready"]:::in
+  Status["status.conditions<br/>ComputeReady · CapsuleTenantReady ·<br/>NetworkReady · PolicyReady ·<br/>IdentityBindingsReady ·<br/>ProxyAccessReady → phase Ready"]:::in
 
   CR --> Main
   Main --> R1 --> O1

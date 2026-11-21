@@ -23,11 +23,10 @@ Tên và alias được giữ nguyên trong mọi sơ đồ; sơ đồ nào khô
 | `CTRL` | Workspace Controller | controller-runtime trong Cluster, reconcile CR `tenantry.io` |
 | `CAP` | Capsule | Capsule Operator: Tenant, ResourcePool, TenantResource, admission |
 | `CAL` | Calico | IPPool, IPAM, NetworkPolicy enforcement |
-| `CM` | cert-manager | Wildcard Certificate per Workspace từ ClusterIssuer `capsule-lab-ca` |
-| `PROXY` | Capsule Proxy | Endpoint `kube-cluster-a.tenantry.example`, filter cluster-scoped |
+| `PROXY` | Capsule Proxy | Endpoint `kube-cluster-a.tenantry.site`, filter cluster-scoped |
 | `HL` | Headlamp | Web console per Cluster, client OIDC `headlamp-cluster-a` |
 | `KL` | kubectl + kubelogin | CLI của user với exec plugin OIDC, client `kubectl` |
-| `ING` | ingress-nginx | Shared ingress controller, wildcard `*.apps.cluster-a.tenantry.example` |
+| `ING` | Traefik | Shared ingress controller, cert wildcard `*.mvp.tenantry.site` |
 
 ---
 
@@ -200,7 +199,7 @@ sequenceDiagram
 
 - Bước 4: authz admin ở backend theo realm role, không tin flag từ frontend [4.1][10.1].
 - Bước 8–11: Owner phải là user đã login ít nhất một lần; plan ghi "owner (email/user)" nhưng chưa nói cách xử lý email chưa đăng ký. Chọn: từ chối với `OWNER_USER_NOT_FOUND` (giả định); phương án thay thế là tạo invitation role OrgOwner nhưng sẽ vi phạm "đúng một OrgOwner" trong lúc chờ.
-- Bước 12–13: mọi ref trong grant (shared pool, NetworkPool, node grant, StorageClass, IngressClass) phải cùng `cluster_id` với grant; NetworkPool riêng phải có `organizationId` đúng Org hoặc null [5.2][7.1][15].
+- Bước 12–13: mọi ref trong grant (shared pool, NetworkPool, node grant, StorageClass) phải cùng `cluster_id` với grant; NetworkPool riêng phải có `organizationId` đúng Org hoặc null [5.2][7.1][15].
 - Bước 18–24: cùng một transaction, giống cạnh approve ở mục 1b, để Org không bao giờ `Active` mà thiếu Owner hoặc thiếu default grant.
 - Mã lỗi `OWNER_USER_NOT_FOUND` không có trong danh sách [16.5] (giả định).
 
@@ -415,7 +414,6 @@ sequenceDiagram
   participant CTRL as Workspace Controller
   participant CAP as Capsule
   participant CAL as Calico
-  participant CM as cert-manager
 
   U->>SPA: Wizard Solar, Shared, 4 CPU / 8Gi, auto network
   SPA->>API: POST /organizations/acme/workspaces:validate
@@ -479,9 +477,6 @@ sequenceDiagram
   CTRL->>CAL: Apply IPPool acme-solar cidr 10.240.12.0/24
   CTRL->>CAP: Apply TenantResource NetworkPolicy baseline
   CTRL->>K8S: Apply RoleBinding Developer/Viewer ClusterRole
-  CTRL->>CM: Apply Certificate *.acme-solar.apps.cluster-a...
-  CM-->>CTRL: Secret acme-solar-wildcard-tls Ready
-  CTRL->>CAP: Replicate Secret TLS vào Namespace của Tenant
   CTRL->>K8S: Update status phase=Ready, conditions True
   K8S->>PW: Watch status PlatformWorkspace
   PW->>DB: UPDATE workspaces Ready, operations Succeeded
@@ -495,7 +490,7 @@ sequenceDiagram
 - Bước 12–24 là **một** transaction: lock grant, shared pool, NetworkPool đều `FOR UPDATE` và đúng thứ tự đó (pool cũng phải khóa ghi, nếu không hai Organization cùng tạo trên một pool sẽ cùng đọc một tổng và cùng vượt trần); unique/exclusion constraint trên `network_allocations` là lớp chặn overlap thứ hai [5.3][7.2].
 - Bước 20: shared là soft allocation — vượt `ratio × reservable` mới từ chối; portal cảnh báo khi pool gần trần nhưng Pod `Pending` khi mọi Workspace dùng hết quota là hành vi chấp nhận [6.2].
 - Bước 42–47: "DB đã commit nhưng apply thất bại" được cứu bằng outbox retry; reservation **không** bị release vì controller lỗi tạm thời [17]. Server-side apply với field manager riêng bảo đảm apply lại không tạo trùng.
-- Bước 49–57: controller không đọc DB; mọi thứ cần thiết nằm trong `spec` của CR. Nếu Certificate chưa Ready thì `PolicyReady`/`ProxyAccessReady` chưa True và Workspace chưa `Ready`.
+- Bước 49–54: controller không đọc DB; mọi thứ cần thiết nằm trong `spec` của CR.
 - `Validating` và `Reserving` chỉ tồn tại trong request; row `workspaces` đầu tiên được ghi đã ở `Provisioning` (`04-state-machines.md` mục 1).
 
 ---
@@ -613,7 +608,7 @@ sequenceDiagram
   Note over CTRL,CAP: Namespace mang label tenant acme-solar + ownerRef
   K8S->>CAP: Admission webhook Capsule
   CAP-->>K8S: Chấp nhận, prefix và quota Tenant hợp lệ
-  CAP->>K8S: Replicate ResourceQuota, LimitRange, NetworkPolicy, TLS
+  CAP->>K8S: Replicate ResourceQuota, LimitRange, NetworkPolicy
   CTRL->>K8S: Annotation IPPool cni.projectcalico.org/ipv4pools
   CTRL->>K8S: status.namespaces += acme-solar-frontend source=portal
   K8S->>PW: Watch status
@@ -762,7 +757,7 @@ sequenceDiagram
   alt Cluster Unavailable
     API-->>SPA: 409 CLUSTER_NOT_READY, disable nút kèm lý do
   else Cluster Ready hoặc Maintenance
-    API-->>SPA: URL console-cluster-a.tenantry.example + deep link
+    API-->>SPA: URL console-cluster-a.tenantry.site + deep link
     SPA-->>U: Mở tab mới, không truyền token trong URL
   end
   U->>HL: GET /c/cluster-a/namespaces/acme-solar-frontend
@@ -795,47 +790,68 @@ sequenceDiagram
 
 ---
 
-## 10. Đường đi request tới app của tenant và admission chặn hostname ngoài vùng
+## 10. Route: đưa app của tenant ra HTTPS
 
-### 10a. Browser → wildcard DNS → ingress-nginx → TLS per-Workspace → Service → Pod
+### 10a. Tạo Route trên portal → Ingress → request tới Pod
 
-**Mục đích:** Một app trong Workspace được expose qua hostname trong vùng `*.acme-solar.apps.cluster-a.tenantry.example`, TLS từ wildcard Secret per-Workspace mà cert-manager cấp và Capsule replicate [7.6][18].
+**Mục đích:** User khai báo Route trên portal; API ghép hostname và ghi `spec.routes` qua outbox; controller dựng Ingress; request đi qua Traefik với cert wildcard của platform [7.6].
 
 ```mermaid
 sequenceDiagram
   autonumber
   participant U as User / Browser
-  participant ING as ingress-nginx
+  participant SPA as Portal SPA
+  participant API as Platform API
+  participant DB as PostgreSQL
+  participant PW as Outbox / Provisioning Worker
   participant K8S as kube-apiserver
   participant CTRL as Workspace Controller
-  participant CM as cert-manager
-  participant CAP as Capsule
+  participant ING as Traefik
 
-  Note over CTRL,CAP: Chuẩn bị TLS diễn ra lúc Workspace Ready
-  CTRL->>CM: Certificate *.acme-solar.apps.cluster-a.tenantry.example
-  CM->>CM: Ký bằng ClusterIssuer capsule-lab-ca
-  CM->>K8S: Secret acme-solar-wildcard-tls trong ns tenantry-system
-  CAP->>K8S: Replicate Secret vào mọi Namespace của Tenant
-  Note over U,ING: Joe deploy web, Service ClusterIP, Ingress class shared
-  U->>ING: https://web.acme-solar.apps.cluster-a.tenantry.example
-  Note over U,ING: DNS wildcard *.apps.cluster-a.tenantry.example → LB
-  ING->>ING: Chọn Ingress khớp host, class platform-shared
-  ING->>ING: TLS từ Secret acme-solar-wildcard-tls cùng Namespace
-  ING->>K8S: Endpoint của Service web đã được watch sẵn
-  Note over ING,CAP: NetworkPolicy cho ingress từ namespace ingress-nginx
-  ING-->>U: 200 response từ Pod IP trong 10.240.12.0/24
+  U->>SPA: Tab Routes của Solar, namespace frontend, tên web, Service web:80
+  SPA->>API: POST /workspaces/ws-01jxyz/routes
+  API->>DB: Quyền như Namespace (OrgOwner/OrgAdmin/TenantOwner-group)
+  API->>DB: BEGIN, SELECT workspaces FOR UPDATE
+  alt Workspace không Ready hoặc Namespace không Active
+    API-->>SPA: 409 WORKSPACE_NOT_READY
+  end
+  alt Đã có 20 Route
+    API-->>SPA: 409 ROUTE_QUOTA_EXCEEDED
+  end
+  API->>API: hostname = web-acme-solar.mvp.tenantry.site
+  API->>DB: INSERT workspace_routes
+  alt Vi phạm UNIQUE hostname
+    API-->>SPA: 409 ROUTE_HOSTNAME_TAKEN
+  end
+  API->>DB: INSERT operations route.create, outbox workspace.apply
+  API->>DB: COMMIT
+  API-->>SPA: 202 operationId
+  PW->>K8S: Server-side apply spec.routes += web
+  K8S->>CTRL: Watch event generation mới
+  CTRL->>K8S: Apply Ingress web trong acme-solar-frontend
+  Note over CTRL,K8S: class platform-shared, không tls.secretName
+  CTRL->>K8S: status.routes += web ready
+  K8S->>PW: Watch status
+  PW->>DB: UPDATE workspace_routes Active, operation Succeeded
+  API-->>SPA: SSE operation Succeeded
+  SPA-->>U: Hiện URL https://web-acme-solar.mvp.tenantry.site
+  U->>ING: https://web-acme-solar.mvp.tenantry.site
+  Note over U,ING: DNS *.mvp.tenantry.site → IP ingress
+  ING->>ING: TLS bằng cert wildcard mặc định, khớp host với Ingress
+  ING-->>U: 200 response từ Pod của Service web
 ```
 
 **Điểm cần review**
 
-- Bước 2–5: Certificate phải nằm trong một Namespace; chọn `tenantry-system` và dùng Capsule GlobalTenantResource để replicate Secret vào Namespace của Tenant (giả định — plan ghi `TenantResource`, nhưng nguồn ở namespace hệ thống cần GlobalTenantResource).
-- Bước 9: Ingress class phải nằm trong `allowedIngressClasses` của grant; ingress-nginx là shared per Cluster [7.6].
-- Bước 11: baseline NetworkPolicy default-deny phải có rule allow từ namespace ingress-nginx tới workload được expose [7.4]; test rằng Pod của Workspace khác không gọi trực tiếp được.
-- DNS wildcard trong lab do CoreDNS/dnsmasq hoặc dịch vụ kiểu sslip.io; browser demo import CA của lab một lần [7.6]. Service `NodePort`/`LoadBalancer` bị cấm — Ingress là đường expose duy nhất.
+- Bước 3–4: cùng luật authz và cùng row lock `workspaces` với tạo Namespace (mục 7a); đếm Route dưới lock đó.
+- Bước 9–13: user không nhập hostname; trùng chỉ xảy ra khi hai cặp (tên, Workspace) ghép ra cùng một chuỗi, và constraint ở DB quyết định.
+- Bước 19–20: controller chạy bằng ServiceAccount được luật admission cho phép ghi Ingress; cần test Capsule không từ chối Ingress do controller tạo trong Namespace của Tenant.
+- Bước 28: NetworkPolicy baseline phải cho phép traffic từ namespace `ingress-system` [7.4]; nếu Service không có Pod, Traefik trả 503 và Route vẫn `Active`.
+- Mã `ROUTE_QUOTA_EXCEEDED`, `ROUTE_HOSTNAME_TAKEN` thêm vào OpenAPI khi làm M11.
 
-### 10b. Capsule admission từ chối Ingress có hostname ngoài vùng của Workspace
+### 10b. Tenant tự tạo Ingress hoặc Certificate bị admission từ chối
 
-**Mục đích:** `ingressOptions.allowedHostnames` khóa tenant trong vùng của mình; `hostnameCollisionScope: Cluster` là lớp bảo vệ thứ hai [7.6][20.3].
+**Mục đích:** Route là đường duy nhất mở HTTP ra ngoài; tenant không tự chiếm hostname hay xin cert được [7.6][20.3].
 
 ```mermaid
 sequenceDiagram
@@ -843,31 +859,25 @@ sequenceDiagram
   participant KL as kubectl + kubelogin
   participant PROXY as Capsule Proxy
   participant K8S as kube-apiserver
-  participant CAP as Capsule
 
-  KL->>PROXY: kubectl apply Ingress host web.acme-water.apps...
+  KL->>PROXY: kubectl apply Ingress host web-acme-water.mvp.tenantry.site
   PROXY->>K8S: Forward
-  K8S->>CAP: Validating webhook Ingress
-  CAP->>CAP: So host với allowedHostnames regex của Tenant
-  Note over CAP: regex khóa host dưới .acme-solar.apps.cluster-a...
-  alt Host ngoài vùng acme-solar
-    CAP-->>K8S: Deny hostname not allowed
-    K8S-->>KL: 403 admission webhook denied
-  else Host trong vùng nhưng trùng hostname cluster-wide
-    CAP-->>K8S: Deny hostnameCollisionScope=Cluster
-    K8S-->>KL: 403 hostname collision
-  else Host hợp lệ, class trong allowedIngressClasses
-    CAP-->>K8S: Allow
-    K8S-->>KL: ingress created
-  end
+  K8S->>K8S: RBAC cho phép (ClusterRole admin có quyền ghi Ingress)
+  K8S->>K8S: ValidatingAdmissionPolicy tenantry-tenant-ingress-lockdown
+  Note over K8S: Namespace có label tenant, người gọi không phải operator/cert-manager
+  K8S-->>KL: 403 denied, dùng Route trên portal
+  KL->>PROXY: kubectl apply Certificate dnsNames portal.tenantry.site
+  PROXY->>K8S: Forward
+  K8S->>K8S: Cùng policy, nhóm cert-manager.io
+  K8S-->>KL: 403 denied
 ```
 
 **Điểm cần review**
 
-- Bước 4: regex do controller render từ `k8s_name` của Workspace; vì `<org-slug>-<ws-slug>` global-unique nên hai Workspace không thể có vùng trùng.
-- Bước 9–10: collision cluster-wide gần như không xảy ra khi regex đúng; giữ lại làm defense-in-depth và để phát hiện lỗi cấu hình regex.
-- Ingress không có `ingressClassName` hoặc class ngoài allow-list cũng bị Capsule từ chối [18]; test isolation "Ingress không chiếm được hostname của Workspace khác" [24.4].
-- Custom domain per Workspace và cert public là stretch, không có nhánh ở đây [7.6].
+- Bước 3–4: chặn ở admission chứ không ở RBAC, vì RBAC chỉ cộng quyền và `admin` là role gộp sẵn; định nghĩa policy ở `05-network-and-scheduling.md` mục 7.
+- Bước 7–10: không chặn `Certificate` thì tenant dùng được ClusterIssuer của platform để xin cert cho hostname bất kỳ dưới `tenantry.site`.
+- Test isolation "tenant không tạo được Ingress/Certificate" [24.4].
+- Custom domain là luồng riêng sau MVP, không có nhánh ở đây [7.6].
 
 ---
 
@@ -988,7 +998,6 @@ sequenceDiagram
   participant CTRL as Workspace Controller
   participant CAP as Capsule
   participant CAL as Calico
-  participant CM as cert-manager
 
   U->>SPA: Danger zone của Water, bấm Delete
   SPA->>API: GET /workspaces/ws-water/namespaces kèm PVC count
@@ -1028,7 +1037,6 @@ sequenceDiagram
   CTRL->>K8S: Gỡ label workspaces.tenantry.io/ws-water trên node
   Note over CTRL,K8S: Giữ dedicated-org label/taint và label của Green
   CTRL->>CAL: DELETE IPPool acme-water
-  CTRL->>CM: DELETE Certificate acme-water-wildcard
   CTRL->>CAP: DELETE Tenant acme-water, ResourcePool
   CTRL->>K8S: Gỡ finalizer CR, CR biến mất
   K8S->>PW: Watch CR deleted
@@ -1046,7 +1054,7 @@ sequenceDiagram
 - Bước 4–6: confirm gõ lại tên; chọn so với slug `water` (giả định — plan nói "tên Workspace"). UI phải liệt kê số Namespace/PVC trước khi cho bấm [17.4].
 - Bước 8 và 41–44: reservation sang `Releasing` ngay khi nhận lệnh nhưng chỉ `Released` sau khi controller dọn xong; capacity node chỉ hoàn lại lúc đó [17]. Green vẫn chạy, org label/taint không đổi [6.3][6.4].
 - Bước 20–31: `Blocked` là trạng thái chờ có thông tin object kẹt; OrgOwner chỉ chờ/retry, `:force` yêu cầu `platform-admin` và được audit [16.5]. Force đi bằng annotation, không bằng `spec`, để không sinh generation mới.
-- Bước 32–36: thứ tự bắt buộc — Calico sạch → gỡ membership label → xóa IPPool → Certificate → Tenant; không release CIDR khi còn WorkloadEndpoint [7.4][7.5].
+- Bước 32–35: thứ tự bắt buộc — Calico sạch → gỡ membership label → xóa IPPool → Tenant; không release CIDR khi còn WorkloadEndpoint [7.4][7.5].
 - Bước 43 và 47: CIDR qua `Quarantined` rồi mới `Released`; trong lúc đó `k8s_name` cũng chưa dùng lại được [17.4]. Độ dài quarantine cấu hình được, mặc định 10 phút.
 - Worker chết giữa bước 40–44: transaction DB atomic; khi restart, worker thấy CR đã biến mất và workspace còn `Deleting` → chạy lại bước 40 (xem mục 13b).
 

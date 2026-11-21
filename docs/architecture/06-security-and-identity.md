@@ -20,10 +20,10 @@ flowchart TB
 
   subgraph Z1["Zone 1 — public edge, xác thực token"]
     Portal["Portal Web + Platform API<br/>cookie phiên, CSRF, rate limit"]:::semi
-    KC["Keycloak<br/>issuer id.tenantry.example"]:::semi
+    KC["Keycloak<br/>issuer auth.tenantry.site"]:::semi
     CP["Capsule Proxy<br/>verify JWT, filter"]:::semi
     HL["Headlamp<br/>token user, không SA quyền"]:::semi
-    Ing["ingress-nginx"]:::semi
+    Ing["Traefik"]:::semi
   end
 
   subgraph Z2["Zone 2 — central plane nội bộ"]
@@ -74,7 +74,7 @@ flowchart LR
 
   subgraph Realm["Keycloak realm tenantry"]
     U["User alice<br/>sub 1f3a…<br/>realm roles: (platform-admin)<br/>groups: org_x:group_y…"]
-    C1["client portal<br/>confidential, PKCE<br/>redirect portal.tenantry.example/auth/callback"]:::c
+    C1["client portal<br/>confidential, PKCE<br/>redirect portal.tenantry.site/auth/callback"]:::c
     C2["client headlamp-cluster-a<br/>confidential<br/>redirect console-cluster-a…/oidc-callback"]:::c
     C3["client kubectl<br/>public, PKCE<br/>redirect http://localhost:8000"]:::c
   end
@@ -103,7 +103,7 @@ Thời hạn token của cả ba client lấy từ một bộ số duy nhất �
 
 **Điểm cần review**
 
-- User thuộc nhiều group → header JWT lớn; cần test kích thước với ~20 group (ingress-nginx `large-client-header-buffers`).
+- User thuộc nhiều group → header JWT lớn; cần test kích thước với ~20 group qua Traefik, Capsule Proxy và Headlamp.
 - Platform Admin có role `platform-admin` trong **mọi** token — không sao, vì Kubernetes không map realm role sang group; Admin muốn kubectl vào Tenant vẫn phải qua group binding như người khác (hoặc dùng kubeconfig admin ngoài platform).
 
 ## 3. Phiên portal và thời hạn token
@@ -198,7 +198,8 @@ flowchart TB
     B1["JWT → username oidc:sub, groups oidc:org:group"]:::k
     B2["Capsule Proxy: filter list Namespace/Node/…<br/>theo Tenant user thuộc"]:::k
     B3["RBAC: Tenant owner group → Capsule owner<br/>Developer/Viewer group → RoleBinding ClusterRole tenantry:*"]:::k
-    B4["Capsule webhook: quota, nodeSelector,<br/>registry, hostname, IPPool annotation, PSS"]:::k
+    B4["Capsule webhook: quota, nodeSelector,<br/>registry, IPPool annotation, PSS"]:::k
+    B6["ValidatingAdmissionPolicy: tenant không ghi<br/>Ingress và tài nguyên cert-manager"]:::k
     B5["PodNodeSelector + taint:<br/>đúng pool/node"]:::k
   end
 
@@ -206,7 +207,7 @@ flowchart TB
   Which -->|"portal / API"| A1 --> A2
   A2 -->|"có"| A3 --> A6
   A2 -->|"không"| A4 --> A5 --> A6
-  Which -->|"kubectl / Headlamp"| B1 --> B2 --> B3 --> B4 --> B5
+  Which -->|"kubectl / Headlamp"| B1 --> B2 --> B3 --> B4 --> B6 --> B5
 ```
 
 Nguyên tắc: **lớp 1 quyết định cấu hình, lớp 2 quyết định runtime**. Portal đổi binding → lớp 1 ghi DB → outbox → controller đổi RoleBinding, Group Sync đổi Keycloak → lớp 2 áp dụng. Không có đường nào để portal trực tiếp "cho phép" một request Kubernetes.
@@ -244,22 +245,23 @@ Cam kết ghi vào UI và audit: *"Quyền Kubernetes bị thu hồi chậm nh�
 ## 6. Rate limit
 
 - Đặt trong Platform API bằng token bucket trong bộ nhớ (`golang.org/x/time/rate`), không cần kho ngoài.
-- `/auth/login`, `/auth/callback`: theo IP client, mặc định 20 request/phút. IP lấy từ `X-Forwarded-For` chỉ khi request đến từ ingress-nginx.
+- `/auth/login`, `/auth/callback`: theo IP client, mặc định 20 request/phút. IP lấy từ `X-Forwarded-For` chỉ khi request đến từ Traefik.
 - Mọi request ghi của `/api/v1` (gồm `:retry`, `:accept`): theo user, mặc định 120 request/phút.
 - Vượt ngưỡng: `429` mã `RATE_LIMITED` kèm `Retry-After`.
-- Giới hạn đã biết: bucket nằm theo từng replica. MVP chạy một replica API nên chính xác; khi tăng replica thì chuyển sang annotation `limit-rpm` của ingress-nginx hoặc một kho đếm chung.
+- Giới hạn đã biết: bucket nằm theo từng replica. MVP chạy một replica API nên chính xác; khi tăng replica thì chuyển sang middleware rate limit của Traefik hoặc một kho đếm chung.
 
 ## 7. Credential nội bộ và bí mật
 
 | Credential | Chủ | Quyền | Lưu ở | Rotate |
 |---|---|---|---|---|
 | SA `tenantry-worker-provisioning` | Provisioning Worker | `platformworkspaces`, `platformnodegrants` (`tenantry.io`): `get/list/watch/create/patch/delete`. Không ghi `status`, không quyền nào khác | in-cluster SA (MVP); Phase 2 thay bằng Cluster Agent | tự động theo SA token projection |
-| SA `tenantry-operator` | Workspace Controller | Tenant, ResourcePool, IPPool, NetworkPolicy, RoleBinding, Namespace, Certificate, Node patch labels/taints (chỉ prefix `tenantry.io/` — enforce bằng test, K8s RBAC không lọc theo label) | in-cluster SA | theo SA |
+| SA `tenantry-operator` | Workspace Controller | Tenant, ResourcePool, IPPool, NetworkPolicy, RoleBinding, Namespace, Ingress, Node patch labels/taints (chỉ prefix `tenantry.io/` — enforce bằng test, K8s RBAC không lọc theo label) | in-cluster SA | theo SA |
 | Keycloak client `tenantry-sync` | Group Sync Worker | service account với role `manage-users`, `query-groups` của `realm-management`; không `manage-realm` | Kubernetes Secret | thủ công, ghi runbook |
 | Client secret `portal`, `headlamp-cluster-a` | API, Headlamp | OIDC | Kubernetes Secret | thủ công |
 | Khóa mã hóa phiên | API | AES-256-GCM cho refresh token trong `sessions` và cookie `tenantry_login` | Kubernetes Secret | thủ công; đổi khóa = mọi người đăng nhập lại |
 | PostgreSQL user `tenantry` | API + workers | DB `tenantry` | Secret | thủ công |
-| CA lab `capsule-lab-ca` | cert-manager ClusterIssuer | ký mọi cert nội bộ + wildcard tenant | Secret trong `cert-manager` | 10 năm |
+| API token Cloudflare | cert-manager ClusterIssuer `letsencrypt` | sửa DNS của zone `tenantry.site` (cho DNS-01), không quyền nào khác | Secret trong `cert-manager` | thủ công |
+| Private key wildcard `*.mvp.tenantry.site` | Traefik | TLS cho mọi Route | Secret trong `ingress-system`; tenant không đọc được | cert-manager tự gia hạn |
 
 Hai worker là hai Deployment để một tiến trình không cầm đồng thời quyền apply CR và quyền quản trị user Keycloak (IMPLEMENTATION-PLAN mục 5.3).
 
@@ -282,10 +284,12 @@ Không có credential nào của user được lưu ở dạng dùng lại đư�
 | Tạo/resize/cordon/delete Workspace | — | ✅ | ✅ | — | — | — |
 | Đổi group binding của Workspace | — | ✅ | ✅ | — | — | — |
 | Namespace create/delete trên portal | — | ✅ | ✅ | ✅ | xem | xem |
+| Route create/delete trên portal | — | ✅ | ✅ | ✅ | xem | xem |
 | Xem Workspace trên portal | ✅ (admin view) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Tải kubeconfig / mở Headlamp | — | ✅* | ✅* | ✅ | ✅ | ✅ |
 | kubectl: tạo Namespace trong Tenant | — | * | * | ✅ | ❌ | ❌ |
 | kubectl: CRUD workload | — | * | * | ✅ | ✅ | ❌ |
+| kubectl: tạo/sửa/xóa Ingress, Certificate | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | kubectl: đọc Secret, exec | — | * | * | ✅ | theo policy | ❌ |
 | kubectl: sửa label/annotation isolation, nodeSelector | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Xem operation | ✅ mọi org | ✅ | ✅ | ✅ | ✅ | ✅ |

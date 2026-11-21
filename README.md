@@ -10,5 +10,5 @@ tự tạo Workspace trên portal; Capsule, Calico và cert-manager thực thi c
 | Kế hoạch triển khai | [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md) |
 | Kiến trúc | [`docs/architecture/`](docs/architecture/) |
 
-Code đang làm theo milestone, bắt đầu từ `backend/`. Lab Capsule bản đầu (`scripts/`, `manifests/`, `values/`, `tests/`,
-`CAPSULE-LAB-DEEP-DIVE.md`) nằm ở nhánh `feat/tenantry-scaffold`.
+Code đang làm theo milestone, bắt đầu từ `backend/`. Nền của cụm (`deploy/cluster/`) được viết mới ở M1; lab Capsule bản đầu chỉ còn ở
+nhánh `feat/tenantry-scaffold` để tra cứu.

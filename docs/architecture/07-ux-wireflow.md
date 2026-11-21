@@ -35,7 +35,8 @@ flowchart TB
   W4["Network / CIDR / IP usage"]:::ws
   W5["Members & role bindings"]:::ws
   W6["Namespaces: list/create/delete/usage"]:::ws
-  W7["Access: kubeconfig,<br/>Open Web Console, hostname zone"]:::ws
+  W6R["Routes: list/create/delete,<br/>URL và trạng thái"]:::ws
+  W7["Access: kubeconfig,<br/>Open Web Console"]:::ws
   W8["Danger zone: cordon, delete"]:::ws
 
   Adm["/admin (chỉ realm role platform-admin)"]:::adm
@@ -54,7 +55,7 @@ flowchart TB
   Transfer --> Switch
   Switch --> Over & WSL & Mem & Grp & Set & Cl & Aud
   WSL --> WSD
-  WSD --> W1 & W2 & W3 & W4 & W5 & W6 & W7 & W8
+  WSD --> W1 & W2 & W3 & W4 & W5 & W6 & W6R & W7 & W8
   Switch -.->|"nếu có role"| Adm
   Adm --> A1 & A2 & A3 & A4 & A5 & A6 & A7 & A8
 ```
@@ -154,7 +155,7 @@ flowchart TB
   B9["9. Owner groups (≥1)"]:::st
   B10["10. Developer / Viewer groups<br/>cảnh báo group chưa Synced"]:::st
   V["POST workspaces:validate<br/>trả lỗi theo mã, gắn vào bước"]:::api
-  B11["11. Review: Cluster, compute, node,<br/>network, resources, access,<br/>hostname zone *.acme-solar.apps…"]:::st
+  B11["11. Review: Cluster, compute, node,<br/>network, resources, access"]:::st
   B12["12. Submit → 202 operation<br/>→ Operation view SSE"]:::api
   E["Lỗi: CLUSTER_GRANT_CPU_QUOTA_EXCEEDED,<br/>DEDICATED_NODE_INSUFFICIENT_CAPACITY,<br/>CIDR_OVERLAP, LAST_OWNER_BINDING…"]:::err
 
@@ -172,7 +173,7 @@ Nội dung giải thích bắt buộc trong wizard (plan 19.1): Cluster không �
 
 - Với MVP một Cluster, một pool: bước 2, 3, 5a gần như rỗng → gộp thành một màn "Cluster & capacity" read-only để wizard thực tế còn ~8 bước. Data model không đổi, chỉ UI.
 - `:validate` gọi khi nào? Đề xuất: gọi **mỗi khi rời bước 6/7/9** (debounce) để lỗi hiện đúng chỗ, và gọi lần cuối trước Submit. Submit vẫn tự validate lại trong transaction.
-- Bước 1 hiện slug preview là quan trọng vì slug immutable; đồng thời hiện luôn hostname zone để user hiểu tên đó xuất hiện ở đâu.
+- Bước 1 hiện slug preview là quan trọng vì slug immutable; đồng thời hiện luôn dạng URL của Route (`<tên>-acme-solar.mvp.tenantry.site`) để user hiểu tên đó xuất hiện ở đâu.
 
 ## 5. Màn hình trạng thái, rỗng và lỗi bắt buộc
 
