@@ -34,8 +34,7 @@ done
 
 # Namespace for the probes below, held to the restricted Pod Security level
 # like the namespaces of the platform.
-kubectl create namespace cluster-verify --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-kubectl label namespace cluster-verify pod-security.kubernetes.io/enforce=restricted --overwrite >/dev/null
+ensure_namespace cluster-verify restricted
 
 check "standard is the default StorageClass" \
   field_is storageclass/standard '{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}' true
@@ -54,5 +53,40 @@ storage_probe() {
   [[ "${out}" == ok ]] || { echo "read back '${out}'"; return 1; }
 }
 check "a PVC on standard binds and a non-root Pod writes to it" storage_probe
+
+certificates_ready() {
+  local all not_ready
+  all="$(kubectl get certificates -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}={.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}')" || return 1
+  [[ -n "${all}" ]] || { echo "no Certificate at all"; return 1; }
+  not_ready="$(grep -v '=True$' <<<"${all}" || true)"
+  [[ -z "${not_ready}" ]] || { echo "${not_ready}"; return 1; }
+}
+check "every Certificate is Ready" certificates_ready
+
+# Staging certificates chain up to Let's Encrypt's staging roots, which no
+# system trusts; fetch them so the HTTPS checks can still verify the chain.
+ca_args=()
+if [[ "${CLUSTER_ISSUER}" == letsencrypt-staging ]]; then
+  staging_roots="$(mktemp)"
+  trap 'rm -f "${staging_roots}"' EXIT
+  for root in letsencrypt-stg-root-x1 letsencrypt-stg-root-x2; do
+    curl -fsS "https://letsencrypt.org/certs/staging/${root}.pem" >>"${staging_roots}"
+  done
+  ca_args=(--cacert "${staging_roots}")
+fi
+
+https_ok() { # url, text the body must contain
+  local body
+  body="$(curl -fsS --max-time 10 "${ca_args[@]}" "$1")" || return 1
+  [[ "${body}" == *"$2"* ]] || { echo "body does not contain '$2'"; return 1; }
+}
+redirects_to_https() { # host
+  local got
+  got="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code} %{redirect_url}' "http://$1/")" || return 1
+  # 301 for GET (308 for other methods): both are permanent redirects.
+  [[ "${got}" == "301 https://$1/" ]] || { echo "got '${got}'"; return 1; }
+}
+check "https://demo.${APPS_DOMAIN} answers with a valid certificate" https_ok "https://demo.${APPS_DOMAIN}/" "Hostname: whoami"
+check "http://demo.${APPS_DOMAIN} redirects to HTTPS" redirects_to_https "demo.${APPS_DOMAIN}"
 
 exit "${failed}"

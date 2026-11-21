@@ -1,0 +1,106 @@
+# Traefik, the only way into the cluster from outside
+# (architecture/05-network-and-scheduling.md §7). The node and the public IP
+# come from env.sh; 40-traefik.sh passes them with --set.
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+  # Drop request headers whose name aliases one Traefik sets (X_Real_Ip for
+  # X-Real-Ip): CGI-style backends would read them as the real header.
+  aliasHeadersStrategy: delete
+
+# One Pod on the control-plane node, listening on its ports 80 and 443
+# directly (hostPort): the public IP is NATed to that node, and only a Pod
+# that receives the traffic there sees the real client address.
+deployment:
+  replicas: 1
+  # The default certificate, see providers below. The ConfigMap and the
+  # Secret share one directory so that a renewed Secret changes the directory
+  # Traefik watches, which makes it read the certificate again.
+  additionalVolumes:
+    - name: dynamic
+      projected:
+        sources:
+          - configMap:
+              name: traefik-default-certificate
+          - secret:
+              name: mvp-wildcard-tls
+additionalVolumeMounts:
+  - name: dynamic
+    mountPath: /etc/traefik/dynamic
+    readOnly: true
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+# Two Pods cannot hold the same hostPort on one node: stop the old Pod before
+# starting the new one (a few seconds of downtime per upgrade).
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
+    maxSurge: 0
+resources:
+  requests: {cpu: 50m, memory: 64Mi}
+  limits: {memory: 256Mi}
+
+ports:
+  web:
+    hostPort: 80
+    # Port 80 only redirects to HTTPS.
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+  websecure:
+    hostPort: 443
+    # TLS is on for every router of this entry point, so an Ingress needs no
+    # tls section: Traefik answers with the default certificate.
+
+# Nothing reaches Traefik through a Service; the node's ports are the entry.
+service:
+  enabled: false
+
+# Only the Kubernetes Ingress provider: one kind of object opens a way in, and
+# tenants are not allowed to write it (05 §7). No IngressRoute CRDs, no Gateway
+# API. The file provider only carries the default certificate.
+providers:
+  kubernetesCRD:
+    enabled: false
+  kubernetesGateway:
+    enabled: false
+  kubernetesIngress:
+    enabled: true
+    ingressClass: platform-shared # an Ingress without this class is ignored
+    publishedService:
+      enabled: false # status.loadBalancer of each Ingress shows PUBLIC_IP instead
+additionalArguments:
+  - --providers.file.directory=/etc/traefik/dynamic
+  - --providers.file.watch=true
+extraObjects:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: traefik-default-certificate
+    data:
+      default-certificate.yaml: |
+        tls:
+          stores:
+            default:
+              defaultCertificate:
+                certFile: /etc/traefik/dynamic/tls.crt
+                keyFile: /etc/traefik/dynamic/tls.key
+
+api:
+  dashboard: false
+
+ingressClass:
+  enabled: true
+  name: platform-shared
+  isDefaultClass: false
+gateway:
+  enabled: false
+gatewayClass:
+  enabled: false

@@ -1,0 +1,44 @@
+# cert-manager (architecture/05-network-and-scheduling.md §7). Issues every
+# certificate of the platform from Let's Encrypt with the DNS-01 challenge,
+# so Let's Encrypt never has to reach into the cluster.
+
+crds:
+  enabled: true
+  # Uninstalling the chart must not delete the CRDs, which would delete every
+  # Certificate and the Secrets they own.
+  keep: true
+
+# DNS-01 checks that the TXT record is visible before asking Let's Encrypt to
+# validate. Ask public resolvers, not the cluster DNS, which may cache the
+# answer it saw before the record existed.
+dns01RecursiveNameservers: 1.1.1.1:53,8.8.8.8:53
+dns01RecursiveNameserversOnly: true
+
+nodeSelector: &system
+  tenantry.io/compute-pool: system
+tolerations: &tolerate-system
+  - key: tenantry.io/compute-pool
+    operator: Equal
+    value: system
+    effect: NoSchedule
+resources:
+  requests: {cpu: 10m, memory: 64Mi}
+  limits: {memory: 256Mi}
+
+webhook:
+  nodeSelector: *system
+  tolerations: *tolerate-system
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 128Mi}
+
+cainjector:
+  nodeSelector: *system
+  tolerations: *tolerate-system
+  resources:
+    requests: {cpu: 10m, memory: 64Mi}
+    limits: {memory: 256Mi}
+
+startupapicheck:
+  nodeSelector: *system
+  tolerations: *tolerate-system

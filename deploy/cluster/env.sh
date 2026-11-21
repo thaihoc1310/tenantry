@@ -21,8 +21,22 @@ SHARED_NODES="${SHARED_NODES:-fdp-k8s-wk2 fdp-k8s-wk3}"
 NFS_SERVER="${NFS_SERVER:-172.21.92.161}"
 NFS_SHARE="${NFS_SHARE:-/srv/tenantry}"
 
+# Public entry point: the infrastructure NATs this IP to INGRESS_NODE.
+PUBLIC_IP="${PUBLIC_IP:-203.29.16.150}"
+APPS_DOMAIN="${APPS_DOMAIN:-mvp.tenantry.site}" # tenant Routes: <name>-<workspace>.APPS_DOMAIN
+DNS_ZONE="${DNS_ZONE:-tenantry.site}"           # platform hosts live directly under it
+
+# Let's Encrypt account (ClusterIssuers letsencrypt-staging and letsencrypt).
+# Certificates use CLUSTER_ISSUER; stay on staging until everything works,
+# because production limits how many certificates a domain gets per week.
+CLUSTER_ISSUER="${CLUSTER_ISSUER:-letsencrypt-staging}"
+# API token allowed to edit DNS records of DNS_ZONE only (DNS-01 challenge).
+CLOUDFLARE_TOKEN_FILE="${CLOUDFLARE_TOKEN_FILE:-${HOME}/.config/tenantry/cloudflare-token}"
+
 # Chart versions, pinned: re-running cluster-up must install the same thing.
 CSI_DRIVER_NFS_VERSION=4.13.6
+CERT_MANAGER_VERSION=v1.21.3
+TRAEFIK_VERSION=42.3.1 # Traefik v3.7.17
 
 CLUSTER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -30,3 +44,11 @@ if ! command kubectl config get-contexts "${KUBE_CONTEXT}" >/dev/null 2>&1; then
   echo "kubeconfig has no context ${KUBE_CONTEXT} (set KUBE_CONTEXT to override)" >&2
   exit 1
 fi
+
+# ensure_namespace NAME LEVEL: create the namespace if needed and enforce a
+# Pod Security level on it (restricted unless a component cannot run that way).
+# Run before installing into it, so the install itself is checked.
+ensure_namespace() {
+  kubectl create namespace "$1" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  kubectl label namespace "$1" "pod-security.kubernetes.io/enforce=$2" --overwrite >/dev/null
+}

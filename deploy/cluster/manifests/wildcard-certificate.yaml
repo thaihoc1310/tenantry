@@ -1,0 +1,15 @@
+# The certificate every tenant Route is served with: Traefik's default
+# certificate (05 §7). Its private key stays in ingress-system, so no tenant
+# Namespace ever holds one.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mvp-wildcard
+  namespace: ingress-system
+spec:
+  secretName: mvp-wildcard-tls
+  dnsNames:
+    - "*.__APPS_DOMAIN__"
+  issuerRef:
+    kind: ClusterIssuer
+    name: __CLUSTER_ISSUER__
