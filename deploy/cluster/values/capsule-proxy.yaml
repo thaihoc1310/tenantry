@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/projectcapsule/capsule-proxy/v0.15.3/charts/capsule-proxy/values.schema.json
+# Capsule Proxy: the tenants' door to the Kubernetes API (05 §8), public at
+# kube-a.<zone> through Traefik (manifests/kube-a-ingress.yaml).
+
+options:
+  # TLS ends at Traefik; the proxy speaks plain HTTP inside the cluster.
+  enableSSL: false
+  generateCertificates: false
+  # A request carries the user's Keycloak token. The proxy asks
+  # kube-apiserver who that is (TokenReview), so the user is exactly the one
+  # kube-apiserver sees: oidc:<sub> with oidc:-prefixed groups.
+  authPreferredTypes: BearerToken
+  logLevel: 2
+certManager:
+  generateCertificates: false
+
+nodeSelector: &system
+  tenantry.io/compute-pool: system
+tolerations: &tolerate-system
+  - key: tenantry.io/compute-pool
+    operator: Equal
+    value: system
+    effect: NoSchedule
+global:
+  jobs:
+    kubectl:
+      nodeSelector: *system
+      tolerations: *tolerate-system
+    certs:
+      nodeSelector: *system
+      tolerations: *tolerate-system

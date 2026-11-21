@@ -1,0 +1,83 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kubernetes-sigs/headlamp/headlamp-helm-0.46.0/charts/headlamp/values.schema.json
+# Headlamp, the web console of cluster-a (05 §8). It holds no Kubernetes
+# rights of its own: every request carries the logged-in user's token and goes
+# through Capsule Proxy, so a user sees what Capsule and RBAC let them see.
+# Host-dependent values (hosts, the ingress node's address, OIDC flags) are
+# added by 85-headlamp.sh.
+
+fullnameOverride: headlamp
+
+config:
+  inCluster: true
+  # The portal deep-links to /c/<cluster id>/...
+  inClusterContextName: cluster-a
+  oidc:
+    # Client id, client secret and issuer come from the Secret headlamp-oidc,
+    # written by 85-headlamp.sh: no secret in values or on a command line.
+    secret:
+      create: false
+    externalSecret:
+      enabled: true
+      name: headlamp-oidc
+
+# The chart binds Headlamp's ServiceAccount to cluster-admin by default.
+clusterRoleBinding:
+  create: false
+
+# "In cluster" means: talk to the Kubernetes API at KUBERNETES_SERVICE_HOST
+# with the CA and token in /var/run/secrets/kubernetes.io/serviceaccount.
+# client-go always uses HTTPS there, and Capsule Proxy speaks HTTP behind
+# Traefik, so the API Headlamp is pointed at is the public proxy endpoint,
+# kube-a, reached directly on the ingress node (hostAliases, added by the
+# script) instead of out through the public NAT and back.
+automountServiceAccountToken: false
+volumes:
+  - name: api-access
+    projected:
+      sources:
+        # Required by client-go; with an audience nothing accepts, the token
+        # is useless if it ever left the Pod. Users' own tokens do the work.
+        - serviceAccountToken:
+            path: token
+            audience: headlamp-has-no-kubernetes-rights
+            expirationSeconds: 3600
+        # Roots of the Let's Encrypt certificates of kube-a and auth.
+        - configMap:
+            name: letsencrypt-roots
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - downwardAPI:
+            items:
+              - path: namespace
+                fieldRef: {fieldPath: metadata.namespace}
+volumeMounts:
+  - name: api-access
+    mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+    readOnly: true
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 100
+  runAsGroup: 101
+  privileged: false
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+resources:
+  requests: {cpu: 50m, memory: 128Mi}
+  limits: {memory: 256Mi}
+
+nodeSelector:
+  tenantry.io/compute-pool: system
+tolerations:
+  - key: tenantry.io/compute-pool
+    operator: Equal
+    value: system
+    effect: NoSchedule

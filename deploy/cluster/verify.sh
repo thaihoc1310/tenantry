@@ -66,17 +66,12 @@ certificates_ready() {
 }
 check "every Certificate is Ready" certificates_ready
 
-# Staging certificates chain up to Let's Encrypt's staging roots, which no
-# system trusts; fetch them so the HTTPS checks can still verify the chain.
-ca_args=()
-if [[ "${CLUSTER_ISSUER}" == letsencrypt-staging ]]; then
-  staging_roots="$(mktemp)"
-  trap 'rm -f "${staging_roots}"' EXIT
-  for root in letsencrypt-stg-root-x1 letsencrypt-stg-root-x2; do
-    curl -fsS "https://letsencrypt.org/certs/staging/${root}.pem" >>"${staging_roots}"
-  done
-  ca_args=(--cacert "${staging_roots}")
-fi
+# The roots CLUSTER_ISSUER's certificates chain up to: staging roots are in no
+# system trust store, so every HTTPS check names the roots explicitly.
+le_roots="$(mktemp)"
+trap 'rm -f "${le_roots}"' EXIT
+letsencrypt_roots >"${le_roots}"
+ca_args=(--cacert "${le_roots}")
 
 https_ok() { # url, text the body must contain
   local body
@@ -133,25 +128,33 @@ check "the master realm is not reachable from outside" status_is "https://${AUTH
 check "the admin console is not reachable from outside" status_is "https://${AUTH_HOST}/admin/" 404
 check "Keycloak issues a token for the kubernetes audience" token_for_kubernetes
 
-# apiserver_accepts_keycloak_token: present the token alone (a kubeconfig
-# with this cluster and nothing else, so the admin certificate is not sent too)
-# and ask kube-apiserver who that is.
-apiserver_accepts_keycloak_token() {
+# accepts_keycloak_token SERVER CA_FILE: present a Keycloak token alone (a
+# kubeconfig with that server and nothing else, so the admin certificate is
+# not sent too) and ask who that is: the answer must be oidc:<sub>.
+accepts_keycloak_token() {
   local token sub dir got
   token="$(keycloak_token)" || return 1
   sub="$(jwt_claim "${token}" sub | tr -d '"')"
   dir="$(mktemp -d)" && chmod 700 "${dir}"
-  command kubectl config view --raw --minify --context "${KUBE_CONTEXT}" \
-    -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d >"${dir}/ca.crt"
-  KUBECONFIG="${dir}/kubeconfig" command kubectl config set-cluster c --certificate-authority="${dir}/ca.crt" \
-    --server="$(command kubectl config view --minify --context "${KUBE_CONTEXT}" -o jsonpath='{.clusters[0].cluster.server}')" >/dev/null
-  printf 'users:\n- name: u\n  user:\n    token: %s\n' "${token}" >"${dir}/user"
-  KUBECONFIG="${dir}/kubeconfig" command kubectl config set-context c --cluster=c --user=u >/dev/null
-  got="$(KUBECONFIG="${dir}/kubeconfig:${dir}/user" command kubectl --context c auth whoami -o jsonpath='{.status.userInfo.username}' 2>&1)"
+  cp "$2" "${dir}/ca.crt"
+  cat >"${dir}/kubeconfig" <<KUBECONFIG
+apiVersion: v1
+kind: Config
+clusters: [{name: c, cluster: {server: "$1", certificate-authority: ${dir}/ca.crt}}]
+users: [{name: u, user: {token: "${token}"}}]
+contexts: [{name: c, context: {cluster: c, user: u}}]
+current-context: c
+KUBECONFIG
+  got="$(KUBECONFIG="${dir}/kubeconfig" command kubectl auth whoami -o jsonpath='{.status.userInfo.username}' 2>&1)"
   rm -rf "${dir}"
   [[ "${got}" == "oidc:${sub}" ]] || { echo "got '${got}', want 'oidc:${sub}'"; return 1; }
 }
-check "kube-apiserver accepts that token as oidc:<sub>" apiserver_accepts_keycloak_token
+apiserver_ca="$(mktemp)"
+trap 'rm -f "${le_roots}" "${apiserver_ca}"' EXIT
+command kubectl config view --raw --minify --context "${KUBE_CONTEXT}" \
+  -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d >"${apiserver_ca}"
+apiserver_url="$(command kubectl config view --minify --context "${KUBE_CONTEXT}" -o jsonpath='{.clusters[0].cluster.server}')"
+check "kube-apiserver accepts that token as oidc:<sub>" accepts_keycloak_token "${apiserver_url}" "${apiserver_ca}"
 
 # refused_by MESSAGE SELECTOR: the probe Pod with that label is refused, and
 # the refusal names the admission plugin's rule.
@@ -169,5 +172,26 @@ check "PodTolerationRestriction refuses a toleration its namespace does not allo
   refused_by "conflict with its namespace whitelist" probe=tolerations
 check "PodTolerationRestriction accepts a toleration its namespace allows" \
   kubectl apply --dry-run=server -l probe=own-toleration -f "${CLUSTER_DIR}/manifests/verify-placement.yaml"
+
+capsule_users() {
+  local got
+  got="$(kubectl get capsuleconfiguration default -o jsonpath='{range .spec.users[*]}{.kind}:{.name}{" "}{end}')" || return 1
+  [[ "${got}" == "Group:oidc:tenantry:tenant-users " ]] || { echo "users are '${got}'"; return 1; }
+}
+no_rights() { # subject: must not read Pods or Secrets anywhere
+  if kubectl auth can-i list secrets --all-namespaces --as="$1" >/dev/null 2>&1 ||
+    kubectl auth can-i list pods --all-namespaces --as="$1" >/dev/null 2>&1; then
+    echo "$1 can list Pods or Secrets"; return 1
+  fi
+}
+
+check "Capsule is ready" field_is deployment/capsule-controller-manager '{.status.availableReplicas}' 1 capsule-system
+check "Capsule's tenant users are the group oidc:tenantry:tenant-users" capsule_users
+check "Capsule Proxy is ready" field_is deployment/capsule-proxy '{.status.availableReplicas}' 1 capsule-system
+check "https://${KUBE_HOST} (Capsule Proxy) accepts the token as oidc:<sub>" \
+  accepts_keycloak_token "https://${KUBE_HOST}" "${le_roots}"
+check "Headlamp is ready" field_is deployment/headlamp '{.status.availableReplicas}' 1 headlamp-system
+check "https://${CONSOLE_HOST} (Headlamp) answers with a valid certificate" https_ok "https://${CONSOLE_HOST}/" "Headlamp"
+check "Headlamp's ServiceAccount has no Kubernetes rights" no_rights system:serviceaccount:headlamp-system:headlamp
 
 exit "${failed}"

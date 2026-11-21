@@ -47,6 +47,9 @@ CSI_DRIVER_NFS_VERSION=4.13.6
 CERT_MANAGER_VERSION=v1.21.3
 TRAEFIK_VERSION=42.3.1 # Traefik v3.7.17
 KEYCLOAKX_VERSION=7.4.0 # image pinned in values/keycloak.yaml
+CAPSULE_VERSION=0.15.2
+CAPSULE_PROXY_VERSION=0.15.3
+HEADLAMP_VERSION=0.46.0
 
 CLUSTER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -83,4 +86,19 @@ copy_secret_key() {
   kubectl -n "$1" get secret "$2" -o jsonpath="{.data.${3}}" | base64 -d |
     kubectl -n "$4" create secret generic "$5" --from-file="$6=/dev/stdin" --dry-run=client -o yaml |
     kubectl apply -f - >/dev/null
+}
+
+# letsencrypt_roots: the root certificates CLUSTER_ISSUER's certificates chain
+# up to, in PEM, for clients that cannot use the system trust store (staging
+# roots are in no trust store at all).
+letsencrypt_roots() {
+  local roots root
+  if [[ "${CLUSTER_ISSUER}" == letsencrypt-staging ]]; then
+    roots="certs/staging/letsencrypt-stg-root-x1 certs/staging/letsencrypt-stg-root-x2"
+  else
+    roots="certs/isrgrootx1 certs/isrg-root-x2"
+  fi
+  for root in ${roots}; do
+    curl -fsS "https://letsencrypt.org/${root}.pem"
+  done
 }

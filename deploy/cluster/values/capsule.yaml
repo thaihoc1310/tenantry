@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/projectcapsule/capsule/v0.15.2/charts/capsule/values.schema.json
+# Capsule (architecture/05-network-and-scheduling.md §2, §8). Tenants are not
+# created here: the Workspace Controller renders them from M6 on.
+
+manager:
+  options:
+    # Who Capsule treats as a tenant user. Group Sync keeps every user with a
+    # Workspace binding in tenantry:tenant-users (M4), and kube-apiserver
+    # prefixes token groups with oidc: (70-apiserver.sh). This replaces the
+    # chart's placeholder group projectcapsule.dev.
+    users:
+      - kind: Group
+        name: oidc:tenantry:tenant-users
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 512Mi}
+
+nodeSelector: &system
+  tenantry.io/compute-pool: system
+tolerations: &tolerate-system
+  - key: tenantry.io/compute-pool
+    operator: Equal
+    value: system
+    effect: NoSchedule
+
+# The chart's hook Jobs (CRD lifecycle, cleanup) run on the system pool too.
+global:
+  jobs:
+    kubectl:
+      nodeSelector: *system
+      tolerations: *tolerate-system

@@ -17,9 +17,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 ca_block=""
 if [[ "${CLUSTER_ISSUER}" == letsencrypt-staging ]]; then
   ca_block="      certificateAuthority: |
-$(for root in letsencrypt-stg-root-x1 letsencrypt-stg-root-x2; do
-    curl -fsS "https://letsencrypt.org/certs/staging/${root}.pem"
-  done | sed 's/^/        /')"
+$(letsencrypt_roots | sed 's/^/        /')"
 fi
 
 # Usernames become oidc:<sub>, groups oidc:<group> (06 §2): nothing a token

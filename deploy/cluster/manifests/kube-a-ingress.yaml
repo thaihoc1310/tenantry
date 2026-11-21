@@ -1,0 +1,24 @@
+# https://kube-a.<zone>: kubectl (kubelogin) and Headlamp reach Capsule Proxy
+# here. Traefik terminates TLS with this host's own certificate.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: capsule-proxy
+  namespace: capsule-system
+  annotations:
+    cert-manager.io/cluster-issuer: __CLUSTER_ISSUER__
+spec:
+  ingressClassName: platform-shared
+  tls:
+    - hosts: [__KUBE_HOST__]
+      secretName: kube-a-tls
+  rules:
+    - host: __KUBE_HOST__
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: capsule-proxy
+                port: {name: proxy}
