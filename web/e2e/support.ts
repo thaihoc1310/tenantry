@@ -1,4 +1,5 @@
 // What the end-to-end tests share: new accounts, Mailpit, logging in.
+import { execFileSync } from 'node:child_process'
 import { expect, type Browser, type Page } from '@playwright/test'
 
 export const mailpit = process.env.E2E_MAILPIT ?? 'http://127.0.0.1:8025'
@@ -111,4 +112,92 @@ export async function api(page: Page, method: string, path: string, body?: unkno
     },
     [method, path, body, idempotencyKey] as const,
   )
+}
+
+// kubectl runs against the lab with the admin's kubeconfig context;
+// kubectlIn feeds it input (a manifest for -f -).
+export const kubectl = (...args: string[]) => kubectlIn('', ...args)
+export const kubectlIn = (input: string, ...args: string[]) =>
+  execFileSync('kubectl', ['--context', process.env.E2E_KUBE_CONTEXT ?? 'hocbt@kubernetes', ...args], {
+    input,
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+
+// until polls f until it returns a value, for up to timeout ms.
+export async function until<T>(what: string, f: () => Promise<T | undefined>, timeout = 180_000): Promise<T> {
+  const end = Date.now() + timeout
+  for (;;) {
+    const v = await f()
+    if (v !== undefined) return v
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)
+    await new Promise((r) => setTimeout(r, 2000))
+  }
+}
+
+// succeeded waits for an operation to succeed; any other end fails the test.
+export async function succeeded(page: Page, opId: string) {
+  return until(`operation ${opId}`, async () => {
+    const r = await api(page, 'GET', `/operations/${opId}`)
+    expect(['Pending', 'Running', 'Succeeded'], JSON.stringify(r.body)).toContain(r.body.state)
+    return r.body.state === 'Succeeded' ? r.body : undefined
+  })
+}
+
+// workspaceOrganization signs up an owner, has the Platform Admin create an
+// active Organization for them with a grant on cluster-a, and waits for its
+// group admins to reach Keycloak, so it can be bound.
+export async function workspaceOrganization(browser: Browser, prefix: string) {
+  const owner = await signUp(browser)
+  const admin = await logIn(browser, 'admin', adminPassword(), '/admin/organizations')
+  const slug = `${prefix}${Date.now().toString(36).slice(-6)}`
+  const created = await api(
+    admin,
+    'POST',
+    '/admin/organizations',
+    {
+      slug,
+      displayName: `E2E ${slug}`,
+      description: 'End-to-end test of Workspaces.',
+      ownerEmail: owner.who.email,
+      entitlement: { maxMembers: 5, maxGroups: 5, maxWorkspacesTotal: 2 },
+      clusterGrant: {
+        clusterId: 'cluster-a',
+        maxWorkspaces: 2,
+        maxNamespacesTotal: 6,
+        resources: {
+          requestsCpu: '2',
+          requestsMemory: '4Gi',
+          limitsCpu: '4',
+          limitsMemory: '8Gi',
+          pods: 20,
+          requestsStorage: '10Gi',
+        },
+        sharedPoolIds: ['shared-general'],
+        networkPoolIds: ['onboarding-pod-network'],
+        allowedStorageClasses: ['standard'],
+      },
+    },
+    crypto.randomUUID(),
+  )
+  expect(created.status, JSON.stringify(created.body)).toBe(201)
+  await owner.page.reload()
+  const admins = await until('group admins in Keycloak', async () => {
+    const r = await api(owner.page, 'GET', `/organizations/${slug}/groups`)
+    const g = r.body.items?.find((x: { name: string }) => x.name === 'admins')
+    return g?.syncStatus === 'Synced' ? (g as { id: string; machineName: string }) : undefined
+  })
+  return { owner, admin, slug, admins }
+}
+
+// deleteWorkspace deletes a Workspace through the API and waits until the
+// cluster has nothing of it left: no PlatformWorkspace, Tenant or Namespace.
+export async function deleteWorkspace(page: Page, wsId: string, slug: string, k8sName: string) {
+  const r = await api(page, 'DELETE', `/workspaces/${wsId}?confirmName=${slug}`)
+  if (r.status === 202) await succeeded(page, r.body.operation.id)
+  else expect(r.status, JSON.stringify(r.body)).toBe(404) // gone already
+  expect((await api(page, 'GET', `/workspaces/${wsId}`)).status).toBe(404)
+  expect(kubectl('get', 'platformworkspace', k8sName, '--ignore-not-found')).toBe('')
+  expect(kubectl('get', 'tenants.capsule.clastix.io', k8sName, '--ignore-not-found')).toBe('')
+  expect(kubectl('get', 'namespaces', '-l', `capsule.clastix.io/tenant=${k8sName}`, '-o', 'name')).toBe('')
 }
