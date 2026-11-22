@@ -247,10 +247,44 @@ no_operator_rights() { # subject
     echo "$1 can write Certificates or read Secrets"; return 1
   fi
 }
+# Tenant Pods take addresses outside clusterCIDR; kube-proxy must still see
+# them as local (75-kube-proxy.sh) or it SNATs their calls to Services.
+kube_proxy_by_interface() {
+  local conf
+  conf="$(kubectl -n kube-system get configmap kube-proxy -o jsonpath='{.data.config\.conf}')" || return 1
+  if ! grep -q '^detectLocalMode: InterfaceNamePrefix$' <<<"${conf}" || ! grep -q '^  interfaceNamePrefix: cali$' <<<"${conf}"; then
+    echo "kube-proxy does not detect local Pods by the cali prefix"; return 1;
+  fi
+}
+# service_path: a Pod from a pool outside clusterCIDR calls a Service whose
+# backend runs on the other shared node and is seen with its own address.
+# The Namespace goes before the pool, which Calico frees once its Pods are gone.
+service_path() {
+  local server client manifest ns=cluster-verify-service-path out phase ok=0
+  read -r server client _ <<<"${SHARED_NODES}"
+  [[ -n "${client}" ]] || { echo "needs two SHARED_NODES"; return 1; }
+  manifest="$(mktemp)" || return 1
+  sed -e "s/__SERVER_NODE__/${server}/" -e "s/__CLIENT_NODE__/${client}/" \
+    "${CLUSTER_DIR}/manifests/verify-service-path.yaml" >"${manifest}"
+  kubectl delete namespace "${ns}" --ignore-not-found --wait >/dev/null &&
+    kubectl apply -f "${manifest}" >/dev/null || ok=1
+  if [[ "${ok}" == 0 ]]; then
+    kubectl -n "${ns}" wait pod/client --for=jsonpath='{.status.phase}'=Succeeded --timeout=3m >/dev/null
+    phase="$(kubectl -n "${ns}" get pod client -o jsonpath='{.status.phase}' 2>&1)"
+    out="$(kubectl -n "${ns}" logs client 2>&1)"
+    [[ "${phase}" == Succeeded && "${out}" == ok ]] || { echo "Pod ${phase}: ${out}"; ok=1; }
+  fi
+  kubectl delete namespace "${ns}" --ignore-not-found --wait >/dev/null || ok=1
+  kubectl delete ippools.projectcalico.org "${ns}" --ignore-not-found >/dev/null || ok=1
+  rm -f "${manifest}"
+  return "${ok}"
+}
 check "the Workspace Operator is ready" field_is deployment/tenantry-operator '{.status.availableReplicas}' 1 tenantry-operator
 check "PlatformNodeInventory reports every node" inventory_complete
 check "Developer and Viewer have the rights of architecture/06 §8, no more" tenant_roles
 check "the operator may not touch certificates or Secrets" \
   no_operator_rights system:serviceaccount:tenantry-operator:tenantry-operator
+check "kube-proxy detects local Pods by interface, not by clusterCIDR" kube_proxy_by_interface
+check "a Pod outside clusterCIDR calls a Service on another node without SNAT" service_path
 
 exit "${failed}"

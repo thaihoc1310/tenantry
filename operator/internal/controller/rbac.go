@@ -20,7 +20,6 @@ package controller
 // Calico: IPPools through the Calico API server, so deleting one releases
 // its block affinities (IMPLEMENTATION-PLAN §4.3 step 5).
 // +kubebuilder:rbac:groups=projectcalico.org,resources=ippools,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=projectcalico.org,resources=workloadendpoints,verbs=get;list;watch
 // +kubebuilder:rbac:groups=crd.projectcalico.org,resources=ipamblocks,verbs=get;list;watch
 
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch;delete

@@ -1,25 +1,35 @@
 package controller
 
 import (
+	"slices"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1 "github.com/thaihoc1310/tenantry/operator/api/v1alpha1"
 	"github.com/thaihoc1310/tenantry/operator/internal/subreconciler"
 )
 
-// applicableConditions are the conditions a Workspace needs True to be Ready
-// at this milestone (architecture/04 §1.2); later milestones add theirs.
-var applicableConditions = []string{
+// baseConditions are the conditions every Workspace needs True to be Ready
+// (architecture/04 §1.2); applicable adds those that depend on its spec.
+var baseConditions = []string{
 	v1.ConditionComputeReady, v1.ConditionCapsuleTenantReady, v1.ConditionPolicyReady, v1.ConditionIdentityBindingsReady,
+}
+
+// applicable: NetworkReady counts only for a Workspace with a network.
+func applicable(ws *v1.PlatformWorkspace) []string {
+	if ws.Spec.Network == nil {
+		return baseConditions
+	}
+	return append(slices.Clone(baseConditions), v1.ConditionNetworkReady)
 }
 
 // phase derives status.phase from the conditions (architecture/04 §1.4).
 // before is the phase of the previous pass: once a Workspace has been Ready,
 // work under way is Updating and a failure is Degraded; before that both are
 // Provisioning, unless an object was refused outright (Failed).
-func phase(before v1.WorkspacePhase, conds []metav1.Condition) v1.WorkspacePhase {
+func phase(before v1.WorkspacePhase, conds []metav1.Condition, types []string) v1.WorkspacePhase {
 	allTrue, failed, rejected := true, false, false
-	for _, t := range applicableConditions {
+	for _, t := range types {
 		c := findCondition(conds, t)
 		if c == nil || c.Status != metav1.ConditionTrue {
 			allTrue = false

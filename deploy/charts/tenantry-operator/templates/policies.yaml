@@ -109,3 +109,62 @@ spec:
     namespaceSelector:
       matchExpressions:
         - {key: capsule.clastix.io/tenant, operator: Exists}
+---
+# A tenant may not pick its Pods' addresses (architecture/05 §5): Calico
+# prefers a Pod's annotations to its Namespace's, and a Manual pool gives
+# addresses to whoever names it. Only tenant callers (oidc:) are checked;
+# the templates of workload controllers are checked too, like nodeName.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: tenantry-tenant-pod-network
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+      - apiGroups: [apps]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [deployments, statefulsets, daemonsets, replicasets]
+      - apiGroups: [batch]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [jobs, cronjobs]
+  matchConditions:
+    - name: tenant-caller
+      expression: request.userInfo.username.startsWith('oidc:')
+  variables:
+    - name: pod
+      expression: >-
+        request.kind.kind == 'Pod' ? object :
+        request.kind.kind == 'CronJob' ? object.spec.jobTemplate.spec.template : object.spec.template
+  validations:
+    - expression: >-
+        !has(variables.pod.metadata) || !has(variables.pod.metadata.annotations) ||
+        !variables.pod.metadata.annotations.exists(k, k in [
+        'cni.projectcalico.org/ipv4pools', 'cni.projectcalico.org/ipv6pools', 'cni.projectcalico.org/ipAddrs',
+        'cni.projectcalico.org/ipAddrsNoIpam', 'cni.projectcalico.org/floatingIPs'])
+      reason: Forbidden
+      message: >-
+        Calico annotations (ipv4pools, ipv6pools, ipAddrs, ipAddrsNoIpam, floatingIPs) are not allowed on Pods
+        in a Workspace; Pods take addresses from the Workspace's network
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: tenantry-tenant-pod-network
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+spec:
+  policyName: tenantry-tenant-pod-network
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - {key: capsule.clastix.io/tenant, operator: Exists}

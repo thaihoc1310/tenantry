@@ -65,13 +65,18 @@ func (r *PlatformWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if computeRes.Condition.Reason == subreconciler.ReasonApplyFailed {
 		return ctrl.Result{}, r.fail(ctx, before, ws, computeRes.Condition)
 	}
-	// 2. tenant (owners, namespace options, storage classes, guardrails and,
+	// 2. network: the Calico IPPool the Namespaces' annotation names.
+	networkRes, hasNetwork := subreconciler.Network(ctx, r.Client, r.Scheme(), ws)
+	if networkRes.Condition.Reason == subreconciler.ReasonApplyFailed {
+		return ctrl.Result{}, r.fail(ctx, before, ws, networkRes.Condition)
+	}
+	// 3. tenant (owners, namespace options, storage classes, guardrails and,
 	// for rbac, the RoleBindings: one object, one apply).
 	tenantRes, tenant := subreconciler.Tenant(ctx, r.Client, r.Scheme(), ws, r.Render)
 	if tenantRes.Condition.Reason == subreconciler.ReasonApplyFailed {
 		return ctrl.Result{}, r.fail(ctx, before, ws, tenantRes.Condition)
 	}
-	// 2. namespaces, folded into CapsuleTenantReady: the Tenant must exist
+	// 3. namespaces, folded into CapsuleTenantReady: the Tenant must exist
 	// for Capsule to accept them.
 	results := []subreconciler.Result{tenantRes, computeRes}
 	if tenant != nil {
@@ -83,14 +88,17 @@ func (r *PlatformWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			results[0] = merge(tenantRes, nsRes)
 		}
 	}
-	// 3. policy: the quota and Pod Security labels are in the Tenant; the
-	// LimitRange is replicated by Capsule.
+	// 4. policy: the quota and Pod Security labels are in the Tenant; the
+	// LimitRange and the baseline NetworkPolicies are replicated by Capsule.
 	policyRes, quota := subreconciler.Policy(ctx, r.Client, r.Scheme(), ws)
 	if policyRes.Condition.Reason == subreconciler.ReasonApplyFailed {
 		return ctrl.Result{}, r.fail(ctx, before, ws, policyRes.Condition)
 	}
-	// 4. rbac.
+	// 5. rbac.
 	results = append(results, policyRes, subreconciler.RBAC(tenant))
+	if hasNetwork {
+		results = append(results, networkRes)
+	}
 
 	existing, err := subreconciler.TenantNamespaces(ctx, r.Client, ws)
 	if err != nil {
@@ -107,7 +115,7 @@ func (r *PlatformWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		setCondition(ws, res.Condition)
 		wait = wait || res.Wait
 	}
-	ws.Status.Phase = phase(before.Status.Phase, ws.Status.Conditions)
+	ws.Status.Phase = phase(before.Status.Phase, ws.Status.Conditions, applicable(ws))
 	ws.Status.ObservedGeneration = ws.Generation
 	if err := r.patchStatus(ctx, before, ws); err != nil {
 		return ctrl.Result{}, err
@@ -167,6 +175,8 @@ func (r *PlatformWorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	})
 	replication := &unstructured.Unstructured{}
 	replication.SetGroupVersionKind(render.ReplicationGVK)
+	ipPool := &unstructured.Unstructured{}
+	ipPool.SetGroupVersionKind(render.IPPoolGVK)
 	// Capsule's GlobalResourceQuota names its Tenant in a label; its usage
 	// becomes status.usage.
 	quota := &unstructured.Unstructured{}
@@ -198,6 +208,7 @@ func (r *PlatformWorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&v1.PlatformWorkspace{}).
 		Owns(tenant).
 		Owns(replication).
+		Owns(ipPool).
 		Watches(quota, byQuotaTenant).
 		Watches(&corev1.Node{}, byNode).
 		Watches(&corev1.Namespace{}, byTenantLabel, builder.WithPredicates(hasTenantLabel)).
