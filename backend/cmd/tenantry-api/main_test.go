@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/hex"
 	"io"
 	"log/slog"
 	"net"
@@ -14,6 +16,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/thaihoc1310/tenantry/backend/internal/auth"
+	"github.com/thaihoc1310/tenantry/backend/internal/config"
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi"
 	"github.com/thaihoc1310/tenantry/backend/internal/testdb"
 	"github.com/thaihoc1310/tenantry/backend/migrations"
@@ -23,7 +27,7 @@ var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 func TestHealthz(t *testing.T) {
 	rec := httptest.NewRecorder()
-	routes(nil, httpapi.Options{}, quiet).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	routes(nil, nil, quiet).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if rec.Code != http.StatusOK || rec.Body.String() != "ok" {
 		t.Fatalf("got %d %q, want 200 \"ok\"", rec.Code, rec.Body.String())
 	}
@@ -32,7 +36,8 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
-// migrated returns the URL of a fresh, migrated database holding user usr-a.
+// migrated returns the URL of a fresh, migrated database holding user usr-a,
+// logged in with session sessionA.
 func migrated(t *testing.T) string {
 	t.Helper()
 	url := testdb.New(t)
@@ -51,7 +56,27 @@ func migrated(t *testing.T) string {
 	if _, err := db.Exec(`INSERT INTO users (id, issuer, subject) VALUES ('usr-a', 'iss', 'a')`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`INSERT INTO sessions (id_hash, user_id, refresh_token_enc, access_expires_at, expires_at)
+VALUES (sha256(decode($1, 'hex')), 'usr-a', '\x00', now() + interval '5 minutes', now() + interval '1 hour')`, hex.EncodeToString(sessionA)); err != nil {
+		t.Fatal(err)
+	}
 	return url
+}
+
+// sessionA is the raw session value of usr-a; the cookie carries it in base64url.
+var sessionA = bytes.Repeat([]byte{1}, 32)
+
+// testAuth is an auth service whose Keycloak is never contacted.
+func testAuth(t *testing.T, pool *pgxpool.Pool) *auth.Service {
+	t.Helper()
+	a, err := auth.New(pool, config.Auth{
+		Issuer: "http://127.0.0.1:1/realms/none", ClientID: "portal", ClientSecret: "x",
+		PublicURL: "https://portal.test", SessionKey: bytes.Repeat([]byte{7}, 32),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
 }
 
 // A port already in use must fail the process, not look like a clean stop.
@@ -64,6 +89,10 @@ func TestRunFailsWhenPortTaken(t *testing.T) {
 	defer func() { _ = l.Close() }()
 	t.Setenv("DATABASE_URL", url)
 	t.Setenv("TENANTRY_ADDR", l.Addr().String())
+	t.Setenv("TENANTRY_OIDC_ISSUER", "https://auth.tenantry.site/realms/tenantry")
+	t.Setenv("TENANTRY_OIDC_CLIENT_SECRET", "x")
+	t.Setenv("TENANTRY_PUBLIC_URL", "https://portal.tenantry.site")
+	t.Setenv("TENANTRY_SESSION_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)))
 
 	err = run()
 	if err == nil || !strings.Contains(err.Error(), "address already in use") {
@@ -78,13 +107,15 @@ func TestBodyIsCapped(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	h := routes(pool, httpapi.Options{DevAuth: true}, quiet)
+	h := routes(pool, testAuth(t, pool), quiet)
 
 	send := func(size int) *httptest.ResponseRecorder {
 		body := `{"slug":"acme","displayName":"` + strings.Repeat("x", size) + `"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/organizations", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(httpapi.DevUserHeader, "usr-a")
+		req.AddCookie(&http.Cookie{Name: httpapi.SessionCookie, Value: base64.RawURLEncoding.EncodeToString(sessionA)})
+		req.AddCookie(&http.Cookie{Name: httpapi.CSRFCookie, Value: "c"})
+		req.Header.Set(httpapi.CSRFHeader, "c")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		return rec
@@ -105,7 +136,7 @@ func TestReadyz(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := routes(pool, httpapi.Options{}, quiet)
+	h := routes(pool, testAuth(t, pool), quiet)
 	probe := func() *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))

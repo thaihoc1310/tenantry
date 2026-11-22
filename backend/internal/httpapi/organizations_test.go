@@ -1,8 +1,12 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,6 +18,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/thaihoc1310/tenantry/backend/internal/auth"
+	"github.com/thaihoc1310/tenantry/backend/internal/config"
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi"
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi/oapi"
 	"github.com/thaihoc1310/tenantry/backend/internal/testdb"
@@ -40,11 +46,64 @@ INSERT INTO organization_members (org_id, user_id, role) VALUES
   ('org-gone', 'usr-alice', 'OrgOwner'),
   ('org-beta1', 'usr-bob', 'OrgOwner'), ('org-beta2', 'usr-bob', 'OrgOwner'),
   ('org-old', 'usr-erin', 'OrgOwner');
+` + loginEveryone
+
+// loginEveryone gives every user without one the session sessionOf names.
+const loginEveryone = `
+INSERT INTO sessions (id_hash, user_id, refresh_token_enc, access_expires_at, expires_at)
+SELECT sha256(sha256(convert_to('session:' || id, 'UTF8'))), id, '\x00', now() + interval '5 minutes', now() + interval '8 hours'
+FROM users
+ON CONFLICT DO NOTHING;
 `
 
+// sessionOf is the cookie value of the session the seed gives user.
+func sessionOf(user string) string {
+	h := sha256.Sum256([]byte("session:" + user))
+	return base64.RawURLEncoding.EncodeToString(h[:])
+}
+
+// hashOf is the sessions.id_hash of a cookie value.
+func hashOf(t *testing.T, token string) []byte {
+	t.Helper()
+	b, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := sha256.Sum256(b)
+	return h[:]
+}
+
+// newSession logs user in with the given realm roles and returns the cookie value.
+func newSession(t *testing.T, db *pgxpool.Pool, user string, roles ...string) string {
+	t.Helper()
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	h := sha256.Sum256(b)
+	if roles == nil {
+		roles = []string{}
+	}
+	if _, err := db.Exec(context.Background(), `
+INSERT INTO sessions (id_hash, user_id, realm_roles, refresh_token_enc, access_expires_at, expires_at)
+VALUES ($1, $2, $3, '\x00', now() + interval '5 minutes', now() + interval '8 hours')`, h[:], user, roles); err != nil {
+		t.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// testKey is the session key of every test API.
+var testKey = bytes.Repeat([]byte{7}, 32)
+
+const publicURL = "https://portal.test"
+
 // newAPI serves the API on a fresh, migrated and seeded database; the pool is
-// returned for tests that need extra rows.
-func newAPI(t *testing.T, opts httpapi.Options) (http.Handler, *pgxpool.Pool) {
+// returned for tests that need extra rows. Its OIDC issuer does not exist:
+// only tests that log in through Keycloak need one (newAPIWithIssuer).
+func newAPI(t *testing.T) (http.Handler, *pgxpool.Pool) {
+	t.Helper()
+	return newAPIWithIssuer(t, "http://127.0.0.1:1/realms/none")
+}
+
+func newAPIWithIssuer(t *testing.T, issuer string) (http.Handler, *pgxpool.Pool) {
 	t.Helper()
 	url := testdb.New(t)
 	ctx := context.Background()
@@ -70,8 +129,14 @@ func newAPI(t *testing.T, opts httpapi.Options) (http.Handler, *pgxpool.Pool) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
+	a, err := auth.New(pool, config.Auth{
+		Issuer: issuer, ClientID: "portal", ClientSecret: "portal-secret", PublicURL: publicURL, SessionKey: testKey,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	r := chi.NewRouter()
-	httpapi.Register(r, pool, opts)
+	httpapi.Register(r, pool, a)
 	return httpapi.WithRequestID(r), pool
 }
 
@@ -79,21 +144,45 @@ func call(h http.Handler, method, path, user string) *httptest.ResponseRecorder 
 	return callBody(h, method, path, user, "")
 }
 
+// callBody sends a request as user (the seed's session; "" for anonymous),
+// with the CSRF cookie and header a portal page would send.
 func callBody(h http.Handler, method, path, user, body string) *httptest.ResponseRecorder {
+	token := ""
+	if user != "" {
+		token = sessionOf(user)
+	}
+	return send(h, request(method, path, token, body))
+}
+
+// request builds a portal request carrying session token (if any) and the
+// CSRF double submit.
+func request(method, path, token, body string) *http.Request {
+	req := bareRequest(method, path, token, body)
+	req.AddCookie(&http.Cookie{Name: httpapi.CSRFCookie, Value: "csrf-1"})
+	req.Header.Set(httpapi.CSRFHeader, "csrf-1")
+	return req
+}
+
+// bareRequest is request without the CSRF cookie and header.
+func bareRequest(method, path, token, body string) *http.Request {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if user != "" {
-		req.Header.Set(httpapi.DevUserHeader, user)
+	if token != "" {
+		req.AddCookie(&http.Cookie{Name: httpapi.SessionCookie, Value: token})
 	}
+	return req
+}
+
+func send(h http.Handler, req *http.Request) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
 }
 
 func TestGetOrganization(t *testing.T) {
-	h, _ := newAPI(t, httpapi.Options{DevAuth: true})
+	h, _ := newAPI(t)
 
 	cases := []struct {
 		name, user, path string
@@ -140,16 +229,8 @@ func TestGetOrganization(t *testing.T) {
 	}
 }
 
-// The dev header must be inert unless explicitly enabled.
-func TestDevHeaderIgnoredWhenDisabled(t *testing.T) {
-	h, _ := newAPI(t, httpapi.Options{DevAuth: false})
-	if rec := call(h, http.MethodGet, "/api/v1/organizations/org-acme", "usr-alice"); rec.Code != 401 {
-		t.Fatalf("status %d, want 401", rec.Code)
-	}
-}
-
 func TestPatchOrganization(t *testing.T) {
-	h, _ := newAPI(t, httpapi.Options{DevAuth: true})
+	h, _ := newAPI(t)
 
 	cases := []struct {
 		name, user, path, body string
@@ -221,7 +302,7 @@ func errorBody(t *testing.T, rec *httptest.ResponseRecorder) oapi.ErrorResponse 
 }
 
 func TestListOrganizations(t *testing.T) {
-	h, _ := newAPI(t, httpapi.Options{DevAuth: true})
+	h, _ := newAPI(t)
 
 	cases := []struct {
 		name, user, query string
@@ -273,7 +354,7 @@ func TestListOrganizations(t *testing.T) {
 }
 
 func TestCreateOrganization(t *testing.T) {
-	h, _ := newAPI(t, httpapi.Options{DevAuth: true})
+	h, _ := newAPI(t)
 	const path = "/api/v1/organizations"
 
 	// The happy path, checked in full.
@@ -342,10 +423,13 @@ func TestCreateOrganization(t *testing.T) {
 
 // Concurrent requests must not slip past the rules; the database decides.
 func TestCreateOrganizationRace(t *testing.T) {
-	h, db := newAPI(t, httpapi.Options{DevAuth: true})
+	h, db := newAPI(t)
 	const n = 10
 	if _, err := db.Exec(context.Background(),
 		`INSERT INTO users (id, issuer, subject) SELECT 'usr-r' || i, 'iss', 'r' || i FROM generate_series(1, $1) i`, n); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(context.Background(), loginEveryone); err != nil {
 		t.Fatal(err)
 	}
 

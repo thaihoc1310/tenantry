@@ -12,6 +12,7 @@ import (
 const (
 	Organization = "org"
 	Operation    = "op"
+	User         = "usr"
 )
 
 // New returns a fresh id with the given prefix.

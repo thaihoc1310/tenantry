@@ -49,8 +49,24 @@ spec:
             {{- include "tenantry.env" . | nindent 12 }}
             - name: TENANTRY_ADDR
               value: ":8080"
-            - name: TENANTRY_AUTH_DEV_HEADER
-              value: {{ .Values.api.devAuth | quote }}
+            {{- with .Values.api.auth }}
+            - name: TENANTRY_OIDC_ISSUER
+              value: {{ required "api.auth.issuer is required" .issuer | quote }}
+            - name: TENANTRY_PUBLIC_URL
+              value: {{ required "api.auth.publicURL is required" .publicURL | quote }}
+            - name: TENANTRY_OIDC_CLIENT_ID
+              value: {{ .clientID | quote }}
+            - name: TENANTRY_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "api.auth.existingSecret is required" .existingSecret }}
+                  key: {{ .clientSecretKey }}
+            - name: TENANTRY_SESSION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .existingSecret }}
+                  key: {{ .sessionKeyKey }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 8080

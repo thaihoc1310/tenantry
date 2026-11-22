@@ -3,6 +3,11 @@
 database:
   existingSecret: tenantry-db # written by 50-postgres.sh
 
+# issuer and publicURL come from env.sh (deploy.sh passes them).
+api:
+  auth:
+    existingSecret: tenantry-portal # portal client secret + session key, generated on the cluster
+
 # Central plane: the system pool (architecture/05-network-and-scheduling.md §1).
 nodeSelector:
   tenantry.io/compute-pool: system

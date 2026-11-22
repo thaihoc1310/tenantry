@@ -22,20 +22,26 @@ var statusOf = map[apperr.Code]int{
 	apperr.OrgRequestPending: http.StatusConflict,
 }
 
-// writeError answers with an ErrorResponse. An *apperr.Error is the caller's
-// fault and is shown as is; anything else is logged and hidden behind INTERNAL.
+// writeError answers with an ErrorResponse.
 func writeError(w http.ResponseWriter, r *http.Request, err error) {
-	body := oapi.ErrorResponse{Code: oapi.INTERNAL, Message: "internal error", RequestId: requestID(r.Context())}
-	status := http.StatusInternalServerError
-	if e, ok := apperr.As(err); ok && statusOf[e.Code] != 0 {
-		body.Code, body.Message, status = oapi.ErrorCode(e.Code), e.Message, statusOf[e.Code]
-		if e.Details != nil {
-			body.Details = &e.Details
-		}
-	} else {
-		slog.ErrorContext(r.Context(), "request failed", "err", err, "route", routePattern(r), "request_id", body.RequestId)
-	}
+	status, body := describe(r, err)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// describe turns err into a status and body. An *apperr.Error is the
+// caller's fault and is shown as is; anything else is logged and hidden
+// behind INTERNAL.
+func describe(r *http.Request, err error) (int, oapi.ErrorResponse) {
+	body := oapi.ErrorResponse{Code: oapi.INTERNAL, Message: "internal error", RequestId: requestID(r.Context())}
+	if e, ok := apperr.As(err); ok && statusOf[e.Code] != 0 {
+		body.Code, body.Message = oapi.ErrorCode(e.Code), e.Message
+		if e.Details != nil {
+			body.Details = &e.Details
+		}
+		return statusOf[e.Code], body
+	}
+	slog.ErrorContext(r.Context(), "request failed", "err", err, "route", routePattern(r), "request_id", body.RequestId)
+	return http.StatusInternalServerError, body
 }

@@ -7,8 +7,16 @@ info:
     Only implemented endpoints are listed; paths are added as they are built.
     Request bodies are validated against this file before reaching a handler.
     Every error body is `ErrorResponse` with a stable `code`.
+
+    Signing in happens outside this API, by browser navigation:
+    `GET /auth/login?returnTo=/some/path` sends the browser to Keycloak and
+    `GET /auth/callback` brings it back with the session and CSRF cookies set.
+    A `401` on any call means: navigate to `/auth/login`.
 servers:
   - url: /api/v1
+
+security:
+  - session: []
 
 paths:
   /me:
@@ -49,6 +57,7 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
     post:
       operationId: createOrganization
+      security: [{ session: [], csrf: [] }]
       summary: Request a new organization (PRODUCT-PLAN §4.2)
       description: |
         Creates the organization as `Pending` with the caller as OrgOwner; a
@@ -73,6 +82,7 @@ paths:
               schema: { $ref: "#/components/schemas/Organization" }
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
         "409":
           description: |
             `SLUG_TAKEN`: another organization holds the slug (a rejected
@@ -99,6 +109,7 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
     patch:
       operationId: patchOrganization
+      security: [{ session: [], csrf: [] }]
       summary: Update display name or description (OrgOwner or OrgAdmin). Slug is immutable.
       description: |
         Fields left out keep their value; an empty body changes nothing.
@@ -145,6 +156,7 @@ paths:
       - $ref: "#/components/parameters/operationId"
     post:
       operationId: retryOperation
+      security: [{ session: [], csrf: [] }]
       summary: Retry a Failed operation (OrgOwner, OrgAdmin or Platform Admin)
       description: The operation goes back to Pending and its undelivered changes are sent again at once.
       responses:
@@ -163,6 +175,23 @@ paths:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
 
 components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: __Host-tenantry_session
+      description: |
+        Set by `GET /auth/callback`. HttpOnly: the SPA never sees it, the
+        browser sends it. Lives as long as the Keycloak SSO session.
+    csrf:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: |
+        The value of the `__Host-tenantry_csrf` cookie, required on every
+        request that is not GET, HEAD or OPTIONS; missing or wrong gives
+        `403 FORBIDDEN`.
+
   parameters:
     orgId:
       name: orgId

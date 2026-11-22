@@ -1,51 +1,37 @@
 // Package httpapi serves /api/v1: it implements the oapi-codegen strict
 // interface generated from openapi/tenantry.v1.yaml and owns the HTTP-only
-// concerns around it (request id, authentication, error bodies).
+// concerns around it (request id, session cookie, CSRF, error bodies), plus
+// the browser login under /auth.
 package httpapi
 
 import (
 	"context"
 	"errors"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	validator "github.com/oapi-codegen/nethttp-middleware"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/apperr"
+	"github.com/thaihoc1310/tenantry/backend/internal/auth"
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi/oapi"
 	"github.com/thaihoc1310/tenantry/backend/internal/operation"
 	"github.com/thaihoc1310/tenantry/backend/internal/org"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
-	"github.com/thaihoc1310/tenantry/backend/internal/user"
 )
-
-// Dev auth stands in for the OIDC session until M3 and only works when
-// Options.DevAuth is set. DevUserHeader names the caller by user id;
-// DevRolesHeader lists the Keycloak realm roles a token would carry,
-// comma-separated (e.g. "platform-admin").
-const (
-	DevUserHeader  = "X-Tenantry-Dev-User"
-	DevRolesHeader = "X-Tenantry-Dev-Roles"
-)
-
-// RolePlatformAdmin is the Keycloak realm role of Platform Admins (PRODUCT-PLAN §4.1).
-const RolePlatformAdmin = "platform-admin"
-
-type Options struct {
-	DevAuth bool // TENANTRY_AUTH_DEV_HEADER=true; never on outside local dev
-}
 
 type server struct {
 	orgs *org.Service
 	ops  *operation.Service
 }
 
-// Register mounts every /api/v1 operation on r.
-func Register(r chi.Router, db *pgxpool.Pool, opts Options) {
+// Register mounts every /api/v1 operation and the browser login endpoints
+// under /auth on r.
+func Register(r chi.Router, db *pgxpool.Pool, a *auth.Service) {
 	badRequest := func(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, apperr.New(apperr.Validation, err.Error()))
 	}
@@ -64,11 +50,14 @@ func Register(r chi.Router, db *pgxpool.Pool, opts Options) {
 		})
 		oapi.HandlerWithOptions(api, oapi.ChiServerOptions{
 			BaseRouter: v1,
-			// The last entry runs first: an anonymous caller gets 401 before any 400.
-			Middlewares:      []oapi.MiddlewareFunc{validate(), authenticate(user.NewService(store.New(db)), opts)},
+			// The last entry runs first: an anonymous caller gets 401, then a
+			// forged write 403, before any 400.
+			Middlewares:      []oapi.MiddlewareFunc{validate(), requireCSRF, authenticate(a)},
 			ErrorHandlerFunc: badRequest,
 		})
 	})
+	r.Get("/auth/login", login(a))
+	r.Get("/auth/callback", callback(a))
 }
 
 // validate checks each request against the embedded OpenAPI document
@@ -81,6 +70,9 @@ func validate() oapi.MiddlewareFunc {
 	return validator.OapiRequestValidatorWithOptions(spec, &validator.Options{
 		DoNotValidateServers: true, // match on the path only, not the Host header
 		Prefix:               "/api/v1",
+		// The security schemes in the spec document the session cookie and
+		// the CSRF header; authenticate and requireCSRF enforce them.
+		Options: openapi3filter.Options{AuthenticationFunc: openapi3filter.NoopAuthenticationFunc},
 		ErrorHandlerWithOpts: func(_ context.Context, err error, w http.ResponseWriter, r *http.Request, _ validator.ErrorHandlerOpts) {
 			// A schema error would otherwise print the whole schema and the
 			// submitted value; keep the reason and point at the field instead.
@@ -227,8 +219,7 @@ const (
 	requestLogKey
 )
 
-// principal is the authenticated caller. Only authenticate builds it, so
-// swapping dev auth for OIDC in M3 changes nothing downstream.
+// principal is the authenticated caller; only authenticate builds it.
 type principal struct {
 	user          store.User
 	platformAdmin bool
@@ -237,29 +228,3 @@ type principal struct {
 func requestID(ctx context.Context) string { s, _ := ctx.Value(requestIDKey).(string); return s }
 func caller(ctx context.Context) principal { p, _ := ctx.Value(principalKey).(principal); return p }
 func userID(ctx context.Context) string    { return caller(ctx).user.ID }
-
-// authenticate puts the caller in the context or answers 401. The user must
-// already exist and be Active: a disabled account loses access at once.
-func authenticate(users *user.Service, opts Options) oapi.MiddlewareFunc {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			id := r.Header.Get(DevUserHeader)
-			if !opts.DevAuth || id == "" {
-				writeError(w, r, apperr.New(apperr.Unauthenticated, "login required"))
-				return
-			}
-			u, err := users.Active(r.Context(), id)
-			if err != nil {
-				writeError(w, r, err)
-				return
-			}
-			roles := strings.Split(r.Header.Get(DevRolesHeader), ",")
-			for i := range roles {
-				roles[i] = strings.TrimSpace(roles[i])
-			}
-			p := principal{user: u, platformAdmin: slices.Contains(roles, RolePlatformAdmin)}
-			noteUser(r.Context(), u.ID)
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey, p)))
-		})
-	}
-}

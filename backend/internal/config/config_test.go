@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"bytes"
 	"log/slog"
 	"strings"
 	"testing"
@@ -10,7 +11,7 @@ import (
 
 func setEnv(t *testing.T, env map[string]string) {
 	t.Helper()
-	for _, k := range []string{"DATABASE_URL", "TENANTRY_ADDR", "TENANTRY_AUTH_DEV_HEADER", "TENANTRY_LOG_LEVEL", "TENANTRY_LOG_FORMAT"} {
+	for _, k := range []string{"DATABASE_URL", "TENANTRY_ADDR", "TENANTRY_LOG_LEVEL", "TENANTRY_LOG_FORMAT"} {
 		t.Setenv(k, env[k])
 	}
 }
@@ -29,29 +30,96 @@ func TestDefaults(t *testing.T) {
 
 func TestExplicitValues(t *testing.T) {
 	setEnv(t, map[string]string{
-		"DATABASE_URL": "postgres://x", "TENANTRY_ADDR": "127.0.0.1:9000", "TENANTRY_AUTH_DEV_HEADER": "true",
+		"DATABASE_URL": "postgres://x", "TENANTRY_ADDR": "127.0.0.1:9000",
 		"TENANTRY_LOG_LEVEL": "debug", "TENANTRY_LOG_FORMAT": "text",
 	})
 	c, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Addr != "127.0.0.1:9000" || !c.DevAuth || c.LogLevel != slog.LevelDebug || c.LogFormat != "text" {
+	if c.Addr != "127.0.0.1:9000" || c.LogLevel != slog.LevelDebug || c.LogFormat != "text" {
 		t.Fatalf("got %+v", c)
 	}
 }
 
 // Every bad variable is reported, not only the first, and a typo never falls
-// back to a default (e.g. "yes" must not quietly mean dev auth off).
+// back to a default (e.g. "verbose" must not quietly mean info).
 func TestInvalidValuesAreAllReported(t *testing.T) {
-	setEnv(t, map[string]string{"TENANTRY_AUTH_DEV_HEADER": "yes", "TENANTRY_LOG_LEVEL": "verbose", "TENANTRY_LOG_FORMAT": "xml"})
+	setEnv(t, map[string]string{"TENANTRY_LOG_LEVEL": "verbose", "TENANTRY_LOG_FORMAT": "xml"})
 	_, err := config.Load()
 	if err == nil {
 		t.Fatal("no error")
 	}
-	for _, want := range []string{"DATABASE_URL", "TENANTRY_AUTH_DEV_HEADER", "TENANTRY_LOG_LEVEL", "TENANTRY_LOG_FORMAT"} {
+	for _, want := range []string{"DATABASE_URL", "TENANTRY_LOG_LEVEL", "TENANTRY_LOG_FORMAT"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %s: %v", want, err)
 		}
+	}
+}
+
+// 32 bytes of 0x01, base64.
+const testKey = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
+
+func setAuthEnv(t *testing.T, env map[string]string) {
+	t.Helper()
+	for _, k := range []string{"TENANTRY_OIDC_ISSUER", "TENANTRY_OIDC_CLIENT_ID", "TENANTRY_OIDC_CLIENT_SECRET", "TENANTRY_PUBLIC_URL", "TENANTRY_SESSION_KEY"} {
+		t.Setenv(k, env[k])
+	}
+}
+
+func TestLoadAuth(t *testing.T) {
+	setAuthEnv(t, map[string]string{
+		"TENANTRY_OIDC_ISSUER":        "https://auth.tenantry.site/realms/tenantry",
+		"TENANTRY_OIDC_CLIENT_SECRET": "s3cret",
+		"TENANTRY_PUBLIC_URL":         "https://portal.tenantry.site/",
+		"TENANTRY_SESSION_KEY":        testKey,
+	})
+	a, err := config.LoadAuth()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.ClientID != "portal" || a.PublicURL != "https://portal.tenantry.site" || !bytes.Equal(a.SessionKey, bytes.Repeat([]byte{1}, 32)) {
+		t.Fatalf("got %+v", a)
+	}
+
+	// The Vite dev server.
+	t.Setenv("TENANTRY_PUBLIC_URL", "http://localhost:5173")
+	if _, err := config.LoadAuth(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadAuthRejects(t *testing.T) {
+	cases := map[string]map[string]string{
+		"nothing set": {},
+		"plain http to a remote host": {
+			"TENANTRY_OIDC_ISSUER": "http://auth.tenantry.site/realms/tenantry", "TENANTRY_PUBLIC_URL": "http://portal.tenantry.site",
+		},
+		"public URL with a path": {"TENANTRY_PUBLIC_URL": "https://portal.tenantry.site/app"},
+		"relative issuer":        {"TENANTRY_OIDC_ISSUER": "/realms/tenantry"},
+		"short key":              {"TENANTRY_SESSION_KEY": "AQEB"},
+		"key not base64":         {"TENANTRY_SESSION_KEY": "not base64!"},
+	}
+	for name, env := range cases {
+		t.Run(name, func(t *testing.T) {
+			full := map[string]string{
+				"TENANTRY_OIDC_ISSUER": "https://auth.tenantry.site/realms/tenantry", "TENANTRY_OIDC_CLIENT_SECRET": "s3cret",
+				"TENANTRY_PUBLIC_URL": "https://portal.tenantry.site", "TENANTRY_SESSION_KEY": testKey,
+			}
+			if len(env) == 0 {
+				full = env
+			}
+			for k, v := range env {
+				full[k] = v
+			}
+			setAuthEnv(t, full)
+			_, err := config.LoadAuth()
+			if err == nil {
+				t.Fatal("no error")
+			}
+			if strings.Contains(err.Error(), "not base64!") {
+				t.Fatalf("the session key leaked into the error: %v", err)
+			}
+		})
 	}
 }

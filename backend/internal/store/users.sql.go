@@ -9,13 +9,34 @@ import (
 	"context"
 )
 
-const getActiveUser = `-- name: GetActiveUser :one
-SELECT id, issuer, subject, email, display_name, status, created_at, updated_at FROM users WHERE id = $1 AND status = 'Active'
+const upsertUserByIdentity = `-- name: UpsertUserByIdentity :one
+INSERT INTO users (id, issuer, subject, email, display_name)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (issuer, subject) DO UPDATE
+SET email = EXCLUDED.email, display_name = EXCLUDED.display_name, updated_at = now()
+RETURNING id, issuer, subject, email, display_name, status, created_at, updated_at
 `
 
-// A Disabled account is treated as unknown, so it loses access on its next request.
-func (q *Queries) GetActiveUser(ctx context.Context, id string) (User, error) {
-	row := q.db.QueryRow(ctx, getActiveUser, id)
+type UpsertUserByIdentityParams struct {
+	ID          string
+	Issuer      string
+	Subject     string
+	Email       *string
+	DisplayName string
+}
+
+// First login creates the account, later ones refresh its snapshot of the
+// profile. (issuer, subject) is the identity: email and name can change
+// (PRODUCT-PLAN §4.1). ON CONFLICT makes two concurrent first logins
+// end with one row; status is never touched here.
+func (q *Queries) UpsertUserByIdentity(ctx context.Context, arg UpsertUserByIdentityParams) (User, error) {
+	row := q.db.QueryRow(ctx, upsertUserByIdentity,
+		arg.ID,
+		arg.Issuer,
+		arg.Subject,
+		arg.Email,
+		arg.DisplayName,
+	)
 	var i User
 	err := row.Scan(
 		&i.ID,

@@ -60,6 +60,16 @@ type OutboxEvent struct {
 	CreatedAt       time.Time
 }
 
+type Session struct {
+	IDHash          []byte
+	UserID          string
+	RealmRoles      []string
+	RefreshTokenEnc []byte
+	AccessExpiresAt time.Time
+	ExpiresAt       time.Time
+	CreatedAt       time.Time
+}
+
 type User struct {
 	ID          string
 	Issuer      string

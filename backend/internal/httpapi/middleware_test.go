@@ -25,12 +25,11 @@ func logged(t *testing.T, mount func(chi.Router), method, path, user string) (*h
 	r.Use(httpapi.WithRequestID, httpapi.LogRequests(log), httpapi.Recover)
 	mount(r)
 
-	req := httptest.NewRequest(method, path, nil)
+	token := ""
 	if user != "" {
-		req.Header.Set(httpapi.DevUserHeader, user)
+		token = sessionOf(user)
 	}
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	rec := send(r, request(method, path, token, ""))
 
 	var lines []map[string]any
 	for _, l := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
@@ -79,7 +78,7 @@ func TestRecoverPassesOnAbort(t *testing.T) {
 }
 
 func TestAccessLog(t *testing.T) {
-	h, _ := newAPI(t, httpapi.Options{DevAuth: true})
+	h, _ := newAPI(t)
 	mount := func(r chi.Router) {
 		r.Get("/healthz", func(http.ResponseWriter, *http.Request) {})
 		r.Mount("/", h)

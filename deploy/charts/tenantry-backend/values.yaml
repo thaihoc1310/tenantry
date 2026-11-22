@@ -20,9 +20,17 @@ tolerations: []
 
 api:
   replicas: 1
-  # Dev-only login by header (X-Tenantry-Dev-User): anyone reaching the API can
-  # act as any user, Platform Admin included. Never enable outside a lab.
-  devAuth: false
+  # Login through Keycloak (architecture/06-security-and-identity.md §3).
+  auth:
+    issuer: ""           # required, e.g. https://auth.example.com/realms/tenantry
+    publicURL: ""        # required: the portal origin browsers use, e.g. https://portal.example.com
+    clientID: portal
+    # Secret in the release namespace with the portal client's secret and the
+    # session encryption key (32 random bytes, base64). Like the database
+    # credentials, the chart never creates or holds it.
+    existingSecret: ""   # required
+    clientSecretKey: client-secret
+    sessionKeyKey: session-key
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { memory: 256Mi }

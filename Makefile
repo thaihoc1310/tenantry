@@ -34,8 +34,18 @@ migrate-status: ## Show which migrations are applied
 	cd $(BACKEND) && go run ./cmd/tenantry-migrate status
 
 .PHONY: run-api run-worker
-run-api: ## Run the Platform API locally
-	cd $(BACKEND) && go run ./cmd/tenantry-api
+# Local logins go through the lab's Keycloak and land on the Vite dev server
+# (IMPLEMENTATION-PLAN §10). The portal client secret and a session key stay
+# outside the repo, in DEV_SECRETS:
+#   TENANTRY_OIDC_CLIENT_SECRET=<secret of the portal client>
+#   TENANTRY_SESSION_KEY=<openssl rand -base64 32>
+DEV_SECRETS ?= $(HOME)/.config/tenantry/dev.env
+TENANTRY_OIDC_ISSUER ?= https://auth.tenantry.site/realms/tenantry
+TENANTRY_PUBLIC_URL ?= http://localhost:5173
+run-api: ## Run the Platform API locally (secrets from DEV_SECRETS)
+	@test -f $(DEV_SECRETS) || { echo "missing $(DEV_SECRETS), see the comment above run-api in the Makefile"; exit 1; }
+	cd $(BACKEND) && set -a && . $(DEV_SECRETS) && set +a && \
+		TENANTRY_OIDC_ISSUER=$(TENANTRY_OIDC_ISSUER) TENANTRY_PUBLIC_URL=$(TENANTRY_PUBLIC_URL) go run ./cmd/tenantry-api
 run-worker: ## Run the outbox worker locally (logs events; no cluster yet)
 	cd $(BACKEND) && go run ./cmd/tenantry-worker
 
@@ -50,12 +60,15 @@ deploy: ## Install or upgrade the Tenantry charts on the lab (values in deploy/c
 	deploy/cluster/deploy.sh
 
 .PHONY: image chart-lint
+# The chart's required values, with placeholders.
+CHART_LINT_SET := --set database.existingSecret=lint --set api.auth.existingSecret=lint \
+	--set api.auth.issuer=https://auth.example.com/realms/tenantry --set api.auth.publicURL=https://portal.example.com
 IMAGE ?= tenantry/backend:dev
 image: ## Build the backend image (every binary, one image)
 	docker build -f deploy/Dockerfile.backend -t $(IMAGE) $(BACKEND)
 chart-lint: ## Lint and render the tenantry-backend chart
-	helm lint deploy/charts/tenantry-backend --set database.existingSecret=lint
-	helm template tenantry deploy/charts/tenantry-backend --set database.existingSecret=lint >/dev/null
+	helm lint deploy/charts/tenantry-backend $(CHART_LINT_SET)
+	helm template tenantry deploy/charts/tenantry-backend $(CHART_LINT_SET) >/dev/null
 
 .PHONY: generate build fmt fmt-check vet lint test
 generate: ## Regenerate code from openapi/tenantry.v1.yaml (commit the result)
