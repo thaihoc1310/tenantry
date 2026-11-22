@@ -249,7 +249,7 @@ Finalizer `tenantry.io/workspace` làm phần trong Cluster của delete (spec �
 2. bỏ `cordoned` trên Tenant: ở lab cũ, Capsule cordon chặn cả ghi của controller (kiểm lại trên 0.15.x ở M6);
 3. xóa Namespace của Tenant (cả portal và kubectl) → đợi biến mất (PVC và Pod mất theo Namespace); quá ngưỡng 10 phút → condition `Deleting=False, reason=BlockedByFinalizer` kèm tên object; worker map thành Operation `Blocked`;
 4. xóa tường minh TenantResource, Tenant → đợi biến mất;
-5. IPPool (từ M9): đợi không còn `WorkloadEndpoint` và không còn địa chỉ đang cấp trong CIDR → xóa IPPool qua API `projectcalico.org/v3` (để Calico nhả block affinity) → đợi `IPAMBlock` của CIDR biến mất (kiểm trên lab);
+5. IPPool (từ M9): đợi không còn `WorkloadEndpoint` và không còn địa chỉ đang cấp trong CIDR → xóa IPPool qua API `projectcalico.org/v3` (để Calico nhả block affinity) → đợi `IPAMBlock` của CIDR biến mất (kiểm trên lab); Lab hiện chỉ có `crd.projectcalico.org/v1` (Calico 3.32 cài bằng tigera-operator, chưa bật Calico API server); đầu M9 phải chọn: bật `APIServer` của tigera-operator (thay đổi cấp cụm, hỏi trước) hay xóa qua CRD rồi tự dọn `blockaffinities`, và ghi lựa chọn vào đây.
 6. Dedicated (từ M8): gỡ membership label `workspaces.tenantry.io/<ws-id>` khỏi node (giữ org label/taint);
 7. gỡ finalizer. Worker xóa CR với propagation `Background`; thấy CR mất thì trong một transaction: reservation `Released`, CIDR `Quarantined` (từ M9), Workspace `Deleted`.
 
