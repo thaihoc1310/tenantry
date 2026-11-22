@@ -1,4 +1,4 @@
-// Routes mirror IMPLEMENTATION-PLAN §6.4; M3 has the ones below.
+// Routes mirror IMPLEMENTATION-PLAN §6.4; M4 has the ones below.
 import { createRouter, createWebHistory } from 'vue-router'
 import { api, unwrap } from '@/api/client'
 import { queryClient } from '@/app/queryClient'
@@ -10,6 +10,10 @@ export const router = createRouter({
     { path: '/request', component: () => import('@/features/onboarding/RequestPage.vue'), props: { another: true } },
     { path: '/login', component: () => import('@/features/onboarding/LoggedOutPage.vue'), meta: { public: true } },
     { path: '/orgs/:orgSlug', component: () => import('@/features/organizations/OverviewPage.vue'), props: true },
+    { path: '/orgs/:orgSlug/members', component: () => import('@/features/people/MembersPage.vue'), props: true },
+    { path: '/orgs/:orgSlug/groups', component: () => import('@/features/people/GroupsPage.vue'), props: true },
+    { path: '/orgs/:orgSlug/settings', component: () => import('@/features/people/SettingsPage.vue'), props: true },
+    { path: '/invitations/:token', component: () => import('@/features/people/InvitationPage.vue'), props: true },
     {
       path: '/admin',
       meta: { admin: true },

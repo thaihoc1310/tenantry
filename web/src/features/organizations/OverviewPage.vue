@@ -14,7 +14,8 @@ import PageHeader from '@/components/PageHeader.vue'
 import QuotaMeter from '@/components/QuotaMeter.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import TPanel from '@/components/TPanel.vue'
-import { useOrganization, useUsage } from './queries'
+import { useTransfer } from '@/features/people/queries'
+import { useMe, useOrganization, useUsage } from './queries'
 
 const props = defineProps<{ orgSlug: string }>()
 const router = useRouter()
@@ -25,6 +26,10 @@ const readsQuota = computed(
   () => org.data.value?.status === 'Active' && (role.value === 'OrgOwner' || role.value === 'OrgAdmin'),
 )
 const usage = useUsage(() => props.orgSlug, readsQuota)
+// An ownership offer waiting for this OrgAdmin: a banner points to Settings.
+const me = useMe()
+const transfer = useTransfer(() => props.orgSlug, readsQuota)
+const offered = computed(() => transfer.data.value && transfer.data.value.to.id === me.data.value?.id)
 
 // A request still under review, or rejected, lives on the start page.
 watch(
@@ -98,6 +103,19 @@ const noWorkspacesYet = 'Creating Workspaces arrives with the next release of th
         </template>
       </PageHeader>
 
+      <el-alert
+        v-if="offered && transfer.data.value"
+        type="warning"
+        :closable="false"
+        show-icon
+        :title="`${transfer.data.value.from.displayName} wants to hand ${org.data.value.displayName} over to you`"
+      >
+        <div class="t-row t-between">
+          <span>Review the offer in Settings: until you accept, nothing changes.</span>
+          <el-button size="small" type="primary" @click="router.push(`/orgs/${orgSlug}/settings`)">Review</el-button>
+        </div>
+      </el-alert>
+
       <template v-if="readsQuota">
         <ErrorState v-if="usage.isError.value" :error="usage.error.value" @retry="usage.refetch()" />
         <el-skeleton v-else-if="!usage.data.value" :rows="6" animated />
@@ -155,6 +173,15 @@ const noWorkspacesYet = 'Creating Workspaces arrives with the next release of th
                   ],
                 ]"
               />
+            </TPanel>
+            <TPanel title="People">
+              <div class="t-stack" style="gap: 10px">
+                <p class="muted">Invite teammates and put them in groups; groups get roles in each Workspace.</p>
+                <div class="t-row">
+                  <el-button @click="router.push(`/orgs/${orgSlug}/members`)">Invite a member</el-button>
+                  <el-button @click="router.push(`/orgs/${orgSlug}/groups`)">Manage groups</el-button>
+                </div>
+              </div>
             </TPanel>
           </div>
         </template>

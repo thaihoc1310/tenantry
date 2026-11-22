@@ -1,4 +1,4 @@
 // The icons the screens use, registered by name as in the mockups.
-import { ArrowDown, OfficeBuilding, Odometer, Plus, Refresh } from '@element-plus/icons-vue'
+import { ArrowDown, Collection, OfficeBuilding, Odometer, Plus, Refresh, Setting, User } from '@element-plus/icons-vue'
 
-export const icons = { ArrowDown, OfficeBuilding, Odometer, Plus, Refresh }
+export const icons = { ArrowDown, Collection, OfficeBuilding, Odometer, Plus, Refresh, Setting, User }

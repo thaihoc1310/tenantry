@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // Top bar, menu, content (docs/design/mockups: AppShell). The menu lists the
-// screens that exist; more join it milestone by milestone.
+// screens that exist; more join it milestone by milestone (Workspaces,
+// Clusters and Audit with M5–M6).
 import { useQueryClient } from '@tanstack/vue-query'
 import { ElMessage } from 'element-plus'
 import { computed } from 'vue'
@@ -25,6 +26,19 @@ const initials = computed(() => {
 const activeOrgs = computed(() => (orgs.data.value ?? []).filter((o) => o.status === 'Active'))
 const current = computed(() => activeOrgs.value.find((o) => o.slug === props.orgSlug))
 const isAdmin = computed(() => me.data.value?.isPlatformAdmin === true)
+
+// The Organization menu (mockups: AppShell). An OrgMember gets the short one:
+// Overview and Settings, where they can leave (PRODUCT-PLAN §16.2).
+const orgNav = computed(() => {
+  const all = [
+    ['overview', 'Overview', '', 'Odometer'],
+    ['members', 'Members', '/members', 'User'],
+    ['groups', 'Groups', '/groups', 'Collection'],
+    ['settings', 'Settings', '/settings', 'Setting'],
+  ]
+  const role = current.value?.myRole
+  return role === 'OrgOwner' || role === 'OrgAdmin' ? all : all.filter(([k]) => k === 'overview' || k === 'settings')
+})
 
 // The review queue's length, for the admin menu.
 const pending = useAdminOrganizations('Pending', 200, () => isAdmin.value && props.area === 'admin')
@@ -97,12 +111,15 @@ async function signOut() {
         <div class="t-side-in">
           <div class="t-side-label">{{ area === 'admin' ? 'Platform' : 'Organization' }}</div>
           <nav class="t-nav" :aria-label="area === 'admin' ? 'Platform Admin' : 'Organization'">
-            <RouterLink
-              v-if="area === 'org'"
-              :to="`/orgs/${orgSlug}`"
-              :aria-current="active === 'overview' ? 'page' : undefined"
-              ><el-icon><Odometer /></el-icon>Overview</RouterLink
-            >
+            <template v-if="area === 'org'">
+              <RouterLink
+                v-for="[key, label, path, icon] in orgNav"
+                :key="key"
+                :to="`/orgs/${orgSlug}${path}`"
+                :aria-current="active === key ? 'page' : undefined"
+                ><el-icon><component :is="icon" /></el-icon>{{ label }}</RouterLink
+              >
+            </template>
             <RouterLink v-else to="/admin/organizations" :aria-current="active === 'organizations' ? 'page' : undefined"
               ><el-icon><OfficeBuilding /></el-icon>Organizations<span
                 v-if="waiting"
