@@ -1,0 +1,50 @@
+{
+  "responses": {
+    "200": {
+      "items": [
+        {
+          "resource": "requestsCpu",
+          "used": "800m",
+          "limit": "2"
+        },
+        {
+          "resource": "requestsMemory",
+          "used": "1536Mi",
+          "limit": "4Gi"
+        },
+        {
+          "resource": "limitsCpu",
+          "used": "1",
+          "limit": "4"
+        },
+        {
+          "resource": "limitsMemory",
+          "used": "2Gi",
+          "limit": "8Gi"
+        },
+        {
+          "resource": "pods",
+          "used": "6",
+          "limit": "20"
+        },
+        {
+          "resource": "requestsStorage",
+          "used": "2Gi",
+          "limit": "10Gi"
+        }
+      ],
+      "namespaces": [
+        {
+          "name": "acme-solar-frontend",
+          "source": "portal",
+          "state": "Active",
+          "usage": {
+            "requests.cpu": "500m",
+            "pods": "4"
+          },
+          "createdAt": "2026-11-22T10:00:00Z"
+        }
+      ]
+    }
+  }
+}

@@ -79,7 +79,7 @@ func TestExamplesFitTheSpec(t *testing.T) {
 						t.Errorf("response %s has no body, its example must be null", status)
 					}
 				} else {
-					check(t, "response "+status, resp.Value.Content.Get("application/json"), body)
+					check(t, "response "+status, media(resp.Value.Content), body)
 				}
 				if status[0] == '2' {
 					covered[name] = true
@@ -127,4 +127,15 @@ func atoi(t *testing.T, s string) int {
 		n = n*10 + int(r-'0')
 	}
 	return n
+}
+
+// media is the JSON body of a response, or its only body (an event stream).
+func media(c openapi3.Content) *openapi3.MediaType {
+	if m := c.Get("application/json"); m != nil || len(c) != 1 {
+		return m
+	}
+	for _, m := range c {
+		return m
+	}
+	return nil
 }

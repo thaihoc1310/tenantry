@@ -644,6 +644,56 @@ func (q *Queries) ListWorkspaceNamespaces(ctx context.Context, workspaceID strin
 	return items, nil
 }
 
+const listWorkspaceOperations = `-- name: ListWorkspaceOperations :many
+SELECT id, org_id, resource_type, resource_id, type, state, progress, error_code, error_message, correlation_id, created_by, created_at, updated_at, finished_at FROM operations
+WHERE resource_type = 'Workspace' AND resource_id = $1
+  AND ($2::text IS NULL OR id < $2)
+ORDER BY id DESC
+LIMIT $3
+`
+
+type ListWorkspaceOperationsParams struct {
+	WorkspaceID string
+	Cursor      *string
+	PageSize    int32
+}
+
+// A Workspace's operations, newest first.
+func (q *Queries) ListWorkspaceOperations(ctx context.Context, arg ListWorkspaceOperationsParams) ([]Operation, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceOperations, arg.WorkspaceID, arg.Cursor, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Operation
+	for rows.Next() {
+		var i Operation
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ResourceType,
+			&i.ResourceID,
+			&i.Type,
+			&i.State,
+			&i.Progress,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.CorrelationID,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkspaces = `-- name: ListWorkspaces :many
 SELECT id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at, usage_snapshot, cordoned FROM workspaces WHERE org_id = $1 AND state <> 'Deleted' ORDER BY id
 `

@@ -10,9 +10,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/thaihoc1310/tenantry/backend/internal/httpapi"
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi/oapi"
 	"github.com/thaihoc1310/tenantry/backend/internal/workspace"
 	v1 "github.com/thaihoc1310/tenantry/operator/api/v1alpha1"
@@ -880,5 +882,52 @@ func TestStorageClassesRenderEveryWorkspace(t *testing.T) {
 	}
 	if n := count(t, db, `SELECT count(*) FROM workspaces WHERE id = $1 AND desired_generation = 2 AND state = 'Provisioning'`, ids["wind"]); n != 1 {
 		t.Fatal("wind not at generation 2, still Provisioning")
+	}
+}
+
+// Usage, the operation list and the event stream of a Workspace's operation.
+func TestWorkspaceUsageOperationsEvents(t *testing.T) {
+	defer httpapi.SetEventPoll(20 * time.Millisecond)()
+	h, db, _, owner, admins, devs := workspaceOrg(t)
+	ctx := context.Background()
+	rec := createWorkspace(h, owner, "zeta", workspaceBody("solar", admins, devs, ""))
+	var created oapi.WorkspaceAccepted
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &created) != nil {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	wsID, opID := created.Workspace.Id, created.Operation.Id
+	if _, err := db.Exec(ctx, `UPDATE workspaces SET usage_snapshot = '{"requests.cpu": "800m", "pods": "4"}' WHERE id = $1`, wsID); err != nil {
+		t.Fatal(err)
+	}
+	rec = asAdmin(h, sessionOf("usr-bob"), http.MethodGet, "/api/v1/workspaces/"+wsID+"/usage", "", "")
+	var u oapi.WorkspaceUsage
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &u) != nil || len(u.Items) != 6 ||
+		u.Items[0] != (oapi.QuotaUse{Resource: oapi.RequestsCpu, Used: "800m", Limit: "1"}) || u.Items[1].Used != "0" || len(u.Namespaces) != 1 {
+		t.Fatalf("usage: %d %s", rec.Code, rec.Body)
+	}
+	rec = asAdmin(h, owner, http.MethodGet, "/api/v1/workspaces/"+wsID+"/operations", "", "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), opID) {
+		t.Fatalf("operations: %d %s", rec.Code, rec.Body)
+	}
+	if rec := asAdmin(h, sessionOf("usr-dave"), http.MethodGet, "/api/v1/workspaces/"+wsID+"/operations", "", ""); rec.Code != 404 {
+		t.Fatalf("non-member lists operations: %d", rec.Code)
+	}
+
+	// The stream sends the operation, then each change, and ends when it is done.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		_, _ = db.Exec(ctx, `UPDATE operations SET state = 'Running', updated_at = now() WHERE id = $1`, opID)
+		time.Sleep(100 * time.Millisecond)
+		_, _ = db.Exec(ctx, `UPDATE operations SET state = 'Succeeded', updated_at = now() WHERE id = $1`, opID)
+	}()
+	rec = asAdmin(h, owner, http.MethodGet, "/api/v1/operations/"+opID+"/events", "", "")
+	body := rec.Body.String()
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "text/event-stream" || strings.Count(body, "event: operation\n") != 3 ||
+		strings.Index(body, `"state":"Pending"`) > strings.Index(body, `"state":"Running"`) ||
+		strings.Index(body, `"state":"Running"`) > strings.Index(body, `"state":"Succeeded"`) {
+		t.Fatalf("events: %d %q", rec.Code, body)
+	}
+	if rec := asAdmin(h, sessionOf("usr-dave"), http.MethodGet, "/api/v1/operations/"+opID+"/events", "", ""); rec.Code != 404 {
+		t.Fatalf("non-member follows: %d", rec.Code)
 	}
 }

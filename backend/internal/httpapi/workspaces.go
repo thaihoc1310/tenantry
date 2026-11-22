@@ -289,3 +289,65 @@ func (s server) ForceOperation(ctx context.Context, req oapi.ForceOperationReque
 	}
 	return oapi.ForceOperation200JSONResponse(toOperation(op)), nil
 }
+
+func (s server) GetWorkspaceUsage(ctx context.Context, req oapi.GetWorkspaceUsageRequestObject) (oapi.GetWorkspaceUsageResponseObject, error) {
+	u, err := s.workspaces.Usage(ctx, userID(ctx), req.WorkspaceId)
+	if err != nil {
+		return nil, err
+	}
+	ws := u.Workspace
+	used := map[string]string{}
+	if err := json.Unmarshal(ws.UsageSnapshot, &used); err != nil {
+		return nil, fmt.Errorf("workspace %s usage: %w", ws.ID, err)
+	}
+	out := oapi.WorkspaceUsage{Namespaces: make([]oapi.WorkspaceNamespace, 0, len(u.Namespaces))}
+	for _, q := range []struct {
+		resource oapi.QuotaUseResource
+		key      string
+		limit    oapi.Quantity
+	}{
+		{oapi.RequestsCpu, "requests.cpu", formatCPU(ws.RequestsCpuMilli)},
+		{oapi.RequestsMemory, "requests.memory", formatBytes(ws.RequestsMemoryBytes)},
+		{oapi.LimitsCpu, "limits.cpu", formatCPU(ws.LimitsCpuMilli)},
+		{oapi.LimitsMemory, "limits.memory", formatBytes(ws.LimitsMemoryBytes)},
+		{oapi.Pods, "pods", oapi.Quantity(fmt.Sprint(ws.Pods))},
+		{oapi.RequestsStorage, "requests.storage", formatBytes(ws.RequestsStorageBytes)},
+	} {
+		v := used[q.key]
+		if v == "" {
+			v = "0"
+		}
+		out.Items = append(out.Items, oapi.QuotaUse{Resource: q.resource, Used: v, Limit: string(q.limit)})
+	}
+	for _, n := range u.Namespaces {
+		v, err := toNamespace(n)
+		if err != nil {
+			return nil, err
+		}
+		out.Namespaces = append(out.Namespaces, v)
+	}
+	return oapi.GetWorkspaceUsage200JSONResponse(out), nil
+}
+
+func (s server) ListWorkspaceOperations(ctx context.Context, req oapi.ListWorkspaceOperationsRequestObject) (oapi.ListWorkspaceOperationsResponseObject, error) {
+	var cursor string
+	var limit int
+	if req.Params.Cursor != nil {
+		cursor = *req.Params.Cursor
+	}
+	if req.Params.Limit != nil {
+		limit = *req.Params.Limit
+	}
+	p, err := s.workspaces.Operations(ctx, userID(ctx), req.WorkspaceId, cursor, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := oapi.OperationList{Items: make([]oapi.Operation, 0, len(p.Items))}
+	for _, op := range p.Items {
+		out.Items = append(out.Items, toOperation(op))
+	}
+	if p.NextCursor != "" {
+		out.NextCursor = &p.NextCursor
+	}
+	return oapi.ListWorkspaceOperations200JSONResponse(out), nil
+}

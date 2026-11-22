@@ -1,0 +1,5 @@
+{
+  "responses": {
+    "200": "event: operation\ndata: {\"id\":\"op-1\",\"state\":\"Succeeded\"}\n\n"
+  }
+}

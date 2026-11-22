@@ -781,6 +781,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workspaces/{workspaceId}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * What the Workspace's Pods use of its quota, in all and per Namespace (anyone who sees it)
+         * @description As the controller last reported it, from the ResourceQuota of each
+         *     Namespace; empty until it has.
+         */
+        get: operations["getWorkspaceUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces/{workspaceId}/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        /** The Workspace's operations, newest first (anyone who sees it) */
+        get: operations["listWorkspaceOperations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workspaces/{workspaceId}/bindings": {
         parameters: {
             query?: never;
@@ -922,6 +964,32 @@ export interface paths {
          * @description The operation goes back to Pending and its undelivered changes are sent again at once.
          */
         post: operations["retryOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/operations/{operationId}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operationId: components["parameters"]["operationId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Follow an operation as server-sent events (who may read it)
+         * @description Each event is `operation`, its data the same JSON as `GET
+         *     /operations/{operationId}`: one at once, one at every change. The
+         *     stream ends after Succeeded, Failed or Blocked, and after 10
+         *     minutes; a comment line every 15 s keeps proxies from closing it.
+         *     Polling `GET /operations/{operationId}` every 2 s does the same.
+         */
+        get: operations["getOperationEvents"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1663,6 +1731,18 @@ export interface components {
             workspace: components["schemas"]["Workspace"];
             /** @description Set when something changed */
             operation?: components["schemas"]["Operation"];
+        };
+        WorkspaceUsage: {
+            /** @description Each quota of the Workspace, with what is used of it */
+            items: components["schemas"]["QuotaUse"][];
+            namespaces: components["schemas"]["WorkspaceNamespace"][];
+        };
+        QuotaUse: {
+            /** @enum {string} */
+            resource: "requestsCpu" | "requestsMemory" | "limitsCpu" | "limitsMemory" | "pods" | "requestsStorage";
+            /** @description A quantity; 0 until reported */
+            used: string;
+            limit: string;
         };
         WorkspaceBindingRole: {
             role: components["schemas"]["WorkspaceRole"];
@@ -3813,6 +3893,58 @@ export interface operations {
             429: components["responses"]["RateLimited"];
         };
     };
+    getWorkspaceUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceUsage"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    listWorkspaceOperations: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationList"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
     listWorkspaceBindings: {
         parameters: {
             query?: never;
@@ -4121,6 +4253,30 @@ export interface operations {
             };
             422: components["responses"]["IdempotencyKeyReused"];
             429: components["responses"]["RateLimited"];
+        };
+    };
+    getOperationEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operationId: components["parameters"]["operationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description An event stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
     forceOperation: {
