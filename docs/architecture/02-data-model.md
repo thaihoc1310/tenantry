@@ -168,6 +168,7 @@ erDiagram
 | Không xóa group còn binding | service: xóa group khóa row `groups` `FOR UPDATE`, kiểm không còn binding rồi mới đặt `deleted_at`; tạo binding khóa row `groups` `FOR SHARE` và kiểm `deleted_at IS NULL`. `FK ... ON DELETE RESTRICT` từ `workspace_group_bindings` chỉ bắn khi worker xóa hẳn tombstone, không phải lớp chặn chính |
 | Member của group phải là member của Organization sở hữu group, và không `Disabled` | service kiểm khi thêm, trong cùng transaction `SELECT ... FROM organization_members WHERE org_id = $1 AND user_id = $2 FOR SHARE` và `SELECT ... FROM users WHERE id = $2 FOR SHARE`; **không** FK sang `organization_members` (xem dưới). Lock này tuần tự hóa việc thêm với remove member/disable user, nên không thể có `group_members` sống của người đã bị gỡ |
 | Tối đa một transfer đang chờ mỗi Organization | `UNIQUE (org_id) ON ownership_transfers WHERE state = 'Proposed'` |
+| Tối đa một lời mời đang chờ cho mỗi email trong một Organization | `UNIQUE (org_id, lower(email)) ON invitations WHERE state = 'Pending'`; mời lại thì service chuyển lời mời cũ sang `Revoked` trong cùng transaction |
 | Cùng `Idempotency-Key` không tạo hai lần | `PRIMARY KEY (user_id, key)` trên `idempotency_keys` |
 
 **Xóa là xóa thật, trừ thứ còn phải đồng bộ ra ngoài:**

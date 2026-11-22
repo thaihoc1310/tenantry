@@ -708,6 +708,8 @@ NetworkPool luôn thuộc một Cluster; `organizationId` là tùy chọn. Pool 
 
 Khi Platform Admin tạo hoặc sửa NetworkPool, CIDR của nó không được overlap `reserved_cidrs` của Cluster (Pod CIDR/pool mặc định của Calico, Service CIDR, Node CIDR; lab: `192.168.0.0/16`, `10.96.0.0/12`) và các NetworkPool khác của cùng Cluster. Nhờ vậy allocation nằm trong pool thì tự động không đụng các dải đó.
 
+Thêm CIDR vào một pool (`PATCH .../network-pools/{poolId}`) chỉ là sửa DB với cùng kiểm tra overlap; không đụng Cluster, vì Calico IPPool được tạo riêng cho từng Workspace lúc cấp CIDR, và kube-proxy nhận Pod theo interface chứ không theo dải (7.3). Workspace mới lấy `/24` trống ở bất kỳ CIDR nào của pool; Workspace đang chạy giữ nguyên CIDR của nó. Gỡ một CIDR khỏi pool chỉ được khi không còn allocation nào (kể cả `Quarantined`) nằm trong dải đó.
+
 Mỗi Cluster nên có supernet riêng, ví dụ Cluster A dùng `10.240.0.0/16` (pool chung `onboarding-pod-network` là `10.240.0.0/18`, pool riêng lấy các `/18` tiếp theo như `10.240.64.0/18`), Cluster B (Phase 2) dùng `10.241.0.0/16`. Đồ án không cung cấp cross-cluster Pod/Service routing; workload ở hai Cluster giao tiếp qua endpoint/Ingress thông thường nếu cần.
 
 ### 7.2 Tạo Workspace network
@@ -907,7 +909,7 @@ Username Kubernetes map từ immutable `sub` với prefix `oidc:`. `preferred_us
 ### 9.1 Invite flow
 
 1. OrgOwner hoặc OrgAdmin nhập email và Organization role (`OrgAdmin` hoặc `OrgMember`; không mời làm `OrgOwner`);
-2. portal kiểm `maxMembers` (5.1) rồi tạo invitation token một lần, có expiry;
+2. portal kiểm `maxMembers` (5.1) rồi tạo invitation token một lần (32 byte ngẫu nhiên, DB chỉ giữ hash), hết hạn sau 7 ngày; link có dạng `https://portal.tenantry.site/invitations/<token>`. Mỗi Organization có tối đa một lời mời `Pending` cho một email (so sánh không phân biệt hoa thường): mời lại thì lời mời cũ bị thu hồi trong cùng transaction;
 3. **portal hiển thị invite link để người mời copy gửi tay** (email service thật là stretch). Link chỉ hiện một lần: gửi lại cùng `Idempotency-Key` trả về invitation không kèm link, muốn có link thì thu hồi và tạo invitation mới;
 4. người nhận login/register qua Keycloak;
 5. portal chỉ accept invite khi **email đã verify của account đang login khớp** email trong invitation; không khớp thì báo lỗi và không tạo membership;
@@ -931,7 +933,7 @@ Quota và usage của cả Organization (`/entitlement`, `/usage`) chỉ OrgOwne
 
 Organization `Pending` hoặc `Rejected` chưa có entitlement và grant. Mọi endpoint cần Organization đã được duyệt (đọc `/entitlement`, `/usage`; về sau là mời member, tạo group, tạo Workspace) trả `409 ORG_NOT_ACTIVE`. Organization `Deleted` trả `404` như không tồn tại (4.2). Thứ tự kiểm: membership (404) → role (403) → trạng thái (409).
 
-Transfer ownership diễn ra hoàn toàn trong portal, không có link hay token: Owner chọn một OrgAdmin làm người nhận → portal tạo yêu cầu có expiry (mỗi Organization tối đa một yêu cầu đang chờ; Owner hủy được) → người nhận thấy yêu cầu khi vào Organization và xác nhận. Transaction xác nhận kiểm lại dưới lock: yêu cầu còn chờ và chưa hết hạn, người nhận vẫn là OrgAdmin, người đề nghị vẫn là OrgOwner; rồi **hạ Owner cũ thành OrgAdmin trước, nâng người nhận thành Owner sau** (unique index "một OrgOwner" không deferrable), và ghi audit.
+Transfer ownership diễn ra hoàn toàn trong portal, không có link hay token: Owner chọn một OrgAdmin làm người nhận → portal tạo yêu cầu hết hạn sau 7 ngày (mỗi Organization tối đa một yêu cầu đang chờ; Owner hủy được, người nhận từ chối được) → người nhận thấy yêu cầu khi vào Organization và xác nhận. Transaction xác nhận kiểm lại dưới lock: yêu cầu còn chờ và chưa hết hạn, người nhận vẫn là OrgAdmin, người đề nghị vẫn là OrgOwner; rồi **hạ Owner cũ thành OrgAdmin trước, nâng người nhận thành Owner sau** (unique index "một OrgOwner" không deferrable), và ghi audit.
 
 ### 9.3 Group membership sync
 

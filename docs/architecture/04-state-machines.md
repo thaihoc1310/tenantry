@@ -377,7 +377,7 @@ stateDiagram-v2
 
 | From | Event / Guard | To | Side effects |
 |---|---|---|---|
-| `[*]` | `POST /organizations/{orgId}/invitations`; guard: Organization `Active` (nếu không `409 ORG_NOT_ACTIVE`); `maxMembers` kiểm dưới lock `organization_entitlements` (nếu đầy `ENTITLEMENT_EXCEEDED`) | `Pending` | Row `invitations` với `token_hash`, `expiry`, role, group tùy chọn; portal hiển thị link một lần; audit |
+| `[*]` | `POST /organizations/{orgId}/invitations`; guard: Organization `Active` (nếu không `409 ORG_NOT_ACTIVE`); `maxMembers` kiểm dưới lock `organization_entitlements` (nếu đầy `ENTITLEMENT_EXCEEDED`); đã có lời mời `Pending` cho cùng email thì lời mời cũ chuyển `Revoked` trong cùng transaction | `Pending` | Row `invitations` với `token_hash`, `expiry`, role, group tùy chọn; portal hiển thị link một lần; audit |
 | `Pending` | `POST /invitations/{token}:accept` bởi account đang login; guard: hash khớp, chưa expiry, `email_verified=true` và email token khớp email invitation (so sánh chuẩn hóa lowercase); `maxMembers` kiểm lại dưới lock | `Accepted` | Row `organization_members`; thêm vào group nếu invite chọn → Group Sync `Pending`; `accepted_by`; audit |
 | `Pending` | Accept nhưng email không khớp hoặc chưa verify | `Pending` | Trả lỗi rõ; **không** tạo membership; không tiêu token, để đúng người vẫn dùng được link |
 | `Pending` | `now > expiry` | `Expired` | Accept trả lỗi; UI cho tạo lại |
