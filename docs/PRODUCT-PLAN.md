@@ -709,6 +709,8 @@ NetworkPool luôn thuộc một Cluster; `organizationId` là tùy chọn. Pool 
 
 Khi Platform Admin tạo hoặc sửa NetworkPool, CIDR của nó không được overlap `reserved_cidrs` của Cluster (Pod CIDR/pool mặc định của Calico, Service CIDR, Node CIDR; lab: `192.168.0.0/16`, `10.96.0.0/12`) và các NetworkPool khác của cùng Cluster. Nhờ vậy allocation nằm trong pool thì tự động không đụng các dải đó.
 
+NetworkPool chỉ nhận IPv4; `allowedPrefixLengths` phải nằm giữa prefix dài nhất trong `cidrs` của pool và `/28`. Onboarding policy chỉ được trỏ tới NetworkPool dùng chung (không có `org_id`).
+
 Thêm CIDR vào một pool (`PATCH .../network-pools/{poolId}`) chỉ là sửa DB với cùng kiểm tra overlap; không đụng Cluster, vì Calico IPPool được tạo riêng cho từng Workspace lúc cấp CIDR, và kube-proxy nhận Pod theo interface chứ không theo dải (7.3). Workspace mới lấy `/24` trống ở bất kỳ CIDR nào của pool; Workspace đang chạy giữ nguyên CIDR của nó. Gỡ một CIDR khỏi pool chỉ được khi không còn allocation nào (kể cả `Quarantined`) nằm trong dải đó.
 
 Mỗi Cluster nên có supernet riêng, ví dụ Cluster A dùng `10.240.0.0/16` (pool chung `onboarding-pod-network` là `10.240.0.0/18`, pool riêng lấy các `/18` tiếp theo như `10.240.64.0/18`), Cluster B (Phase 2) dùng `10.241.0.0/16`. Đồ án không cung cấp cross-cluster Pod/Service routing; workload ở hai Cluster giao tiếp qua endpoint/Ingress thông thường nếu cần.
@@ -1500,6 +1502,7 @@ POST   /api/v1/admin/organizations/{orgId}:approve # kèm entitlement + ClusterG
 POST   /api/v1/admin/organizations/{orgId}:reject  # kèm lý do → review_note
 POST   /api/v1/admin/organizations                 # tạo Org cho khách: slug, owner (email/user), entitlement, ClusterGrant ban đầu; owner phải đã đăng nhập portal ít nhất một lần, chưa thì 422 OWNER_USER_NOT_FOUND (không có lời mời làm Owner)
 PUT    /api/v1/admin/organizations/{orgId}/entitlement
+GET    /api/v1/admin/users?q=                      # M5, tìm user theo email/tên cho màn disable/enable
 POST   /api/v1/admin/users/{userId}:disable        # M5, users.status=Disabled + xóa phiên; Group Sync tắt account trên Keycloak
 POST   /api/v1/admin/users/{userId}:enable         # M5
 GET    /api/v1/admin/operations                    # M5, ?state=; Operation của mọi Organization và của Cluster
@@ -1509,7 +1512,7 @@ PATCH  /api/v1/admin/clusters/{clusterId}          # gồm trạng thái, kể c
 GET    /api/v1/admin/onboarding-policy             # M5
 PUT    /api/v1/admin/onboarding-policy
 GET    /api/v1/admin/cluster-grants                # M5, mọi grant của mọi Organization
-PUT    /api/v1/admin/organizations/{orgId}/cluster-grants/{clusterId}
+PUT    /api/v1/admin/organizations/{orgId}/cluster-grants/{clusterId}   # upsert: tạo 201 (cần Cluster Ready), sửa 200 (luật 5.5); clusterId trong body phải trùng path
 DELETE /api/v1/admin/organizations/{orgId}/cluster-grants/{clusterId}
 PUT    /api/v1/admin/organizations/{orgId}/cluster-grants/{clusterId}/dedicated-nodes   # M5 chỉ ghi DB; từ M6 trả Operation node.grant/node.revoke; từ M8 operator kiểm node rồi mới gắn label/taint
 GET    /api/v1/admin/clusters/{clusterId}/nodes                       # danh sách node operator báo về: tự do, thuộc pool nào, dedicated cho ai

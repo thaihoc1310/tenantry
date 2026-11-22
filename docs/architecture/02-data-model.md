@@ -71,6 +71,8 @@ erDiagram
     text status "Active | Disabled"
     text sync_status "Synced | Pending | Error, từ M5"
     timestamptz next_sync_at "từ M5"
+    int sync_attempts "từ M5"
+    text last_error "từ M5"
   }
   sessions {
     bytea id_hash PK "sha256 của cookie"
@@ -234,7 +236,9 @@ erDiagram
     text cluster_id FK
     text name
     numeric allocation_overcommit_ratio
-    jsonb system_reserve "cho mỗi node: milliCPU, byte, pod"
+    bigint system_reserve_cpu_milli "cho mỗi node"
+    bigint system_reserve_memory_bytes
+    int system_reserve_pods
     jsonb capacity_snapshot "chép từ PlatformSharedPool"
   }
   cluster_grant_shared_pools {
@@ -314,6 +318,7 @@ erDiagram
 
 - `capacity_snapshot` của shared pool và `allocatable_*` của dedicated node là **dữ liệu chép từ Kubernetes**. Controller báo qua status của CR phụ (`PlatformNodeGrant` cho dedicated node, `PlatformSharedPool` cho shared pool, `PlatformNodeInventory` cho danh sách node trong `cluster_nodes`), worker chép về DB — worker không đọc Node trực tiếp. Chênh lệch với reservation → `Overcommitted`.
 - `onboarding_policies.entitlement_template` và `grant_template` là JSON điền sẵn vào form duyệt; entitlement và grant đã cấp là snapshot, đổi policy sau đó không ảnh hưởng [5.1][5.2.1].
+- Như M5 đã làm: `system_reserve` của shared pool là ba cột số (`CHECK ≥ 0`) như `dedicated_node_grants`, không phải jsonb, để `SUM` dưới lock không phải parse; `cluster_nodes` có FK ghép `(shared_pool_id, cluster_id)` nên pool phải cùng Cluster, và `CHECK` chỉ node `Worker` mới vào pool; `dedicated_node_grants` **không** có FK tới `organization_cluster_grants`, vì row đã thu hồi sống lâu hơn grant để làm lịch sử cho reservation (service kiểm grant khi cấp node; xóa grant khi còn node chưa thu hồi trả `409 CONFLICT` kèm `details.dedicatedNodes`). Grant là upsert theo `(org_id, cluster_id)`; grant mới là default chỉ khi là grant đầu tiên của Organization.
 - `id` của `clusters`, `shared_compute_pools` và `network_pools` là tên do Platform Admin đặt (`cluster-a`, `shared-general`, `onboarding-pod-network`), không phải ULID. Chúng thành giá trị label và tên object trên Kubernetes nên phải là DNS label (CHECK trong schema). Hệ quả: tên pool là duy nhất trên toàn platform, không phải trong từng Cluster; Cluster thứ hai phải đặt tên pool khác. `system` bị cấm làm id của shared pool vì đó là giá trị label `tenantry.io/compute-pool` của system pool (service từ chối khi tạo).
 - Grant phải có ít nhất một row `cluster_grant_network_pools` (service kiểm khi duyệt và khi sửa grant); `cluster_grant_shared_pools` được để trống.
 - `shared_compute_pools` không có cột trạng thái và không có node selector: node của pool là các row `cluster_nodes` có `shared_pool_id` trỏ về pool, label do operator gắn theo `PlatformSharedPool.spec.nodes`. `system_reserve` là lượng giữ cho hệ thống **trên mỗi node** của pool; công thức reservable ở `05-network-and-scheduling.md` mục 4.
