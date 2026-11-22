@@ -70,6 +70,30 @@ func (q *Queries) BeginWorkspaceUpdate(ctx context.Context, id string) (Workspac
 	return i, err
 }
 
+const boundGroupIDs = `-- name: BoundGroupIDs :many
+SELECT group_id FROM workspace_group_bindings WHERE workspace_id = $1 ORDER BY group_id
+`
+
+func (q *Queries) BoundGroupIDs(ctx context.Context, workspaceID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, boundGroupIDs, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var group_id string
+		if err := rows.Scan(&group_id); err != nil {
+			return nil, err
+		}
+		items = append(items, group_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countGrantWorkspaces = `-- name: CountGrantWorkspaces :one
 SELECT count(*)::int FROM workspaces WHERE cluster_grant_id = $1
 `
@@ -262,6 +286,16 @@ func (q *Queries) DeleteWorkspaceBinding(ctx context.Context, arg DeleteWorkspac
 	return err
 }
 
+const deleteWorkspaceRow = `-- name: DeleteWorkspaceRow :exec
+DELETE FROM workspaces WHERE id = $1
+`
+
+// The last of a deleted Workspace: bindings and Namespaces go with it.
+func (q *Queries) DeleteWorkspaceRow(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, deleteWorkspaceRow, id)
+	return err
+}
+
 const getGrantStorageClasses = `-- name: GetGrantStorageClasses :one
 SELECT allowed_storage_classes FROM organization_cluster_grants WHERE id = $1
 `
@@ -443,6 +477,56 @@ func (q *Queries) ListBindingsForCR(ctx context.Context, workspaceID string) ([]
 			&i.MachineName,
 			&i.DisplayName,
 			&i.SyncStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDeletingWorkspaces = `-- name: ListDeletingWorkspaces :many
+SELECT id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at, usage_snapshot, cordoned FROM workspaces WHERE cluster_id = $1 AND state = 'Deleting' ORDER BY id
+`
+
+func (q *Queries) ListDeletingWorkspaces(ctx context.Context, clusterID string) ([]Workspace, error) {
+	rows, err := q.db.Query(ctx, listDeletingWorkspaces, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Workspace
+	for rows.Next() {
+		var i Workspace
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ClusterID,
+			&i.ClusterGrantID,
+			&i.Slug,
+			&i.K8sName,
+			&i.DisplayName,
+			&i.State,
+			&i.RequestsCpuMilli,
+			&i.RequestsMemoryBytes,
+			&i.LimitsCpuMilli,
+			&i.LimitsMemoryBytes,
+			&i.Pods,
+			&i.RequestsStorageBytes,
+			&i.NamespaceQuota,
+			&i.ComputeMode,
+			&i.SharedPoolID,
+			&i.DesiredGeneration,
+			&i.ObservedGeneration,
+			&i.Conditions,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.UsageSnapshot,
+			&i.Cordoned,
 		); err != nil {
 			return nil, err
 		}
@@ -807,6 +891,48 @@ type SetWorkspaceCordonedParams struct {
 // controller has done it (04-state-machines §1.1).
 func (q *Queries) SetWorkspaceCordoned(ctx context.Context, arg SetWorkspaceCordonedParams) (Workspace, error) {
 	row := q.db.QueryRow(ctx, setWorkspaceCordoned, arg.Cordoned, arg.ID)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ClusterID,
+		&i.ClusterGrantID,
+		&i.Slug,
+		&i.K8sName,
+		&i.DisplayName,
+		&i.State,
+		&i.RequestsCpuMilli,
+		&i.RequestsMemoryBytes,
+		&i.LimitsCpuMilli,
+		&i.LimitsMemoryBytes,
+		&i.Pods,
+		&i.RequestsStorageBytes,
+		&i.NamespaceQuota,
+		&i.ComputeMode,
+		&i.SharedPoolID,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.Conditions,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.UsageSnapshot,
+		&i.Cordoned,
+	)
+	return i, err
+}
+
+const setWorkspaceState = `-- name: SetWorkspaceState :one
+UPDATE workspaces SET state = $1, updated_at = now() WHERE id = $2 RETURNING id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at, usage_snapshot, cordoned
+`
+
+type SetWorkspaceStateParams struct {
+	State string
+	ID    string
+}
+
+func (q *Queries) SetWorkspaceState(ctx context.Context, arg SetWorkspaceStateParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, setWorkspaceState, arg.State, arg.ID)
 	var i Workspace
 	err := row.Scan(
 		&i.ID,

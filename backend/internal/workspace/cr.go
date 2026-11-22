@@ -21,6 +21,7 @@ import (
 const (
 	EventApply  = "workspace.apply"
 	EventDelete = "workspace.delete"
+	EventForce  = "workspace.force"
 )
 
 // AnnotationSpecVersion carries workspaces.desired_generation on the CR, in
@@ -140,6 +141,9 @@ func newOperation(ctx context.Context, q *store.Queries, ws store.Workspace, typ
 // CR a new generation, so the worker can tell the status after the retry
 // from the one before; reservations stay as they are.
 func Reapply(ctx context.Context, q *store.Queries, op store.Operation) error {
+	if op.Type == "workspace.delete" {
+		return nil // a delete was delivered; the controller carries on with it
+	}
 	ws, err := q.LockWorkspace(ctx, op.ResourceID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil // the Workspace is gone: nothing to write again

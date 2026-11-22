@@ -23,6 +23,10 @@ func TestHandler(t *testing.T) {
 	if err := h.Handle(ctx, apply); err != nil || c.get(k8s.Workspaces, "acme-solar").GetGeneration() != 1 {
 		t.Fatalf("second apply: %v", err)
 	}
+	if err := h.Handle(ctx, store.OutboxEvent{Type: "workspace.force", Payload: []byte(`{"name":"acme-solar"}`)}); err != nil ||
+		c.get(k8s.Workspaces, "acme-solar").GetAnnotations()["tenantry.io/force-delete"] != "true" {
+		t.Fatalf("force: %v", err)
+	}
 	if err := h.Handle(ctx, store.OutboxEvent{Type: "workspace.delete", Payload: []byte(`{"name":"acme-solar"}`)}); err != nil ||
 		c.get(k8s.Workspaces, "acme-solar") != nil {
 		t.Fatalf("delete: %v", err)
@@ -33,6 +37,7 @@ func TestHandler(t *testing.T) {
 		{Type: "workspace.patch", Payload: []byte(`{}`)},
 		{Type: "workspace.apply", Payload: []byte(`not json`)},
 		{Type: "nodegrant.delete", Payload: []byte(`{}`)},
+		{Type: "sharedpool.force", Payload: []byte(`{"name":"x"}`)},
 	} {
 		if err := h.Handle(ctx, e); !outbox.IsPermanent(err) {
 			t.Errorf("%s %s: %v, want a permanent error", e.Type, e.Payload, err)

@@ -704,7 +704,15 @@ export interface paths {
         get: operations["getWorkspace"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a Workspace with its Namespaces, workloads and volumes (OrgOwner or OrgAdmin)
+         * @description `confirmName` must be the Workspace's slug. From Ready, Cordoned,
+         *     Degraded or Failed, with no operation under way. The Workspace is
+         *     Deleting and keeps its share of the grant until the cluster is
+         *     clean, then it is gone (PRODUCT-PLAN §17.4). A delete stuck on a
+         *     finalizer is Blocked: retry, or a Platform Admin forces it.
+         */
+        delete: operations["deleteWorkspace"];
         options?: never;
         head?: never;
         /**
@@ -907,6 +915,30 @@ export interface paths {
          * @description The operation goes back to Pending and its undelivered changes are sent again at once.
          */
         post: operations["retryOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/operations/{operationId}:force": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operationId: components["parameters"]["operationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Force a Blocked Workspace delete past what holds it (Platform Admin)
+         * @description The finalizer stops waiting for the Namespaces and deletes the
+         *     Tenant; objects still held (volumes) are left for the Admin to
+         *     clean up. Always audited (PRODUCT-PLAN §16.5).
+         */
+        post: operations["forceOperation"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3554,6 +3586,44 @@ export interface operations {
             404: components["responses"]["Error"];
         };
     };
+    deleteWorkspace: {
+        parameters: {
+            query: {
+                confirmName: string;
+            };
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted; follow the `workspace.delete` operation */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceChange"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `WORKSPACE_NOT_READY`: an operation on it is under way, or it is being deleted already. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
     patchWorkspace: {
         parameters: {
             query?: never;
@@ -4003,6 +4073,41 @@ export interface operations {
                 };
             };
             422: components["responses"]["IdempotencyKeyReused"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    forceOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operationId: components["parameters"]["operationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Running again */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Operation"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `CONFLICT`: not a Blocked Workspace delete. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             429: components["responses"]["RateLimited"];
         };
     };

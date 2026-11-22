@@ -915,6 +915,37 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "429": { $ref: "#/components/responses/RateLimited" }
+    delete:
+      operationId: deleteWorkspace
+      security: [{ session: [], csrf: [] }]
+      summary: Delete a Workspace with its Namespaces, workloads and volumes (OrgOwner or OrgAdmin)
+      description: |
+        `confirmName` must be the Workspace's slug. From Ready, Cordoned,
+        Degraded or Failed, with no operation under way. The Workspace is
+        Deleting and keeps its share of the grant until the cluster is
+        clean, then it is gone (PRODUCT-PLAN §17.4). A delete stuck on a
+        finalizer is Blocked: retry, or a Platform Admin forces it.
+      parameters:
+        - name: confirmName
+          in: query
+          required: true
+          schema: { type: string, maxLength: 20 }
+      responses:
+        "202":
+          description: Accepted; follow the `workspace.delete` operation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceChange" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`WORKSPACE_NOT_READY`: an operation on it is under way, or it is being deleted already."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
 
   /workspaces/{workspaceId}:cordon:
     parameters:
@@ -1185,6 +1216,33 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /operations/{operationId}:force:
+    parameters:
+      - $ref: "#/components/parameters/operationId"
+    post:
+      operationId: forceOperation
+      security: [{ session: [], csrf: [] }]
+      summary: Force a Blocked Workspace delete past what holds it (Platform Admin)
+      description: |
+        The finalizer stops waiting for the Namespaces and deletes the
+        Tenant; objects still held (volumes) are left for the Admin to
+        clean up. Always audited (PRODUCT-PLAN §16.5).
+      responses:
+        "200":
+          description: Running again
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`CONFLICT`: not a Blocked Workspace delete."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
   /admin/organizations:

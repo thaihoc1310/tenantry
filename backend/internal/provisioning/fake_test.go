@@ -76,6 +76,20 @@ func (f *fakeCluster) Delete(_ context.Context, gvr schema.GroupVersionResource,
 
 func (f *fakeCluster) Ping(context.Context) error { return f.pingErr }
 
+func (f *fakeCluster) MarkForceDelete(_ context.Context, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if o := f.objs[k8s.Workspaces][name]; o != nil {
+		a := o.GetAnnotations()
+		if a == nil {
+			a = map[string]string{}
+		}
+		a[v1.AnnotationForceDelete] = "true"
+		o.SetAnnotations(a)
+	}
+	return nil
+}
+
 func (f *fakeCluster) get(gvr schema.GroupVersionResource, name string) *unstructured.Unstructured {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -271,3 +271,21 @@ func toChange(c workspace.Changed) (oapi.WorkspaceChange, error) {
 	}
 	return out, err
 }
+
+func (s server) DeleteWorkspace(ctx context.Context, req oapi.DeleteWorkspaceRequestObject) (oapi.DeleteWorkspaceResponseObject, error) {
+	c, err := s.workspaces.Delete(ctx, userID(ctx), req.WorkspaceId, req.Params.ConfirmName, requestID(ctx))
+	if err != nil {
+		return nil, err
+	}
+	out, err := toChange(c)
+	return oapi.DeleteWorkspace202JSONResponse(out), err
+}
+
+func (s server) ForceOperation(ctx context.Context, req oapi.ForceOperationRequestObject) (oapi.ForceOperationResponseObject, error) {
+	c := caller(ctx)
+	op, err := s.workspaces.Force(ctx, c.user.ID, c.platformAdmin, req.OperationId, requestID(ctx))
+	if err != nil {
+		return nil, err
+	}
+	return oapi.ForceOperation200JSONResponse(toOperation(op)), nil
+}

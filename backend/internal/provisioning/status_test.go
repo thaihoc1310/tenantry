@@ -420,3 +420,69 @@ func TestCordonOperations(t *testing.T) {
 		t.Fatalf("after uncordon: %s, operation %s", w.State, e.op(ch.Operation.ID).State)
 	}
 }
+
+// A delete: the CR is deleted; its finalizer stuck → Blocked; force marks
+// the CR; the CR gone → the Workspace's row and share are released, the
+// members of its groups counted again.
+func TestDeleteRelease(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	c := e.create("solar")
+	e.report("acme-solar", v1.PhaseReady, readyConds, v1.NamespaceStatus{Name: "acme-solar-frontend", Source: v1.SourcePortal})
+	e.sync()
+	if _, err := e.db.Exec(ctx, `INSERT INTO group_members (group_id, user_id, sync_status) VALUES ('grp-a', 'usr-ann', 'Synced')`); err != nil {
+		t.Fatal(err)
+	}
+	del, err := e.ws.Delete(ctx, "usr-ann", c.Workspace.ID, "solar", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A real CR stays while its finalizer works; the fake deletes at once,
+	// so put it back as the finalizer would hold it.
+	cr := e.cluster.get(k8s.Workspaces, "acme-solar")
+	e.deliver()
+	if e.cluster.get(k8s.Workspaces, "acme-solar") == nil {
+		if err := e.cluster.Apply(ctx, k8s.Workspaces, cr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.cluster.setStatus(k8s.Workspaces, "acme-solar", &v1.PlatformWorkspaceStatus{Phase: v1.PhaseDeleting, Conditions: []metav1.Condition{
+		cond(v1.ConditionDeleting, false, v1.ReasonBlockedByFinalizer, "Namespace acme-solar-frontend: PVC data"),
+	}})
+	e.sync()
+	if o := e.op(del.Operation.ID); o.State != "Blocked" || o.ErrorMessage != "Namespace acme-solar-frontend: PVC data" {
+		t.Fatalf("stuck delete: %+v", o)
+	}
+	if w := e.workspace(c.Workspace.ID); w.State != "Deleting" {
+		t.Fatalf("Blocked changed the Workspace: %s", w.State)
+	}
+	if _, err := e.ws.Force(ctx, "usr-admin", true, del.Operation.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	e.deliver()
+	if got := e.cluster.get(k8s.Workspaces, "acme-solar"); got.GetAnnotations()[v1.AnnotationForceDelete] != "true" {
+		t.Fatal("force did not mark the CR")
+	}
+	// The finalizer is done: the CR is gone.
+	if err := e.cluster.Delete(ctx, k8s.Workspaces, "acme-solar"); err != nil {
+		t.Fatal(err)
+	}
+	e.sync()
+	if o := e.op(del.Operation.ID); o.State != "Succeeded" {
+		t.Fatalf("delete operation %+v", o)
+	}
+	if n := countRows(t, e, `SELECT count(*) FROM workspaces`); n != 0 {
+		t.Fatal("the Workspace row is still there")
+	}
+	if n := countRows(t, e, `SELECT count(*) FROM workspace_namespaces`); n != 0 {
+		t.Fatal("its Namespaces are still there")
+	}
+	if n := countRows(t, e, `SELECT count(*) FROM group_members WHERE sync_status = 'Pending'`); n != 1 {
+		t.Fatal("the bound group's member is not counted again")
+	}
+	if n := countRows(t, e, `SELECT count(*) FROM audit_events WHERE action = 'workspace.deleted'`); n != 1 {
+		t.Fatal("no audit of the release")
+	}
+	// The slug is free again (no CIDR to quarantine before M9).
+	e.create("solar")
+}

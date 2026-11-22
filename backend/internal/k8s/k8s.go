@@ -110,6 +110,21 @@ func (c *Client) Delete(ctx context.Context, gvr schema.GroupVersionResource, na
 	return err
 }
 
+// MarkForceDelete sets tenantry.io/force-delete on a PlatformWorkspace, as
+// a field manager of its own so the spec the worker applies stays as it is.
+func (c *Client) MarkForceDelete(ctx context.Context, name string) error {
+	obj := &unstructured.Unstructured{}
+	obj.SetAPIVersion(v1.GroupVersion.String())
+	obj.SetKind("PlatformWorkspace")
+	obj.SetName(name)
+	obj.SetAnnotations(map[string]string{v1.AnnotationForceDelete: "true"})
+	_, err := c.dyn.Resource(Workspaces).Apply(ctx, name, obj, metav1.ApplyOptions{FieldManager: FieldManager + "-force", Force: true})
+	if apierrors.IsNotFound(err) {
+		return nil // gone already
+	}
+	return err
+}
+
 // Ping asks the cluster for its version (the health check, IMPLEMENTATION-PLAN §5.1).
 func (c *Client) Ping(context.Context) error {
 	_, err := c.discovery.ServerVersion()

@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1 "github.com/thaihoc1310/tenantry/operator/api/v1alpha1"
@@ -88,6 +89,9 @@ func (s *Syncer) RunOnce(ctx context.Context) error {
 		if err := s.syncWorkspace(ctx, cr); err != nil {
 			errs = append(errs, fmt.Errorf("workspace %s: %w", cr.Spec.WorkspaceID, err))
 		}
+	}
+	if err := s.syncDeletes(ctx, crs); err != nil {
+		errs = append(errs, err)
 	}
 	if err := s.failTimedOut(ctx, crs); err != nil {
 		errs = append(errs, err)
@@ -364,4 +368,52 @@ func nonNil(cs []metav1.Condition) []metav1.Condition {
 		return []metav1.Condition{}
 	}
 	return cs
+}
+
+// syncDeletes finishes deletes on this cluster (IMPLEMENTATION-PLAN §5.1):
+// a Deleting Workspace whose CR is gone after its delete was delivered is
+// released; one whose finalizer reports itself stuck has its operation
+// Blocked (04-state-machines §2).
+func (s *Syncer) syncDeletes(ctx context.Context, crs []v1.PlatformWorkspace) error {
+	byName := map[string]v1.PlatformWorkspace{}
+	for _, cr := range crs {
+		byName[cr.Name] = cr
+	}
+	deleting, err := s.q.ListDeletingWorkspaces(ctx, s.clusterID)
+	if err != nil {
+		return err
+	}
+	for _, ws := range deleting {
+		err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+			q := s.q.WithTx(tx)
+			ws, err := q.LockWorkspace(ctx, ws.ID)
+			if errors.Is(err, pgx.ErrNoRows) || (err == nil && ws.State != workspace.StateDeleting) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			op, err := q.ActiveWorkspaceOperation(ctx, ws.ID)
+			if errors.Is(err, pgx.ErrNoRows) || (err == nil && op.State == "Pending") {
+				return nil // not delivered yet: the CR may simply not exist yet
+			}
+			if err != nil {
+				return err
+			}
+			cr, present := byName[ws.K8sName]
+			if !present {
+				return workspace.Release(ctx, q, ws, op.ID)
+			}
+			c := meta.FindStatusCondition(cr.Status.Conditions, v1.ConditionDeleting)
+			if c != nil && c.Status == metav1.ConditionFalse && c.Reason == v1.ReasonBlockedByFinalizer && op.State == "Running" {
+				_, _, err := operation.Move(ctx, q, op.ID, operation.Blocked, "BLOCKED_BY_FINALIZER", c.Message)
+				return err
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("workspace %s: %w", ws.ID, err)
+		}
+	}
+	return nil
 }

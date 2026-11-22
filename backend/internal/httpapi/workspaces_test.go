@@ -707,3 +707,75 @@ func TestCordonWorkspace(t *testing.T) {
 		t.Fatalf("%d cordon audit events", n)
 	}
 }
+
+func TestDeleteWorkspace(t *testing.T) {
+	h, db, _, owner, admins, devs := workspaceOrg(t)
+	rec := createWorkspace(h, owner, "zeta", workspaceBody("solar", admins, devs, ""))
+	var created oapi.WorkspaceAccepted
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &created) != nil {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	wsID := created.Workspace.Id
+	del := func(token, confirm string) *httptest.ResponseRecorder {
+		return asAdmin(h, token, http.MethodDelete, "/api/v1/workspaces/"+wsID+"?confirmName="+confirm, "", "")
+	}
+	if rec := del(owner, "solar"); rec.Code != 409 {
+		t.Fatalf("delete while Provisioning: %d %s", rec.Code, rec.Body)
+	}
+	settle(t, db, wsID)
+	if rec := del(owner, "sol"); rec.Code != 400 || (*errorBody(t, rec).Details)["field"] != "confirmName" {
+		t.Fatalf("wrong confirmation: %d %s", rec.Code, rec.Body)
+	}
+	if rec := del(sessionOf("usr-bob"), "solar"); rec.Code != 403 {
+		t.Fatalf("OrgMember deletes: %d", rec.Code)
+	}
+	rec = del(owner, "solar")
+	var change oapi.WorkspaceChange
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &change) != nil || change.Workspace.State != oapi.WorkspaceStateDeleting ||
+		change.Operation.Type != "workspace.delete" {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body)
+	}
+	if n := count(t, db, `SELECT count(*) FROM outbox_events WHERE operation_id = $1 AND type = 'workspace.delete' AND payload->>'name' = 'zeta-solar'`,
+		change.Operation.Id); n != 1 {
+		t.Fatal("no delete event")
+	}
+	// Still held until the cluster is clean; nothing else meanwhile.
+	if rec := asAdmin(h, owner, http.MethodGet, "/api/v1/organizations/zeta/usage", "", ""); !strings.Contains(rec.Body.String(), `"workspaces":{"allocated":1`) {
+		t.Fatalf("usage while Deleting: %s", rec.Body)
+	}
+	if rec := del(owner, "solar"); rec.Code != 409 {
+		t.Fatalf("delete twice: %d", rec.Code)
+	}
+
+	// Blocked: OrgOwner retries; only a Platform Admin forces.
+	if _, err := db.Exec(context.Background(), `UPDATE operations SET state = 'Blocked', error_code = 'BLOCKED_BY_FINALIZER', error_message = 'pvc data held' WHERE id = $1`,
+		change.Operation.Id); err != nil {
+		t.Fatal(err)
+	}
+	force := func(token string) *httptest.ResponseRecorder {
+		return asAdmin(h, token, http.MethodPost, "/api/v1/operations/"+change.Operation.Id+":force", "", "")
+	}
+	if rec := force(owner); rec.Code != 403 {
+		t.Fatalf("OrgOwner forces: %d", rec.Code)
+	}
+	if rec := asAdmin(h, owner, http.MethodPost, "/api/v1/operations/"+change.Operation.Id+":retry", "", ""); rec.Code != 200 ||
+		!strings.Contains(rec.Body.String(), `"state":"Running"`) {
+		t.Fatalf("retry a Blocked delete: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := db.Exec(context.Background(), `UPDATE operations SET state = 'Blocked' WHERE id = $1`, change.Operation.Id); err != nil {
+		t.Fatal(err)
+	}
+	admin := newSession(t, db, "usr-alice", "platform-admin") // not a member of zeta
+	if rec := force(admin); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"state":"Running"`) {
+		t.Fatalf("force: %d %s", rec.Code, rec.Body)
+	}
+	if n := count(t, db, `SELECT count(*) FROM outbox_events WHERE operation_id = $1 AND type = 'workspace.force'`, change.Operation.Id); n != 1 {
+		t.Fatal("no force event")
+	}
+	if trail := auditTrail(t, db, "operation.force"); len(trail) != 1 || trail[0].Actor != "usr-alice" {
+		t.Fatalf("force audit %+v", trail)
+	}
+	if rec := force(admin); rec.Code != 409 {
+		t.Fatalf("force a Running delete: %d", rec.Code)
+	}
+}

@@ -195,3 +195,16 @@ RETURNING *;
 UPDATE workspaces SET cordoned = @cordoned, desired_generation = desired_generation + 1, updated_at = now()
 WHERE id = @id
 RETURNING *;
+
+-- name: SetWorkspaceState :one
+UPDATE workspaces SET state = @state, updated_at = now() WHERE id = @id RETURNING *;
+
+-- name: BoundGroupIDs :many
+SELECT group_id FROM workspace_group_bindings WHERE workspace_id = $1 ORDER BY group_id;
+
+-- name: DeleteWorkspaceRow :exec
+-- The last of a deleted Workspace: bindings and Namespaces go with it.
+DELETE FROM workspaces WHERE id = $1;
+
+-- name: ListDeletingWorkspaces :many
+SELECT * FROM workspaces WHERE cluster_id = $1 AND state = 'Deleting' ORDER BY id;

@@ -100,6 +100,32 @@ func (q *Queries) GetOperationForCaller(ctx context.Context, arg GetOperationFor
 	return i, err
 }
 
+const lockOperation = `-- name: LockOperation :one
+SELECT id, org_id, resource_type, resource_id, type, state, progress, error_code, error_message, correlation_id, created_by, created_at, updated_at, finished_at FROM operations WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockOperation(ctx context.Context, id string) (Operation, error) {
+	row := q.db.QueryRow(ctx, lockOperation, id)
+	var i Operation
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ResourceType,
+		&i.ResourceID,
+		&i.Type,
+		&i.State,
+		&i.Progress,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.CorrelationID,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+	)
+	return i, err
+}
+
 const moveOperation = `-- name: MoveOperation :one
 UPDATE operations
 SET state         = $1::text,

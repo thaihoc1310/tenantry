@@ -29,6 +29,9 @@ import (
 type Cluster interface {
 	Apply(ctx context.Context, gvr schema.GroupVersionResource, obj *unstructured.Unstructured) error
 	Delete(ctx context.Context, gvr schema.GroupVersionResource, name string) error
+	// MarkForceDelete has a Workspace's finalizer stop waiting for what
+	// holds its Namespaces (a Platform Admin's :force).
+	MarkForceDelete(ctx context.Context, name string) error
 	Ping(ctx context.Context) error
 	Workspaces() ([]v1.PlatformWorkspace, error)
 	SharedPools() ([]v1.PlatformSharedPool, error)
@@ -36,8 +39,9 @@ type Cluster interface {
 	Inventory() (v1.PlatformNodeInventory, bool, error)
 }
 
-// Event types are <kind>.<verb>: apply carries the whole CR, delete
-// {"name": ...}. The kinds are the CRs the worker may write.
+// Event types are <kind>.<verb>: apply carries the whole CR, delete and
+// force {"name": ...}; force is for workspaces only. The kinds are the CRs
+// the worker may write.
 var kinds = map[string]schema.GroupVersionResource{
 	"workspace":  k8s.Workspaces,
 	"sharedpool": k8s.SharedPools,
@@ -49,7 +53,7 @@ func Handler(c Cluster) outbox.Handler {
 	return outbox.HandlerFunc(func(ctx context.Context, e store.OutboxEvent) error {
 		kind, verb, _ := strings.Cut(e.Type, ".")
 		gvr, ok := kinds[kind]
-		if !ok || (verb != "apply" && verb != "delete") {
+		if !ok || (verb != "apply" && verb != "delete" && (verb != "force" || kind != "workspace")) {
 			return outbox.Permanent(fmt.Errorf("unknown event type %q", e.Type))
 		}
 		var err error
@@ -64,7 +68,11 @@ func Handler(c Cluster) outbox.Handler {
 			if err := json.Unmarshal(e.Payload, &p); err != nil || p.Name == "" {
 				return outbox.Permanent(fmt.Errorf("%s payload names no object", e.Type))
 			}
-			err = c.Delete(ctx, gvr, p.Name)
+			if verb == "force" {
+				err = c.MarkForceDelete(ctx, p.Name)
+			} else {
+				err = c.Delete(ctx, gvr, p.Name)
+			}
 		}
 		// The cluster refusing the credential or the object will refuse it
 		// again: no use waiting 10 attempts to tell the user.

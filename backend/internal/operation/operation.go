@@ -33,8 +33,11 @@ const (
 // cameFrom lists, for each state, the states an operation may move to it
 // from. Anything else is refused by MoveOperation's WHERE clause.
 var cameFrom = map[State][]State{
-	Running:   {Pending, Failed}, // Failed: a delivery still retrying in the background got through
-	Succeeded: {Running},
+	// Failed: a delivery still retrying in the background got through;
+	// Blocked: a retry or a Platform Admin's force.
+	Running: {Pending, Failed, Blocked},
+	// Blocked: what held a delete went away by itself.
+	Succeeded: {Running, Blocked},
 	Failed:    {Pending, Running},
 	Blocked:   {Running},
 	Pending:   {Failed}, // user retry
@@ -47,7 +50,7 @@ const ApplyFailed = "APPLY_FAILED"
 var (
 	ErrNotFound    = apperr.New(apperr.NotFound, "operation not found")
 	ErrForbidden   = apperr.New(apperr.Forbidden, "requires OrgOwner, OrgAdmin or Platform Admin")
-	ErrNotRetrying = apperr.New(apperr.Conflict, "only a Failed operation can be retried")
+	ErrNotRetrying = apperr.New(apperr.Conflict, "only a Failed or Blocked operation can be retried")
 )
 
 // New describes an operation to start.
@@ -138,6 +141,22 @@ func (s *Service) Retry(ctx context.Context, userID string, platformAdmin bool, 
 	var op store.Operation
 	err = store.InTx(ctx, s.db, func(tx pgx.Tx) error {
 		q := s.q.WithTx(tx)
+		// A Blocked delete goes back to Running: the controller tries again
+		// and reports Blocked once more if the object still holds on.
+		if row.Operation.State == string(Blocked) {
+			moved, ok, err := Move(ctx, q, opID, Running, "", "")
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return ErrNotRetrying
+			}
+			op = moved
+			return audit.Record(ctx, q, audit.Event{
+				Actor: userID, OrgID: deref(op.OrgID), Action: audit.OperationRetry, TargetType: "Operation", TargetID: op.ID,
+				Detail: map[string]any{"type": op.Type, "from": "Blocked", "asPlatformAdmin": role == ""},
+			})
+		}
 		moved, ok, err := Move(ctx, q, opID, Pending, "", "")
 		if err != nil {
 			return err

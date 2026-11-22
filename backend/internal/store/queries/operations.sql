@@ -24,3 +24,6 @@ SET state         = sqlc.arg(to_state)::text,
     updated_at    = now()
 WHERE id = @id AND state = ANY(sqlc.arg(from_states)::text[])
 RETURNING *;
+
+-- name: LockOperation :one
+SELECT * FROM operations WHERE id = $1 FOR UPDATE;

@@ -57,6 +57,9 @@ const (
 	WorkspaceUpdate        = "workspace.update"
 	WorkspaceCordon        = "workspace.cordon"
 	WorkspaceUncordon      = "workspace.uncordon"
+	WorkspaceDelete        = "workspace.delete"  // asked for
+	WorkspaceDeleted       = "workspace.deleted" // done: the cluster is clean
+	OperationForce         = "operation.force"
 	WorkspaceBindingUpdate = "workspace_binding.update"
 	WorkspaceBindingDelete = "workspace_binding.delete"
 	NamespaceCreate        = "namespace.create"
