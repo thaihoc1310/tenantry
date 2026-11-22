@@ -65,6 +65,10 @@ const (
 	DedicatedNodeNotGranted           Code = "DEDICATED_NODE_NOT_GRANTED"           // not a live node grant of the organization there
 	DedicatedNodeNotReady             Code = "DEDICATED_NODE_NOT_READY"             // the node is NotReady or cordoned
 	DedicatedNodeInsufficientCapacity Code = "DEDICATED_NODE_INSUFFICIENT_CAPACITY" // the node cannot hold it
+
+	// Network (PRODUCT-PLAN §7).
+	CIDROutsideAllowedPool Code = "CIDR_OUTSIDE_ALLOWED_POOL" // a requested block outside the pool
+	NetworkPoolExhausted   Code = "NETWORK_POOL_EXHAUSTED"    // no free block of that length left
 )
 
 type Error struct {

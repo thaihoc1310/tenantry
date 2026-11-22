@@ -16,3 +16,10 @@ func UniqueViolation(err error) (constraint string, ok bool) {
 	}
 	return "", false
 }
+
+// ExclusionViolation tells whether err is PostgreSQL refusing a row an
+// exclusion constraint forbids (two overlapping address blocks).
+func ExclusionViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23P01" // exclusion_violation
+}

@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"net/netip"
 	"time"
 )
 
@@ -134,6 +135,31 @@ func (q *Queries) BumpWorkspaceVersion(ctx context.Context, id string) (Workspac
 	return i, err
 }
 
+const clusterAllocatedCIDRs = `-- name: ClusterAllocatedCIDRs :many
+SELECT cidr FROM network_allocations WHERE cluster_id = $1 AND state <> 'Released'
+`
+
+// Every block of the cluster not Released, whoever holds it: taken.
+func (q *Queries) ClusterAllocatedCIDRs(ctx context.Context, clusterID string) ([]netip.Prefix, error) {
+	rows, err := q.db.Query(ctx, clusterAllocatedCIDRs, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []netip.Prefix
+	for rows.Next() {
+		var cidr netip.Prefix
+		if err := rows.Scan(&cidr); err != nil {
+			return nil, err
+		}
+		items = append(items, cidr)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countGrantWorkspaces = `-- name: CountGrantWorkspaces :one
 SELECT count(*)::int FROM workspaces WHERE cluster_grant_id = $1
 `
@@ -168,6 +194,43 @@ func (q *Queries) CountWorkspaces(ctx context.Context, orgID string) (int32, err
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const createNetworkAllocation = `-- name: CreateNetworkAllocation :one
+INSERT INTO network_allocations (id, workspace_id, cluster_id, pool_id, cidr)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, workspace_id, cluster_id, pool_id, cidr, state, quarantine_until, created_at, updated_at
+`
+
+type CreateNetworkAllocationParams struct {
+	ID          string
+	WorkspaceID string
+	ClusterID   string
+	PoolID      string
+	Cidr        netip.Prefix
+}
+
+func (q *Queries) CreateNetworkAllocation(ctx context.Context, arg CreateNetworkAllocationParams) (NetworkAllocation, error) {
+	row := q.db.QueryRow(ctx, createNetworkAllocation,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.ClusterID,
+		arg.PoolID,
+		arg.Cidr,
+	)
+	var i NetworkAllocation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ClusterID,
+		&i.PoolID,
+		&i.Cidr,
+		&i.State,
+		&i.QuarantineUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const createNodeReservation = `-- name: CreateNodeReservation :exec
@@ -367,6 +430,27 @@ func (q *Queries) DeleteWorkspaceRow(ctx context.Context, id string) error {
 	return err
 }
 
+const deleteWorkspaceRows = `-- name: DeleteWorkspaceRows :exec
+DELETE FROM workspaces WHERE id = ANY($1::text[])
+`
+
+func (q *Queries) DeleteWorkspaceRows(ctx context.Context, ids []string) error {
+	_, err := q.db.Exec(ctx, deleteWorkspaceRows, ids)
+	return err
+}
+
+const firstGrantNetworkPool = `-- name: FirstGrantNetworkPool :one
+SELECT pool_id FROM cluster_grant_network_pools WHERE grant_id = $1 ORDER BY pool_id LIMIT 1
+`
+
+// The network pool a Workspace gets when it names none: the grant's first.
+func (q *Queries) FirstGrantNetworkPool(ctx context.Context, grantID string) (string, error) {
+	row := q.db.QueryRow(ctx, firstGrantNetworkPool, grantID)
+	var pool_id string
+	err := row.Scan(&pool_id)
+	return pool_id, err
+}
+
 const getGrantStorageClasses = `-- name: GetGrantStorageClasses :one
 SELECT allowed_storage_classes FROM organization_cluster_grants WHERE id = $1
 `
@@ -376,6 +460,46 @@ func (q *Queries) GetGrantStorageClasses(ctx context.Context, id string) ([]stri
 	var allowed_storage_classes []string
 	err := row.Scan(&allowed_storage_classes)
 	return allowed_storage_classes, err
+}
+
+const getNetworkAllocation = `-- name: GetNetworkAllocation :one
+SELECT id, workspace_id, cluster_id, pool_id, cidr, state, quarantine_until, created_at, updated_at FROM network_allocations WHERE workspace_id = $1
+`
+
+func (q *Queries) GetNetworkAllocation(ctx context.Context, workspaceID string) (NetworkAllocation, error) {
+	row := q.db.QueryRow(ctx, getNetworkAllocation, workspaceID)
+	var i NetworkAllocation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ClusterID,
+		&i.PoolID,
+		&i.Cidr,
+		&i.State,
+		&i.QuarantineUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getNetworkPool = `-- name: GetNetworkPool :one
+SELECT id, cluster_id, org_id, cidrs, default_prefix_length, allowed_prefix_lengths, created_at FROM network_pools WHERE id = $1
+`
+
+func (q *Queries) GetNetworkPool(ctx context.Context, id string) (NetworkPool, error) {
+	row := q.db.QueryRow(ctx, getNetworkPool, id)
+	var i NetworkPool
+	err := row.Scan(
+		&i.ID,
+		&i.ClusterID,
+		&i.OrgID,
+		&i.Cidrs,
+		&i.DefaultPrefixLength,
+		&i.AllowedPrefixLengths,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const getNodeReservation = `-- name: GetNodeReservation :one
@@ -540,6 +664,22 @@ func (q *Queries) GrantAllocations(ctx context.Context, grantIds []string) ([]Gr
 		return nil, err
 	}
 	return items, nil
+}
+
+const grantHasNetworkPool = `-- name: GrantHasNetworkPool :one
+SELECT EXISTS (SELECT 1 FROM cluster_grant_network_pools WHERE grant_id = $1 AND pool_id = $2)
+`
+
+type GrantHasNetworkPoolParams struct {
+	GrantID string
+	PoolID  string
+}
+
+func (q *Queries) GrantHasNetworkPool(ctx context.Context, arg GrantHasNetworkPoolParams) (bool, error) {
+	row := q.db.QueryRow(ctx, grantHasNetworkPool, arg.GrantID, arg.PoolID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const grantHasSharedPool = `-- name: GrantHasSharedPool :one
@@ -918,6 +1058,17 @@ func (q *Queries) LockWorkspace(ctx context.Context, id string) (Workspace, erro
 	return i, err
 }
 
+const markWorkspaceDeleted = `-- name: MarkWorkspaceDeleted :exec
+UPDATE workspaces SET state = 'Deleted', deleted_at = now(), updated_at = now() WHERE id = $1
+`
+
+// A deleted Workspace whose CIDR waits out its quarantine: out of every
+// sum, its k8s_name still held (02-data-model §4).
+func (q *Queries) MarkWorkspaceDeleted(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, markWorkspaceDeleted, id)
+	return err
+}
+
 const nestedWorkspaceSlug = `-- name: NestedWorkspaceSlug :one
 
 SELECT id, slug FROM workspaces
@@ -947,6 +1098,136 @@ func (q *Queries) NestedWorkspaceSlug(ctx context.Context, arg NestedWorkspaceSl
 	var i NestedWorkspaceSlugRow
 	err := row.Scan(&i.ID, &i.Slug)
 	return i, err
+}
+
+const networkPoolsInUse = `-- name: NetworkPoolsInUse :many
+SELECT DISTINCT a.pool_id FROM network_allocations a JOIN workspaces w ON w.id = a.workspace_id
+WHERE w.cluster_grant_id = $1 AND a.state <> 'Released'
+ORDER BY 1
+`
+
+// Network pools Workspaces of the grant hold a block in (not Released).
+func (q *Queries) NetworkPoolsInUse(ctx context.Context, clusterGrantID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, networkPoolsInUse, clusterGrantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var pool_id string
+		if err := rows.Scan(&pool_id); err != nil {
+			return nil, err
+		}
+		items = append(items, pool_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const orgBlocksInPool = `-- name: OrgBlocksInPool :many
+SELECT w.k8s_name, a.cidr, a.state FROM network_allocations a JOIN workspaces w ON w.id = a.workspace_id
+WHERE a.pool_id = $1 AND w.org_id = $2 AND a.state <> 'Released'
+ORDER BY a.cidr
+`
+
+type OrgBlocksInPoolParams struct {
+	PoolID string
+	OrgID  string
+}
+
+type OrgBlocksInPoolRow struct {
+	K8sName string
+	Cidr    netip.Prefix
+	State   string
+}
+
+// An organization's own address blocks in a pool, not Released.
+func (q *Queries) OrgBlocksInPool(ctx context.Context, arg OrgBlocksInPoolParams) ([]OrgBlocksInPoolRow, error) {
+	rows, err := q.db.Query(ctx, orgBlocksInPool, arg.PoolID, arg.OrgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OrgBlocksInPoolRow
+	for rows.Next() {
+		var i OrgBlocksInPoolRow
+		if err := rows.Scan(&i.K8sName, &i.Cidr, &i.State); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const poolAllocatedCIDRs = `-- name: PoolAllocatedCIDRs :many
+SELECT cidr FROM network_allocations WHERE pool_id = $1 AND state <> 'Released' ORDER BY cidr
+`
+
+func (q *Queries) PoolAllocatedCIDRs(ctx context.Context, poolID string) ([]netip.Prefix, error) {
+	rows, err := q.db.Query(ctx, poolAllocatedCIDRs, poolID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []netip.Prefix
+	for rows.Next() {
+		var cidr netip.Prefix
+		if err := rows.Scan(&cidr); err != nil {
+			return nil, err
+		}
+		items = append(items, cidr)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const releaseQuarantined = `-- name: ReleaseQuarantined :many
+UPDATE network_allocations a SET state = 'Released', quarantine_until = NULL, updated_at = now()
+FROM workspaces w
+WHERE a.workspace_id = w.id AND a.state = 'Quarantined' AND a.quarantine_until <= now()
+RETURNING a.workspace_id, a.cidr, w.org_id, w.k8s_name
+`
+
+type ReleaseQuarantinedRow struct {
+	WorkspaceID string
+	Cidr        netip.Prefix
+	OrgID       string
+	K8sName     string
+}
+
+// Blocks past their quarantine are free again; the Workspaces holding
+// them go for good, with what hangs off them (02-data-model §4).
+func (q *Queries) ReleaseQuarantined(ctx context.Context) ([]ReleaseQuarantinedRow, error) {
+	rows, err := q.db.Query(ctx, releaseQuarantined)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReleaseQuarantinedRow
+	for rows.Next() {
+		var i ReleaseQuarantinedRow
+		if err := rows.Scan(
+			&i.WorkspaceID,
+			&i.Cidr,
+			&i.OrgID,
+			&i.K8sName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const resyncGroupMembers = `-- name: ResyncGroupMembers :execrows
@@ -1010,6 +1291,23 @@ func (q *Queries) RetryWorkspace(ctx context.Context, arg RetryWorkspaceParams) 
 		&i.Cordoned,
 	)
 	return i, err
+}
+
+const setAllocationState = `-- name: SetAllocationState :exec
+UPDATE network_allocations
+SET state = $1, quarantine_until = $2, updated_at = now()
+WHERE workspace_id = $3
+`
+
+type SetAllocationStateParams struct {
+	State           string
+	QuarantineUntil *time.Time
+	WorkspaceID     string
+}
+
+func (q *Queries) SetAllocationState(ctx context.Context, arg SetAllocationStateParams) error {
+	_, err := q.db.Exec(ctx, setAllocationState, arg.State, arg.QuarantineUntil, arg.WorkspaceID)
+	return err
 }
 
 const setNamespaceState = `-- name: SetNamespaceState :one

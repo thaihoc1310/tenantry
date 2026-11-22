@@ -97,6 +97,12 @@ func BuildCR(ctx context.Context, q *store.Queries, ws store.Workspace) (*v1.Pla
 	if ws.SharedPoolID != nil {
 		cr.Spec.Compute.SharedPoolID = *ws.SharedPoolID
 	}
+	// Workspaces created before network allocations (M6–M8) have none.
+	if a, err := q.GetNetworkAllocation(ctx, ws.ID); err == nil {
+		cr.Spec.Network = &v1.Network{AllocationRef: a.ID, CIDR: a.Cidr.String()}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
 	if ws.ComputeMode == ComputeDedicated {
 		r, err := q.GetNodeReservation(ctx, ws.ID)
 		if err != nil {

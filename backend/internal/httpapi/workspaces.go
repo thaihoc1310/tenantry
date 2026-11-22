@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 
+	"github.com/thaihoc1310/tenantry/backend/internal/apperr"
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi/oapi"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
 	"github.com/thaihoc1310/tenantry/backend/internal/workspace"
@@ -37,6 +39,21 @@ func (s server) CreateWorkspace(ctx context.Context, req oapi.CreateWorkspaceReq
 	}
 	if b.Compute.DedicatedNodeGrantId != nil {
 		n.NodeGrantID = *b.Compute.DedicatedNodeGrantId
+	}
+	if net := b.Network; net != nil {
+		if net.NetworkPoolId != nil {
+			n.Network.PoolID = *net.NetworkPoolId
+		}
+		if net.PrefixLength != nil {
+			n.Network.PrefixLength = int32(*net.PrefixLength)
+		}
+		if net.RequestedCidr != nil {
+			p, err := netip.ParsePrefix(*net.RequestedCidr)
+			if err != nil || !p.Addr().Is4() {
+				return nil, apperr.Invalid("network.requestedCidr", "is not an IPv4 CIDR such as 10.240.12.0/24")
+			}
+			n.Network.RequestedCIDR = &p
+		}
 	}
 	var err error
 	if n.Resources, err = toWorkspaceResources(b.Resources); err != nil {
@@ -108,8 +125,15 @@ func (s server) toWorkspace(ctx context.Context, ws store.Workspace) (oapi.Works
 		return w, err
 	}
 	g, err := s.workspaces.NodeGrantOf(ctx, ws)
+	if err != nil {
+		return w, err
+	}
 	if g != "" {
 		w.Compute.DedicatedNodeGrantId = &g
+	}
+	a, err := s.workspaces.AllocationOf(ctx, ws)
+	if a != nil {
+		w.Network = &oapi.WorkspaceNetwork{NetworkPoolId: a.PoolID, Cidr: a.Cidr.String(), State: oapi.WorkspaceNetworkState(a.State)}
 	}
 	return w, err
 }
@@ -366,4 +390,23 @@ func (s server) ListWorkspaceOperations(ctx context.Context, req oapi.ListWorksp
 		out.NextCursor = &p.NextCursor
 	}
 	return oapi.ListWorkspaceOperations200JSONResponse(out), nil
+}
+
+func (s server) GetNetworkPoolAvailability(ctx context.Context, req oapi.GetNetworkPoolAvailabilityRequestObject) (oapi.GetNetworkPoolAvailabilityResponseObject, error) {
+	a, err := s.orgs.NetworkPoolAvailability(ctx, userID(ctx), req.OrgId, string(req.PoolId))
+	if err != nil {
+		return nil, err
+	}
+	out := oapi.NetworkPoolAvailability{Id: a.Pool.ID, DefaultPrefixLength: int(a.Pool.DefaultPrefixLength),
+		Cidrs: make([]string, len(a.Pool.Cidrs)), Blocks: make([]oapi.NetworkBlock, len(a.Blocks))}
+	for i, c := range a.Pool.Cidrs {
+		out.Cidrs[i] = c.String()
+	}
+	for _, l := range a.Pool.AllowedPrefixLengths {
+		out.Free = append(out.Free, oapi.FreeBlocks{PrefixLength: int(l), Blocks: a.Free[l]})
+	}
+	for i, b := range a.Blocks {
+		out.Blocks[i] = oapi.NetworkBlock{Workspace: b.K8sName, Cidr: b.Cidr.String(), State: oapi.NetworkBlockState(b.State)}
+	}
+	return oapi.GetNetworkPoolAvailability200JSONResponse(out), nil
 }

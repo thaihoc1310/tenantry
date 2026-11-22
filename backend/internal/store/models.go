@@ -134,6 +134,18 @@ type Invitation struct {
 	UpdatedAt  time.Time
 }
 
+type NetworkAllocation struct {
+	ID              string
+	WorkspaceID     string
+	ClusterID       string
+	PoolID          string
+	Cidr            netip.Prefix
+	State           string
+	QuarantineUntil *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
 type NetworkPool struct {
 	ID                   string
 	ClusterID            string

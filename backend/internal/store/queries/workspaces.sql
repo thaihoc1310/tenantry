@@ -250,3 +250,61 @@ SELECT EXISTS (
     SELECT 1 FROM workspace_node_reservations r JOIN dedicated_node_grants g ON g.id = r.node_grant_id
     WHERE r.workspace_id = $1 AND g.capacity_state = 'Overcommitted'
 );
+
+-- name: GrantHasNetworkPool :one
+SELECT EXISTS (SELECT 1 FROM cluster_grant_network_pools WHERE grant_id = $1 AND pool_id = $2);
+
+-- name: FirstGrantNetworkPool :one
+-- The network pool a Workspace gets when it names none: the grant's first.
+SELECT pool_id FROM cluster_grant_network_pools WHERE grant_id = $1 ORDER BY pool_id LIMIT 1;
+
+-- name: ClusterAllocatedCIDRs :many
+-- Every block of the cluster not Released, whoever holds it: taken.
+SELECT cidr FROM network_allocations WHERE cluster_id = $1 AND state <> 'Released';
+
+-- name: CreateNetworkAllocation :one
+INSERT INTO network_allocations (id, workspace_id, cluster_id, pool_id, cidr)
+VALUES (@id, @workspace_id, @cluster_id, @pool_id, @cidr)
+RETURNING *;
+
+-- name: GetNetworkAllocation :one
+SELECT * FROM network_allocations WHERE workspace_id = $1;
+
+-- name: SetAllocationState :exec
+UPDATE network_allocations
+SET state = @state, quarantine_until = sqlc.narg(quarantine_until), updated_at = now()
+WHERE workspace_id = @workspace_id;
+
+-- name: MarkWorkspaceDeleted :exec
+-- A deleted Workspace whose CIDR waits out its quarantine: out of every
+-- sum, its k8s_name still held (02-data-model §4).
+UPDATE workspaces SET state = 'Deleted', deleted_at = now(), updated_at = now() WHERE id = $1;
+
+-- name: ReleaseQuarantined :many
+-- Blocks past their quarantine are free again; the Workspaces holding
+-- them go for good, with what hangs off them (02-data-model §4).
+UPDATE network_allocations a SET state = 'Released', quarantine_until = NULL, updated_at = now()
+FROM workspaces w
+WHERE a.workspace_id = w.id AND a.state = 'Quarantined' AND a.quarantine_until <= now()
+RETURNING a.workspace_id, a.cidr, w.org_id, w.k8s_name;
+
+-- name: DeleteWorkspaceRows :exec
+DELETE FROM workspaces WHERE id = ANY(@ids::text[]);
+
+-- name: NetworkPoolsInUse :many
+-- Network pools Workspaces of the grant hold a block in (not Released).
+SELECT DISTINCT a.pool_id FROM network_allocations a JOIN workspaces w ON w.id = a.workspace_id
+WHERE w.cluster_grant_id = $1 AND a.state <> 'Released'
+ORDER BY 1;
+
+-- name: PoolAllocatedCIDRs :many
+SELECT cidr FROM network_allocations WHERE pool_id = $1 AND state <> 'Released' ORDER BY cidr;
+
+-- name: OrgBlocksInPool :many
+-- An organization's own address blocks in a pool, not Released.
+SELECT w.k8s_name, a.cidr, a.state FROM network_allocations a JOIN workspaces w ON w.id = a.workspace_id
+WHERE a.pool_id = @pool_id AND w.org_id = @org_id AND a.state <> 'Released'
+ORDER BY a.cidr;
+
+-- name: GetNetworkPool :one
+SELECT * FROM network_pools WHERE id = $1;

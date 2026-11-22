@@ -19,6 +19,8 @@ const workspaceSeed = `
 		requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes)
 		VALUES ('grant-1', 'org-01', 'cluster-a', true, 5, 10, 4000, 8589934592, 8000, 17179869184, 50, 21474836480);
 	INSERT INTO cluster_grant_shared_pools (grant_id, pool_id) VALUES ('grant-1', 'shared-general');
+	INSERT INTO network_pools (id, cluster_id, cidrs, default_prefix_length, allowed_prefix_lengths) VALUES ('pods', 'cluster-a', '{10.240.0.0/18}', 24, '{24}');
+	INSERT INTO cluster_grant_network_pools (grant_id, pool_id) VALUES ('grant-1', 'pods');
 	INSERT INTO cluster_nodes (cluster_id, node_name, kind, ready, schedulable, allocatable_cpu_milli, allocatable_memory_bytes, allocatable_pods, shared_pool_id)
 		VALUES ('cluster-a', 'wk1', 'Worker', true, true, 4000, 8589934592, 110, 'shared-general');`
 

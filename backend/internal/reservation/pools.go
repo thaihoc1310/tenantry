@@ -464,9 +464,8 @@ type NetworkPoolPatch struct {
 // UpdateNetworkPool changes a pool's ranges or prefix lengths: a range added
 // is checked like a new pool's, and only the database changes (the CIDR is
 // handed out by the API, M9).
-//
-// ponytail: refusing to drop a range, or a prefix length, that a Workspace's
-// CIDR uses comes with the allocations (M9).
+// Its ranges keep every block Workspaces hold in it (CONFLICT otherwise);
+// prefix lengths only bind blocks given from now on.
 func (s *Service) UpdateNetworkPool(ctx context.Context, adminID, clusterID, poolID string, p NetworkPoolPatch) (store.NetworkPool, error) {
 	var out store.NetworkPool
 	err := store.InTx(ctx, s.db, func(tx pgx.Tx) error {
@@ -504,6 +503,16 @@ func (s *Service) UpdateNetworkPool(ctx context.Context, adminID, clusterID, poo
 		}
 		if err := next.checkPrefixes(); err != nil {
 			return err
+		}
+		held, err := q.PoolAllocatedCIDRs(ctx, poolID)
+		if err != nil {
+			return err
+		}
+		for _, b := range held {
+			if !Within(b, next.CIDRs) {
+				return &apperr.Error{Code: apperr.Conflict,
+					Message: fmt.Sprintf("a Workspace holds %s, outside the new ranges", b), Details: map[string]any{"field": "cidrs", "cidr": b.String()}}
+			}
 		}
 		if out, err = q.UpdateNetworkPool(ctx, store.UpdateNetworkPoolParams{
 			ID: poolID, Cidrs: next.CIDRs, DefaultPrefixLength: next.DefaultPrefix, AllowedPrefixLengths: next.AllowedPrefixs,

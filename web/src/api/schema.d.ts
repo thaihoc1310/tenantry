@@ -293,6 +293,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{orgId}/network-pools/{poolId}/availability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+                poolId: components["parameters"]["poolId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * What is left in a network pool of the organization's grants, and its own blocks (OrgOwner or OrgAdmin)
+         * @description Free blocks are counted at each allowed prefix length; the blocks of
+         *     other organizations are never shown, only that they are taken
+         *     (architecture/04 §4).
+         */
+        get: operations["getNetworkPoolAvailability"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations/{orgId}/invitations": {
         parameters: {
             query?: never;
@@ -1551,7 +1580,7 @@ export interface components {
          * @description Stable error codes the UI switches on (IMPLEMENTATION-PLAN §3.3). Grows with the endpoints.
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "METHOD_NOT_ALLOWED" | "IDEMPOTENCY_KEY_REUSED" | "RATE_LIMITED" | "SLUG_TAKEN" | "ORG_REQUEST_PENDING" | "CLUSTER_NOT_READY" | "ORG_NOT_ACTIVE" | "ENTITLEMENT_EXCEEDED" | "INVITATION_INVALID" | "INVITATION_EMAIL_MISMATCH" | "TRANSFER_NOT_ALLOWED" | "RECIPIENT_NOT_ORG_ADMIN" | "TRANSFER_INVALID" | "LEAVE_NOT_ALLOWED" | "OWNER_USER_NOT_FOUND" | "ENTITLEMENT_BELOW_USAGE" | "CIDR_OVERLAP" | "CLUSTER_NOT_GRANTED" | "LAST_OWNER_BINDING" | "GROUP_SYNC_PENDING" | "WORKSPACE_NOT_READY" | "CLUSTER_GRANT_QUOTA_EXCEEDED" | "CLUSTER_GRANT_BELOW_ALLOCATION" | "WORKSPACE_QUOTA_BELOW_USAGE" | "ORGANIZATION_NOT_EMPTY" | "COMPUTE_POOL_CAPACITY_EXCEEDED" | "DEDICATED_NODE_NOT_GRANTED" | "DEDICATED_NODE_NOT_READY" | "DEDICATED_NODE_INSUFFICIENT_CAPACITY" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "METHOD_NOT_ALLOWED" | "IDEMPOTENCY_KEY_REUSED" | "RATE_LIMITED" | "SLUG_TAKEN" | "ORG_REQUEST_PENDING" | "CLUSTER_NOT_READY" | "ORG_NOT_ACTIVE" | "ENTITLEMENT_EXCEEDED" | "INVITATION_INVALID" | "INVITATION_EMAIL_MISMATCH" | "TRANSFER_NOT_ALLOWED" | "RECIPIENT_NOT_ORG_ADMIN" | "TRANSFER_INVALID" | "LEAVE_NOT_ALLOWED" | "OWNER_USER_NOT_FOUND" | "ENTITLEMENT_BELOW_USAGE" | "CIDR_OVERLAP" | "CLUSTER_NOT_GRANTED" | "LAST_OWNER_BINDING" | "GROUP_SYNC_PENDING" | "WORKSPACE_NOT_READY" | "CLUSTER_GRANT_QUOTA_EXCEEDED" | "CLUSTER_GRANT_BELOW_ALLOCATION" | "WORKSPACE_QUOTA_BELOW_USAGE" | "ORGANIZATION_NOT_EMPTY" | "COMPUTE_POOL_CAPACITY_EXCEEDED" | "DEDICATED_NODE_NOT_GRANTED" | "DEDICATED_NODE_NOT_READY" | "DEDICATED_NODE_INSUFFICIENT_CAPACITY" | "CIDR_OUTSIDE_ALLOWED_POOL" | "NETWORK_POOL_EXHAUSTED" | "INTERNAL";
         ErrorResponse: {
             code: components["schemas"]["ErrorCode"];
             message: string;
@@ -1720,6 +1749,7 @@ export interface components {
             resources: components["schemas"]["WorkspaceResources"];
             /** @description Namespaces to create with the Workspace, as suffixes; they count against `namespaceQuota`. */
             namespaces?: components["schemas"]["NamespaceSuffix"][];
+            network?: components["schemas"]["WorkspaceNetworkInput"];
             /** @description Groups of the organization and their role; at least one TenantOwner, each group once. */
             bindings: components["schemas"]["WorkspaceBindingInput"][];
         };
@@ -1787,6 +1817,22 @@ export interface components {
             namespace: components["schemas"]["WorkspaceNamespace"];
             operation: components["schemas"]["Operation"];
         };
+        /**
+         * @description The Workspace's Pod address block (PRODUCT-PLAN §7.2). Left out: the
+         *     grant's first network pool, its default prefix length, the first
+         *     free block. `requestedCidr` (advanced) must be a free block of the pool.
+         */
+        WorkspaceNetworkInput: {
+            networkPoolId?: components["schemas"]["PoolId"];
+            prefixLength?: number;
+            requestedCidr?: string;
+        };
+        WorkspaceNetwork: {
+            networkPoolId: string;
+            cidr: string;
+            /** @enum {string} */
+            state: "Allocated" | "Releasing" | "Quarantined";
+        };
         WorkspaceCondition: {
             /** @description e.g. CapsuleTenantReady (architecture/04 §1.2) */
             type: string;
@@ -1808,6 +1854,8 @@ export interface components {
             state: components["schemas"]["WorkspaceState"];
             resources: components["schemas"]["WorkspaceResources"];
             compute: components["schemas"]["WorkspaceCompute"];
+            /** @description Absent on a Workspace created before network allocations */
+            network?: components["schemas"]["WorkspaceNetwork"];
             /** @description As the controller last reported them; empty until it has. */
             conditions: components["schemas"]["WorkspaceCondition"][];
             /** Format: date-time */
@@ -2129,6 +2177,26 @@ export interface components {
             allowedPrefixLengths: number[];
             /** @description Any organization's grant may list it; false: the organization's own */
             shared: boolean;
+        };
+        NetworkPoolAvailability: {
+            id: string;
+            cidrs: string[];
+            defaultPrefixLength: number;
+            /** @description Free blocks at each allowed prefix length */
+            free: components["schemas"]["FreeBlocks"][];
+            /** @description The organization's own blocks in the pool */
+            blocks: components["schemas"]["NetworkBlock"][];
+        };
+        FreeBlocks: {
+            prefixLength: number;
+            blocks: number;
+        };
+        NetworkBlock: {
+            /** @description The Workspace's k8s name */
+            workspace: string;
+            cidr: string;
+            /** @enum {string} */
+            state: "Allocated" | "Releasing" | "Quarantined";
         };
         OrgNetworkPoolList: {
             items: components["schemas"]["OrgNetworkPool"][];
@@ -2898,6 +2966,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrgNetworkPoolList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description The organization is not Active (`ORG_NOT_ACTIVE`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getNetworkPoolAvailability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+                poolId: components["parameters"]["poolId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkPoolAvailability"];
                 };
             };
             401: components["responses"]["Error"];

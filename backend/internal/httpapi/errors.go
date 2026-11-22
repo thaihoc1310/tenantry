@@ -51,6 +51,8 @@ var statusOf = map[apperr.Code]int{
 	apperr.DedicatedNodeNotGranted:           http.StatusConflict,
 	apperr.DedicatedNodeNotReady:             http.StatusConflict,
 	apperr.DedicatedNodeInsufficientCapacity: http.StatusConflict,
+	apperr.CIDROutsideAllowedPool:            http.StatusConflict,
+	apperr.NetworkPoolExhausted:              http.StatusConflict,
 }
 
 // writeError answers with an ErrorResponse.

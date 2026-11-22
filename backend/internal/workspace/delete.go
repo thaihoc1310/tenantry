@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -41,8 +42,11 @@ func (s *Service) Delete(ctx context.Context, userID, wsID, confirm, correlation
 		if ws, err = q.SetWorkspaceState(ctx, store.SetWorkspaceStateParams{ID: ws.ID, State: StateDeleting}); err != nil {
 			return err
 		}
-		// Still held, and counted, until the cluster is clean (04 §3).
+		// Still held, and counted, until the cluster is clean (04 §3, §4).
 		if err := q.SetReservationState(ctx, store.SetReservationStateParams{WorkspaceID: ws.ID, State: "Releasing"}); err != nil {
+			return err
+		}
+		if err := q.SetAllocationState(ctx, store.SetAllocationStateParams{WorkspaceID: ws.ID, State: "Releasing"}); err != nil {
 			return err
 		}
 		op, err := newOperation(ctx, q, ws, "workspace.delete", userID, correlationID)
@@ -63,12 +67,16 @@ func (s *Service) Delete(ctx context.Context, userID, wsID, confirm, correlation
 	return out, err
 }
 
+// Quarantine is how long a deleted Workspace's address block, and its
+// k8s_name, stay unused (04-state-machines §4).
+const Quarantine = 10 * time.Minute
+
 // Release finishes a delete once the CR is gone (IMPLEMENTATION-PLAN §3.2):
-// in one transaction the operation succeeds and the Workspace is Deleted,
-// which takes it out of every sum. Before network allocations (M9) nothing
-// waits for a quarantine, so the row goes at once and its bindings,
-// Namespaces and slug with it; the members of the groups it bound are
-// counted again for tenantry:tenant-users first.
+// in one transaction the operation succeeds, the node reservation is
+// Released and the Workspace Deleted, out of every sum; its block goes into
+// quarantine, and housekeeping deletes the row after (ReleaseQuarantined).
+// The members of the groups it bound are counted again for
+// tenantry:tenant-users first.
 func Release(ctx context.Context, q *store.Queries, ws store.Workspace, opID string) error {
 	groups, err := q.BoundGroupIDs(ctx, ws.ID)
 	if err != nil {
@@ -93,10 +101,27 @@ func Release(ctx context.Context, q *store.Queries, ws store.Workspace, opID str
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	// ponytail: deleted at once while Workspaces have no CIDR; from M9 the
-	// row stays Deleted until its CIDR leaves quarantine (housekeeping).
-	// Its node reservation goes with it: the node has the room back.
-	if err := q.DeleteWorkspaceRow(ctx, ws.ID); err != nil {
+	_, err = q.GetNetworkAllocation(ctx, ws.ID)
+	quarantine := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if quarantine {
+		// The block waits out its quarantine, and the row with it, so the
+		// k8s_name is not taken again meanwhile; out of every sum already.
+		until := time.Now().Add(Quarantine)
+		if err := q.SetAllocationState(ctx, store.SetAllocationStateParams{WorkspaceID: ws.ID, State: "Quarantined", QuarantineUntil: &until}); err != nil {
+			return err
+		}
+		if err := q.MarkWorkspaceDeleted(ctx, ws.ID); err != nil {
+			return err
+		}
+		if err := q.SetReservationState(ctx, store.SetReservationStateParams{WorkspaceID: ws.ID, State: "Released"}); err != nil {
+			return err
+		}
+	} else if err := q.DeleteWorkspaceRow(ctx, ws.ID); err != nil {
+		// A Workspace from before network allocations (M6–M8) goes at once,
+		// its node reservation with it.
 		return err
 	}
 	if dedicated {

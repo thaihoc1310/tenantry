@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -68,10 +69,19 @@ type New struct {
 	ComputeMode   string
 	SharedPoolID  string // Shared
 	NodeGrantID   string // Dedicated: the organization's node grant
+	Network       Network
 	Resources     Resources
 	Namespaces    []string // suffixes
 	Bindings      []Binding
 	CorrelationID string // request id
+}
+
+// Network is how a Workspace's address block is chosen (PRODUCT-PLAN §7.2):
+// all zero takes the grant's first pool, its default prefix, the first free block.
+type Network struct {
+	PoolID        string
+	PrefixLength  int32
+	RequestedCIDR *netip.Prefix
 }
 
 // Created is a new Workspace and the operation provisioning it.
@@ -177,6 +187,13 @@ func (s *Service) Create(ctx context.Context, userID, orgIDOrSlug string, n New)
 			}
 		}
 
+		// The address block, under the network pool's lock: the last lock
+		// before the groups (02-data-model §4).
+		block, netPool, err := pickBlock(ctx, q, grant.ID, cluster, n.Network)
+		if err != nil {
+			return err
+		}
+
 		groupIDs, err := s.lockBoundGroups(ctx, q, o.ID, n.Bindings)
 		if err != nil {
 			return err
@@ -207,6 +224,14 @@ func (s *Service) Create(ctx context.Context, userID, orgIDOrSlug string, n New)
 			if err := reservation.RefreshNodeCapacity(ctx, q, nodeGrant.ID); err != nil {
 				return err
 			}
+		}
+		if _, err := q.CreateNetworkAllocation(ctx, store.CreateNetworkAllocationParams{
+			ID: id.New(id.NetworkAllocation), WorkspaceID: ws.ID, ClusterID: ws.ClusterID, PoolID: netPool, Cidr: block,
+		}); err != nil {
+			if store.ExclusionViolation(err) {
+				return reservation.ErrCIDROverlap(block)
+			}
+			return err
 		}
 		for _, b := range n.Bindings {
 			if err := q.CreateWorkspaceBinding(ctx, store.CreateWorkspaceBindingParams{
@@ -388,4 +413,35 @@ func bindingDetail(bs []Binding) []map[string]string {
 		out[i] = map[string]string{"groupId": b.GroupID, "role": string(b.Role)}
 	}
 	return out
+}
+
+// pickBlock locks the network pool the Workspace takes its block from, in
+// the grant, and chooses the block.
+func pickBlock(ctx context.Context, q *store.Queries, grantID string, cluster store.Cluster, n Network) (netip.Prefix, string, error) {
+	poolID := n.PoolID
+	if poolID == "" {
+		p, err := q.FirstGrantNetworkPool(ctx, grantID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			// The API never makes such a grant; one written by hand may be.
+			return netip.Prefix{}, "", apperr.Invalid("network.networkPoolId", "the organization's grant on this cluster lists no network pool")
+		}
+		if err != nil {
+			return netip.Prefix{}, "", err
+		}
+		poolID = p
+	} else if ok, err := q.GrantHasNetworkPool(ctx, store.GrantHasNetworkPoolParams{GrantID: grantID, PoolID: poolID}); err != nil {
+		return netip.Prefix{}, "", err
+	} else if !ok {
+		return netip.Prefix{}, "", apperr.Invalid("network.networkPoolId", "is not a network pool of the organization's grant on this cluster")
+	}
+	pool, err := q.LockNetworkPool(ctx, poolID)
+	if err != nil {
+		return netip.Prefix{}, "", err
+	}
+	taken, err := q.ClusterAllocatedCIDRs(ctx, cluster.ID)
+	if err != nil {
+		return netip.Prefix{}, "", err
+	}
+	block, err := reservation.Block(pool, n.PrefixLength, n.RequestedCIDR, taken, cluster.ReservedCidrs)
+	return block, poolID, err
 }

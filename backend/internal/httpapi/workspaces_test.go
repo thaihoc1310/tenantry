@@ -1085,3 +1085,100 @@ func TestDedicatedWorkspaces(t *testing.T) {
 		t.Fatal("a smaller reservation before the cluster has it")
 	}
 }
+
+// Workspaces get a block of onboarding-pod-network (10.240.0.0/18, /24s):
+// the first free one, or one asked for that lies in the pool and overlaps
+// nothing; the pool stays in the grant and keeps its ranges while blocks
+// are held (PRODUCT-PLAN §7).
+func TestNetworkAllocation(t *testing.T) {
+	h, db, orgID, owner, admins, devs := workspaceOrg(t)
+	ctx := context.Background()
+	for _, q := range []string{
+		`UPDATE organization_cluster_grants SET max_workspaces = 5, requests_cpu_milli = 8000, limits_cpu_milli = 8000 WHERE org_id = '` + orgID + `'`,
+		`UPDATE organization_entitlements SET max_workspaces_total = 5 WHERE org_id = '` + orgID + `'`,
+	} {
+		if _, err := db.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	small := `"resources":{"requestsCpu":"100m","requestsMemory":"128Mi","limitsCpu":"100m","limitsMemory":"128Mi","pods":1,"requestsStorage":"1Gi","namespaceQuota":1},"namespaces":[]`
+	body := func(slug, network string) string {
+		extra := small
+		if network != "" {
+			extra += `,"network":` + network
+		}
+		return workspaceBody(slug, admins, devs, extra)
+	}
+	rec := createWorkspace(h, owner, "zeta", body("solar", ""))
+	var c oapi.WorkspaceAccepted
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &c) != nil || c.Workspace.Network == nil ||
+		c.Workspace.Network.Cidr != "10.240.0.0/24" || c.Workspace.Network.NetworkPoolId != "onboarding-pod-network" {
+		t.Fatalf("auto block: %d %s", rec.Code, rec.Body)
+	}
+	var network string
+	if err := db.QueryRow(ctx, `SELECT payload->'spec'->>'network' FROM outbox_events WHERE operation_id = $1`, c.Operation.Id).Scan(&network); err != nil ||
+		!strings.Contains(network, `"cidr": "10.240.0.0/24"`) || !strings.Contains(network, `"allocationRef": "netalloc-`) {
+		t.Fatalf("CR network %s (%v)", network, err)
+	}
+	for name, cs := range map[string]struct {
+		network string
+		status  int
+		code    oapi.ErrorCode
+	}{
+		"a block in use":        {`{"requestedCidr":"10.240.0.0/24"}`, 409, oapi.CIDROVERLAP},
+		"outside the pool":      {`{"requestedCidr":"10.250.0.0/24"}`, 409, oapi.CIDROUTSIDEALLOWEDPOOL},
+		"a length not allowed":  {`{"prefixLength":26}`, 400, oapi.VALIDATIONFAILED},
+		"not a network address": {`{"requestedCidr":"10.240.5.7/24"}`, 400, oapi.VALIDATIONFAILED},
+		"a pool not granted":    {`{"networkPoolId":"acme-net"}`, 400, oapi.VALIDATIONFAILED},
+	} {
+		if rec := createWorkspace(h, owner, "zeta", body("wind", cs.network)); rec.Code != cs.status || errorBody(t, rec).Code != cs.code {
+			t.Errorf("%s: %d %s", name, rec.Code, rec.Body)
+		}
+	}
+	// Two creates asking the same block: one gets it.
+	codes := make(chan int, 2)
+	var wg sync.WaitGroup
+	for _, slug := range []string{"wind", "fire"} {
+		wg.Go(func() {
+			codes <- createWorkspace(h, owner, "zeta", body(slug, `{"requestedCidr":"10.240.5.0/24"}`)).Code
+		})
+	}
+	wg.Wait()
+	close(codes)
+	var got []int
+	for code := range codes {
+		got = append(got, code)
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, []int{202, 409}) {
+		t.Fatalf("two creates for 10.240.5.0/24: %v", got)
+	}
+
+	rec = asAdmin(h, owner, http.MethodGet, "/api/v1/organizations/zeta/network-pools/onboarding-pod-network/availability", "", "")
+	var a oapi.NetworkPoolAvailability
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &a) != nil || len(a.Free) != 1 || a.Free[0].Blocks != 62 || len(a.Blocks) != 2 {
+		t.Fatalf("availability: %d %s", rec.Code, rec.Body)
+	}
+	if rec := asAdmin(h, sessionOf("usr-bob"), http.MethodGet, "/api/v1/organizations/zeta/network-pools/onboarding-pod-network/availability", "", ""); rec.Code != 403 {
+		t.Fatalf("OrgMember reads availability: %d", rec.Code)
+	}
+	if rec := asAdmin(h, owner, http.MethodGet, "/api/v1/organizations/zeta/network-pools/net-b/availability", "", ""); rec.Code != 404 {
+		t.Fatalf("a pool not granted: %d", rec.Code)
+	}
+
+	admin := newSession(t, db, "usr-alice", "platform-admin")
+	if _, err := db.Exec(ctx, `INSERT INTO network_pools (id, cluster_id, cidrs, default_prefix_length, allowed_prefix_lengths)
+		VALUES ('second-net', 'cluster-a', '{10.242.0.0/16}', 24, '{24}')`); err != nil {
+		t.Fatal(err)
+	}
+	rec = asAdmin(h, admin, http.MethodPut, "/api/v1/admin/organizations/"+orgID+"/cluster-grants/cluster-a", "", `{"clusterId":"cluster-a","maxWorkspaces":5,"maxNamespacesTotal":6,
+"resources":{"requestsCpu":"8","requestsMemory":"4Gi","limitsCpu":"8","limitsMemory":"8Gi","pods":20,"requestsStorage":"20Gi"},
+"sharedPoolIds":["shared-general"],"networkPoolIds":["second-net"],"allowedStorageClasses":["standard"]}`)
+	if rec.Code != 409 || (*errorBody(t, rec).Details)["networkPoolId"] != "onboarding-pod-network" {
+		t.Fatalf("take away a pool in use: %d %s", rec.Code, rec.Body)
+	}
+	rec = asAdmin(h, admin, http.MethodPatch, "/api/v1/admin/clusters/cluster-a/network-pools/onboarding-pod-network", "", `{"cidrs":["10.240.32.0/19"]}`)
+	if rec.Code != 409 || (*errorBody(t, rec).Details)["cidr"] != "10.240.0.0/24" {
+		t.Fatalf("shrink a pool under its blocks: %d %s", rec.Code, rec.Body)
+	}
+}

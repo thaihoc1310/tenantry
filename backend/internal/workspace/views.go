@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jackc/pgx/v5"
 
@@ -73,4 +74,19 @@ func (s *Service) NodeGrantOf(ctx context.Context, ws store.Workspace) (string, 
 		return err
 	})
 	return grant, err
+}
+
+// AllocationOf is a Workspace's address block; nil for a Workspace from
+// before network allocations.
+func (s *Service) AllocationOf(ctx context.Context, ws store.Workspace) (*store.NetworkAllocation, error) {
+	var out *store.NetworkAllocation
+	err := store.InTx(ctx, s.db, func(tx pgx.Tx) error {
+		a, err := s.q.WithTx(tx).GetNetworkAllocation(ctx, ws.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		out = &a
+		return err
+	})
+	return out, err
 }

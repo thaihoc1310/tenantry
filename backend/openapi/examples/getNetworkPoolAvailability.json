@@ -1,0 +1,29 @@
+{
+  "responses": {
+    "200": {
+      "id": "onboarding-pod-network",
+      "cidrs": [
+        "10.240.0.0/18"
+      ],
+      "defaultPrefixLength": 24,
+      "free": [
+        {
+          "prefixLength": 24,
+          "blocks": 61
+        }
+      ],
+      "blocks": [
+        {
+          "workspace": "acme-solar",
+          "cidr": "10.240.0.0/24",
+          "state": "Allocated"
+        },
+        {
+          "workspace": "acme-water",
+          "cidr": "10.240.1.0/24",
+          "state": "Quarantined"
+        }
+      ]
+    }
+  }
+}

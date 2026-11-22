@@ -128,6 +128,14 @@ export const errorText: Record<ErrorCode | 'NETWORK', Text> = {
     en: 'The dedicated node has not enough room left for this.',
     vi: 'Node dedicated không còn đủ chỗ cho yêu cầu này.',
   },
+  CIDR_OUTSIDE_ALLOWED_POOL: {
+    en: 'This address block is outside the network pool.',
+    vi: 'Dải địa chỉ này nằm ngoài network pool.',
+  },
+  NETWORK_POOL_EXHAUSTED: {
+    en: 'The network pool has no free address block of this size. Ask a Platform Admin.',
+    vi: 'Network pool không còn dải địa chỉ trống cỡ này. Hãy hỏi Platform Admin.',
+  },
   INTERNAL: {
     en: 'Something went wrong on our side. Your data is safe; try again in a moment.',
     vi: 'Hệ thống gặp lỗi. Dữ liệu của bạn vẫn an toàn; thử lại sau ít phút.',

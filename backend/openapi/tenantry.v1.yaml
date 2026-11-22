@@ -342,6 +342,32 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
 
+  /organizations/{orgId}/network-pools/{poolId}/availability:
+    parameters:
+      - $ref: "#/components/parameters/orgId"
+      - $ref: "#/components/parameters/poolId"
+    get:
+      operationId: getNetworkPoolAvailability
+      summary: What is left in a network pool of the organization's grants, and its own blocks (OrgOwner or OrgAdmin)
+      description: |
+        Free blocks are counted at each allowed prefix length; the blocks of
+        other organizations are never shown, only that they are taken
+        (architecture/04 §4).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NetworkPoolAvailability" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: The organization is not Active (`ORG_NOT_ACTIVE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
   /organizations/{orgId}/invitations:
     parameters:
       - $ref: "#/components/parameters/orgId"
@@ -2235,6 +2261,8 @@ components:
         - DEDICATED_NODE_NOT_GRANTED
         - DEDICATED_NODE_NOT_READY
         - DEDICATED_NODE_INSUFFICIENT_CAPACITY
+        - CIDR_OUTSIDE_ALLOWED_POOL
+        - NETWORK_POOL_EXHAUSTED
         - INTERNAL
 
     ErrorResponse:
@@ -2461,6 +2489,7 @@ components:
           maxItems: 100
           uniqueItems: true
           items: { $ref: "#/components/schemas/NamespaceSuffix" }
+        network: { $ref: "#/components/schemas/WorkspaceNetworkInput" }
         bindings:
           type: array
           description: Groups of the organization and their role; at least one TenantOwner, each group once.
@@ -2575,6 +2604,26 @@ components:
         namespace: { $ref: "#/components/schemas/WorkspaceNamespace" }
         operation: { $ref: "#/components/schemas/Operation" }
 
+    WorkspaceNetworkInput:
+      type: object
+      description: |
+        The Workspace's Pod address block (PRODUCT-PLAN §7.2). Left out: the
+        grant's first network pool, its default prefix length, the first
+        free block. `requestedCidr` (advanced) must be a free block of the pool.
+      additionalProperties: false
+      properties:
+        networkPoolId: { $ref: "#/components/schemas/PoolId" }
+        prefixLength: { type: integer, minimum: 16, maximum: 28 }
+        requestedCidr: { type: string, maxLength: 18 }
+
+    WorkspaceNetwork:
+      type: object
+      required: [networkPoolId, cidr, state]
+      properties:
+        networkPoolId: { type: string }
+        cidr: { type: string }
+        state: { type: string, enum: [Allocated, Releasing, Quarantined] }
+
     WorkspaceCondition:
       type: object
       required: [type, status, reason, message]
@@ -2598,6 +2647,9 @@ components:
         state: { $ref: "#/components/schemas/WorkspaceState" }
         resources: { $ref: "#/components/schemas/WorkspaceResources" }
         compute: { $ref: "#/components/schemas/WorkspaceCompute" }
+        network:
+          description: Absent on a Workspace created before network allocations
+          allOf: [{ $ref: "#/components/schemas/WorkspaceNetwork" }]
         conditions:
           type: array
           description: As the controller last reported them; empty until it has.
@@ -3125,6 +3177,39 @@ components:
           type: array
           items: { type: integer }
         shared: { type: boolean, description: "Any organization's grant may list it; false: the organization's own" }
+
+    NetworkPoolAvailability:
+      type: object
+      required: [id, cidrs, defaultPrefixLength, free, blocks]
+      properties:
+        id: { type: string }
+        cidrs:
+          type: array
+          items: { type: string }
+        defaultPrefixLength: { type: integer }
+        free:
+          type: array
+          description: Free blocks at each allowed prefix length
+          items: { $ref: "#/components/schemas/FreeBlocks" }
+        blocks:
+          type: array
+          description: The organization's own blocks in the pool
+          items: { $ref: "#/components/schemas/NetworkBlock" }
+
+    FreeBlocks:
+      type: object
+      required: [prefixLength, blocks]
+      properties:
+        prefixLength: { type: integer }
+        blocks: { type: integer }
+
+    NetworkBlock:
+      type: object
+      required: [workspace, cidr, state]
+      properties:
+        workspace: { type: string, description: "The Workspace's k8s name" }
+        cidr: { type: string }
+        state: { type: string, enum: [Allocated, Releasing, Quarantined] }
 
     OrgNetworkPoolList:
       type: object

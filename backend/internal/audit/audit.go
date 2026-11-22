@@ -54,17 +54,19 @@ const (
 	GroupMemberAdd    = "group_member.add"
 	GroupMemberRemove = "group_member.remove"
 
-	WorkspaceCreate        = "workspace.create"
-	WorkspaceUpdate        = "workspace.update"
-	WorkspaceCordon        = "workspace.cordon"
-	WorkspaceUncordon      = "workspace.uncordon"
-	WorkspaceDelete        = "workspace.delete"  // asked for
-	WorkspaceDeleted       = "workspace.deleted" // done: the cluster is clean
-	OperationForce         = "operation.force"
-	WorkspaceBindingUpdate = "workspace_binding.update"
-	WorkspaceBindingDelete = "workspace_binding.delete"
-	NamespaceCreate        = "namespace.create"
-	NamespaceDelete        = "namespace.delete"
+	WorkspaceCreate   = "workspace.create"
+	WorkspaceUpdate   = "workspace.update"
+	WorkspaceCordon   = "workspace.cordon"
+	WorkspaceUncordon = "workspace.uncordon"
+	WorkspaceDelete   = "workspace.delete"  // asked for
+	WorkspaceDeleted  = "workspace.deleted" // done: the cluster is clean
+	OperationForce    = "operation.force"
+
+	NetworkAllocationRelease = "network_allocation.release"
+	WorkspaceBindingUpdate   = "workspace_binding.update"
+	WorkspaceBindingDelete   = "workspace_binding.delete"
+	NamespaceCreate          = "namespace.create"
+	NamespaceDelete          = "namespace.delete"
 )
 
 // Results. An event written by the change it records Succeeded. A refused

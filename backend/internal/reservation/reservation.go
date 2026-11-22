@@ -265,6 +265,20 @@ func UpdateGrant(ctx context.Context, q *store.Queries, cur store.OrganizationCl
 	if err := NotBelow(g, holds); err != nil {
 		return Grant{}, err
 	}
+	// A network pool Workspaces of the grant hold a block in stays (§5.5).
+	nets, err := q.NetworkPoolsInUse(ctx, cur.ID)
+	if err != nil {
+		return Grant{}, err
+	}
+	for _, p := range nets {
+		if !slices.Contains(g.NetworkPoolIDs, p) {
+			return Grant{}, &apperr.Error{
+				Code:    apperr.ClusterGrantBelowAllocation,
+				Message: fmt.Sprintf("Workspaces of the organization hold address blocks in network pool %s: it stays in the grant while they do", p),
+				Details: map[string]any{"field": "networkPoolIds", "networkPoolId": p},
+			}
+		}
+	}
 	// A shared pool Shared Workspaces of the grant run on stays (§5.5).
 	used, err := q.SharedPoolsInUse(ctx, cur.ID)
 	if err != nil {

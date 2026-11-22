@@ -143,3 +143,48 @@ func (s *Service) CatalogNetworkPools(ctx context.Context, userID, idOrSlug, clu
 	}
 	return slices.DeleteFunc(pools, func(p store.NetworkPool) bool { return !slices.Contains(c.Grant.NetworkPoolIDs, p.ID) }), nil
 }
+
+// Availability is what is left in a network pool and the organization's
+// own blocks in it (PRODUCT-PLAN §7.1).
+type Availability struct {
+	Pool   store.NetworkPool
+	Free   map[int32]int // free blocks by prefix length
+	Blocks []store.OrgBlocksInPoolRow
+}
+
+// NetworkPoolAvailability is read by the OrgOwner and OrgAdmins, for a
+// pool one of the organization's grants lists. Other organizations' blocks
+// count as taken and are never shown.
+func (s *Service) NetworkPoolAvailability(ctx context.Context, userID, idOrSlug, poolID string) (Availability, error) {
+	o, err := s.manage(ctx, userID, idOrSlug)
+	if err != nil {
+		return Availability{}, err
+	}
+	grants, err := reservation.Grants(ctx, s.q, o.ID)
+	if err != nil {
+		return Availability{}, err
+	}
+	if !slices.ContainsFunc(grants, func(g reservation.Grant) bool { return slices.Contains(g.NetworkPoolIDs, poolID) }) {
+		return Availability{}, ErrNoSuchPool
+	}
+	pool, err := s.q.GetNetworkPool(ctx, poolID)
+	if err != nil {
+		return Availability{}, err
+	}
+	cluster, err := s.q.ShareLockCluster(ctx, pool.ClusterID)
+	if err != nil {
+		return Availability{}, err
+	}
+	taken, err := s.q.ClusterAllocatedCIDRs(ctx, pool.ClusterID)
+	if err != nil {
+		return Availability{}, err
+	}
+	a := Availability{Pool: pool, Free: map[int32]int{}}
+	for _, l := range pool.AllowedPrefixLengths {
+		a.Free[l] = reservation.FreeBlocks(pool.Cidrs, int(l), taken, cluster.ReservedCidrs)
+	}
+	a.Blocks, err = s.q.OrgBlocksInPool(ctx, store.OrgBlocksInPoolParams{PoolID: poolID, OrgID: o.ID})
+	return a, err
+}
+
+var ErrNoSuchPool = apperr.New(apperr.NotFound, "no such network pool in the organization's grants")

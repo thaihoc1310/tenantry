@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	v1 "github.com/thaihoc1310/tenantry/operator/api/v1alpha1"
 
+	"github.com/thaihoc1310/tenantry/backend/internal/housekeeping"
 	"github.com/thaihoc1310/tenantry/backend/internal/k8s"
 	"github.com/thaihoc1310/tenantry/backend/internal/operation"
 	"github.com/thaihoc1310/tenantry/backend/internal/org"
@@ -41,7 +43,9 @@ const seed = `
 	INSERT INTO organization_cluster_grants (id, org_id, cluster_id, is_default, max_workspaces, max_namespaces_total,
 		requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes)
 		VALUES ('grant-1', 'org-01', 'cluster-a', true, 5, 10, 4000, 8589934592, 8000, 17179869184, 50, 21474836480);
-	INSERT INTO cluster_grant_shared_pools (grant_id, pool_id) VALUES ('grant-1', 'shared-general');`
+	INSERT INTO cluster_grant_shared_pools (grant_id, pool_id) VALUES ('grant-1', 'shared-general');
+	INSERT INTO network_pools (id, cluster_id, cidrs, default_prefix_length, allowed_prefix_lengths) VALUES ('pods', 'cluster-a', '{10.240.0.0/18}', 24, '{24}');
+	INSERT INTO cluster_grant_network_pools (grant_id, pool_id) VALUES ('grant-1', 'pods');`
 
 type env struct {
 	t       *testing.T
@@ -483,11 +487,10 @@ func TestDeleteRelease(t *testing.T) {
 	if o := e.op(del.Operation.ID); o.State != "Succeeded" {
 		t.Fatalf("delete operation %+v", o)
 	}
-	if n := countRows(t, e, `SELECT count(*) FROM workspaces`); n != 0 {
-		t.Fatal("the Workspace row is still there")
-	}
-	if n := countRows(t, e, `SELECT count(*) FROM workspace_namespaces`); n != 0 {
-		t.Fatal("its Namespaces are still there")
+	// Deleted, out of every sum; its block quarantined, its name held.
+	if n := countRows(t, e, `SELECT count(*) FROM workspaces w JOIN network_allocations a ON a.workspace_id = w.id
+		WHERE w.state = 'Deleted' AND a.state = 'Quarantined' AND a.quarantine_until > now()`); n != 1 {
+		t.Fatal("not Deleted with a quarantined block")
 	}
 	if n := countRows(t, e, `SELECT count(*) FROM group_members WHERE sync_status = 'Pending'`); n != 1 {
 		t.Fatal("the bound group's member is not counted again")
@@ -495,7 +498,27 @@ func TestDeleteRelease(t *testing.T) {
 	if n := countRows(t, e, `SELECT count(*) FROM audit_events WHERE action = 'workspace.deleted'`); n != 1 {
 		t.Fatal("no audit of the release")
 	}
-	// The slug is free again (no CIDR to quarantine before M9).
+	if _, err := e.ws.Create(ctx, "usr-ann", "acme", workspace.New{
+		Slug: "solar", DisplayName: "Solar", ClusterID: "cluster-a", ComputeMode: workspace.ComputeShared, SharedPoolID: "shared-general",
+		Resources: workspace.Resources{RequestsCPUMilli: 100, RequestsMemoryBytes: 1 << 20, LimitsCPUMilli: 100, LimitsMemoryBytes: 1 << 20,
+			Pods: 1, RequestsStorageBytes: 1 << 20, NamespaceQuota: 1},
+		Bindings: []workspace.Binding{{GroupID: "grp-a", Role: workspace.RoleTenantOwner}},
+	}); err == nil || !strings.Contains(err.Error(), "SLUG_TAKEN") {
+		t.Fatalf("the name during quarantine: %v", err)
+	}
+	// Past the quarantine, housekeeping frees the block and the name.
+	if _, err := e.db.Exec(ctx, `UPDATE network_allocations SET quarantine_until = now() - interval '1 second'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := housekeeping.RunOnce(ctx, e.db, quiet); err != nil {
+		t.Fatal(err)
+	}
+	if n := countRows(t, e, `SELECT count(*) FROM workspaces`); n != 0 {
+		t.Fatal("the Workspace row outlived its quarantine")
+	}
+	if n := countRows(t, e, `SELECT count(*) FROM audit_events WHERE action = 'network_allocation.release'`); n != 1 {
+		t.Fatal("no audit of the released block")
+	}
 	e.create("solar")
 }
 
@@ -561,7 +584,7 @@ func TestDedicatedReservationLifecycle(t *testing.T) {
 	}
 	e.deliver() // the fake deletes the CR at once
 	e.sync()
-	if s, _, cap := reservation(); s != "none" || cap != "Available" || e.op(del.Operation.ID).State != "Succeeded" {
+	if s, _, cap := reservation(); s != "Released" || cap != "Available" || e.op(del.Operation.ID).State != "Succeeded" {
 		t.Fatalf("after delete: %s %s", s, cap)
 	}
 }

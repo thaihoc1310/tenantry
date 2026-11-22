@@ -9,8 +9,10 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/thaihoc1310/tenantry/backend/internal/audit"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
 )
 
@@ -48,5 +50,33 @@ func RunOnce(ctx context.Context, db *pgxpool.Pool, log *slog.Logger) error {
 			log.Info("deleted "+job.what, "count", n)
 		}
 	}
-	return nil
+	return releaseQuarantined(ctx, db, log)
+}
+
+// releaseQuarantined frees the address blocks past their quarantine and
+// deletes the Workspaces that held them, in one transaction, with an audit
+// event each (04-state-machines §4).
+func releaseQuarantined(ctx context.Context, db *pgxpool.Pool, log *slog.Logger) error {
+	return pgx.BeginFunc(ctx, db, func(tx pgx.Tx) error {
+		q := store.New(tx)
+		rows, err := q.ReleaseQuarantined(ctx)
+		if err != nil || len(rows) == 0 {
+			return err
+		}
+		ids := make([]string, len(rows))
+		for i, r := range rows {
+			ids[i] = r.WorkspaceID
+			if err := audit.Record(ctx, q, audit.Event{
+				OrgID: r.OrgID, Action: audit.NetworkAllocationRelease, TargetType: "Workspace", TargetID: r.WorkspaceID,
+				Detail: map[string]any{"cidr": r.Cidr.String(), "k8sName": r.K8sName},
+			}); err != nil {
+				return err
+			}
+		}
+		if err := q.DeleteWorkspaceRows(ctx, ids); err != nil {
+			return err
+		}
+		log.Info("released address blocks past their quarantine", "count", len(rows))
+		return nil
+	})
 }
