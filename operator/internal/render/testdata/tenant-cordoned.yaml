@@ -21,10 +21,6 @@ spec:
     - apiGroup: rbac.authorization.k8s.io
       kind: Group
       name: oidc:org_01jabc:group_01jview
-  containerRegistries:
-    allowed:
-    - docker.io
-    - ghcr.io
   cordoned: true
   forceTenantPrefix: true
   namespaceOptions:
@@ -51,6 +47,13 @@ spec:
   - kind: ServiceAccount
     name: system:serviceaccount:tenantry-operator:tenantry-operator
   rules:
+  - enforce:
+      action: allow
+      workloads:
+        registries:
+        - exp: ^(docker\.io|ghcr\.io)/.+
+        - exp: ^[^/]+$
+        - exp: ^[^./:]+/[^/]+$
   - enforce:
       action: deny
       workloads:

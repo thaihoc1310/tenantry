@@ -5,6 +5,7 @@
 package render
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 
@@ -77,10 +78,12 @@ var (
 )
 
 // Tenant is the Capsule Tenant of ws, named like it (sub-reconcilers tenant
-// and rbac, IMPLEMENTATION-PLAN §4.1). It uses the fields Capsule 0.15.2
-// marks deprecated but still enforces (namespaceOptions.additionalMetadata,
-// forbiddenAnnotations, serviceOptions, containerRegistries); M7 moves them
-// to spec.rules. Pass revoked to drop every owner but the operator and every
+// and rbac, IMPLEMENTATION-PLAN §4.1). Namespace metadata and Service types
+// use fields Capsule 0.15.2 marks deprecated but still enforces
+// (namespaceOptions.additionalMetadata, forbiddenAnnotations,
+// serviceOptions); M7 moves them to spec.rules, where registries and QoS
+// already are (containerRegistries cannot accept Docker Hub short names).
+// Pass revoked to drop every owner but the operator and every
 // RoleBinding: the first step of a delete (IMPLEMENTATION-PLAN §4.3).
 func Tenant(ws *v1.PlatformWorkspace, o Options, revoked bool) *unstructured.Unstructured {
 	owners := []any{}
@@ -130,13 +133,18 @@ func Tenant(ws *v1.PlatformWorkspace, o Options, revoked bool) *unstructured.Uns
 		"serviceOptions": map[string]any{"allowedServices": map[string]any{
 			"nodePort": false, "loadBalancer": false, "externalName": false,
 		}},
-		"containerRegistries": map[string]any{"allowed": strings2any(o.AllowedRegistries)},
-		// Every Pod states what it needs: BestEffort Pods would escape the
-		// requests the Workspace's quota counts.
-		"rules": []any{map[string]any{"enforce": map[string]any{
-			"action":    "deny",
-			"workloads": map[string]any{"qosClasses": []any{"BestEffort"}},
-		}}},
+		"rules": []any{
+			map[string]any{"enforce": map[string]any{
+				"action":    "allow",
+				"workloads": map[string]any{"registries": registryMatchers(o.AllowedRegistries)},
+			}},
+			// Every Pod states what it needs: BestEffort Pods would escape
+			// the requests the Workspace's quota counts.
+			map[string]any{"enforce": map[string]any{
+				"action":    "deny",
+				"workloads": map[string]any{"qosClasses": []any{"BestEffort"}},
+			}},
+		},
 	}
 	if len(bindings) > 0 {
 		spec["additionalRoleBindings"] = bindings
@@ -158,6 +166,28 @@ func Namespace(ws *v1.PlatformWorkspace, suffix string) *unstructured.Unstructur
 	l[LabelCapsuleTenant] = ws.Name
 	n.SetLabels(l)
 	return n
+}
+
+// registryMatchers allow images from the given registries. Capsule matches
+// the image reference as written, without Docker's normalization, so
+// nginx:1.27 and bitnami/redis (Docker Hub short names: no registry host in
+// front) need matchers of their own when docker.io is allowed; checked on
+// Capsule 0.15.2 of the lab.
+func registryMatchers(registries []string) []any {
+	hosts := make([]string, 0, len(registries))
+	dockerHub := false
+	for _, r := range registries {
+		hosts = append(hosts, regexp.QuoteMeta(r))
+		dockerHub = dockerHub || r == "docker.io"
+	}
+	out := []any{map[string]any{"exp": "^(" + strings.Join(hosts, "|") + ")/.+"}}
+	if dockerHub {
+		out = append(out,
+			map[string]any{"exp": `^[^/]+$`},         // nginx:1.27
+			map[string]any{"exp": `^[^./:]+/[^/]+$`}, // bitnami/redis:7
+		)
+	}
+	return out
 }
 
 func roleBinding(clusterRole, group string) any {

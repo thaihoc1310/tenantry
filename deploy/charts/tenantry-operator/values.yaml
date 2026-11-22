@@ -4,8 +4,8 @@ image:
   tag: ""            # defaults to the chart appVersion
   pullPolicy: IfNotPresent
 
-# Registries tenants may pull images from (Capsule containerRegistries;
-# an image without a registry counts as docker.io).
+# Registries tenants may pull images from (a Capsule rule on the Tenant).
+# With docker.io, Docker Hub short names (nginx, bitnami/redis) count too.
 allowedRegistries:
   - docker.io
   - ghcr.io

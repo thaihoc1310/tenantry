@@ -27,6 +27,7 @@ for node in ${SYSTEM_NODES}; do
   check "${node} keeps other Pods off" \
     field_is "node/${node}" '{.spec.taints[?(@.key=="tenantry.io/compute-pool")].effect}' NoSchedule
 done
+# The operator labels the shared pool's nodes from PlatformSharedPool (M6).
 for node in ${SHARED_NODES}; do
   check "${node} is in the shared pool" \
     field_is "node/${node}" '{.metadata.labels.tenantry\.io/compute-pool}' shared-general

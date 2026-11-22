@@ -10,10 +10,6 @@ metadata:
     tenantry.io/workspace-id: ws-01jsol
   name: acme-solar
 spec:
-  containerRegistries:
-    allowed:
-    - docker.io
-    - ghcr.io
   cordoned: false
   forceTenantPrefix: true
   namespaceOptions:
@@ -37,6 +33,13 @@ spec:
   - kind: ServiceAccount
     name: system:serviceaccount:tenantry-operator:tenantry-operator
   rules:
+  - enforce:
+      action: allow
+      workloads:
+        registries:
+        - exp: ^(docker\.io|ghcr\.io)/.+
+        - exp: ^[^/]+$
+        - exp: ^[^./:]+/[^/]+$
   - enforce:
       action: deny
       workloads:
