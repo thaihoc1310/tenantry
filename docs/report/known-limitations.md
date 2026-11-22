@@ -4,9 +4,10 @@ Mỗi mục ghi: hành vi, vì sao, ảnh hưởng tới người dùng, và cá
 
 ## Quyền truy cập
 
-1. **Thu hồi quyền Kubernetes không tức thì khi gỡ người khỏi group.** Token đã cấp còn hiệu lực tới hết TTL (≤ 5 phút); token mới không còn group. Gỡ binding của group khỏi Workspace thì mất quyền ngay (RoleBinding bị xóa); portal mất quyền ngay trong mọi trường hợp (`architecture/06-security-and-identity.md` mục 5). UI ghi đúng hai mốc này.
+1. **Thu hồi quyền Kubernetes không tức thì khi gỡ người khỏi group.** Token đã cấp còn hiệu lực tới hết TTL (≤ 5 phút; đo trên lab: gỡ lúc 23:15:41.8Z, token cũ bị từ chối lúc 23:20:41.7Z, đúng lúc token hết hạn, 300 giây); token mới không còn group. Gỡ binding của group khỏi Workspace thì mất quyền ngay (RoleBinding bị xóa); portal mất quyền ngay trong mọi trường hợp (`architecture/06-security-and-identity.md` mục 5). UI ghi đúng hai mốc này.
 2. **Capsule Proxy chặn mọi tài nguyên cluster-scoped.** Gate `ProxyClusterScoped` của capsule-proxy 0.15.3 (Alpha) đóng lỗ đọc Node của bản mặc định; hệ quả là `kubectl get nodes` và StorageClass qua Proxy trả rỗng hoặc 403 cho mọi tenant, kể cả Dedicated. Portal hiển thị node, capacity và allow-list StorageClass. Gate Alpha: Proxy CrashLoop khi một APIService không Available lúc khởi động; `cluster-verify` kiểm APIService, runbook ở `architecture/05-network-and-scheduling.md` mục 8.
-3. **Kubeconfig cần kubelogin**, một context cho mỗi Workspace, không kèm CA (kube-a dùng cert Let's Encrypt được tin sẵn).
+3. **Token lớn theo số group**: khoảng 45 byte mỗi group; 21–22 group cho JWT khoảng 3 KiB, đi qua apiserver, Capsule Proxy và Headlamp đều ổn (`token-size.md`); cookie của Headlamp tự chia (`.0`, `.1`…), đo được 3067/3071 byte, dưới giới hạn 4 KiB (`web/e2e/access.spec.ts`).
+3a. **Kubeconfig cần kubelogin**, một context cho mỗi Workspace, không kèm CA (kube-a dùng cert Let's Encrypt được tin sẵn).
 4. **Link sâu vào Headlamp** giả định `inClusterContextName` của Headlamp bằng cluster id (`cluster-a`).
 5. **Owner của Workspace sửa được ProxySetting** trong Namespace của mình (quyền admin trong ns); vì Node đã bị chặn, việc này chỉ lộ tên Namespace của chính Tenant đó.
 
@@ -43,5 +44,4 @@ Mỗi mục ghi: hành vi, vì sao, ảnh hưởng tới người dùng, và cá
 
 ## Chưa kiểm hết
 
-- Cookie session OIDC của Headlamp trong trình duyệt khi user thuộc khoảng 20 group (JWT ~3 KiB, giới hạn cookie ~4 KiB): kiểm bằng Playwright trong `web/e2e/access.spec.ts`.
 - `calicoctl ipam release` cho IP rò: chưa có IP rò thật để thử.
