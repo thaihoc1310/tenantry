@@ -49,7 +49,29 @@ The proxy side (what a Workspace member sees through Capsule Proxy) is `cluster-
 Notes
 - PodTolerationRestriction refuses a toleration outside the whitelist with HTTP 500, not 403/422.
   This is how that upstream plugin answers; the Pod is refused all the same.
-- Not run: the Dedicated cases (a Pod cannot leave its node; Guaranteed QoS). They are skipped until
-  the API side of M8 can make a real node grant through the portal's admin API. Node grants are
-  never created by hand.
+- The Dedicated cases are a test of their own, below.
 - Cases run by the API and portal suites, not here: T01–T07, T09–T12, T20, stale group token.
+
+## Dedicated cases
+
+Run on 2026-11-23 with `go test -tags lab -run TestIsolationDedicated ./test/isolation`: 4/4 subtests pass,
+in 13 minutes. Most of that is the final cleanup, which waits out the CIDR quarantine before the
+Organization can be deleted.
+
+The setup goes through the portal, as people would; no grant is made by hand:
+- A throwaway account `optest-*` signs up through Keycloak's own pages, the address verified from Mailpit.
+- The Platform Admin makes an Organization for it, takes `wk3` out of `shared-general` and grants it to the
+  Organization, with a system reserve of 500m / 1536Mi / 10 Pods.
+- The owner makes the Dedicated Workspace "water" with 1 CPU.
+- At the end, everything goes back: the Workspace is deleted, the grant revoked, `wk3` returned to the pool,
+  the Organization deleted and the account disabled.
+
+| Case (PRODUCT-PLAN §24.4) | Attempt | Result | Layer that refused (status) |
+|---|---|---|---|
+| D1 Dedicated Pods stay on their node | owner's Pod (requests = limits) | runs on wk3, QoS Guaranteed | Namespace node selector |
+| | Pod naming wk2 | refused | VAP `tenantry-tenant-node-name` (403) |
+| | Pod selecting `kubernetes.io/hostname=wk2` | stays Pending | PodNodeSelector merges the Namespace's selector |
+| D2 Guaranteed QoS | container with requests 100m, limits 200m | refused | LimitRange `maxLimitRequestRatio` 1 (403) |
+| D3 the node takes no other tenant | another Workspace's Pod tolerating the Organization's taint | refused | PodTolerationRestriction (500) |
+| | its Pod naming wk3 | refused | VAP `tenantry-tenant-node-name` (403) |
+| D4 reservations within the node | second Workspace asking 2 CPU of the 2.5 reservable, 1 held | refused | API: 409 `DEDICATED_NODE_INSUFFICIENT_CAPACITY` |
