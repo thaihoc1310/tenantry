@@ -382,6 +382,15 @@ func (q *Queries) PromoteOldestGrant(ctx context.Context, orgID string) error {
 	return err
 }
 
+const touchClusterHealth = `-- name: TouchClusterHealth :exec
+UPDATE clusters SET last_health_check = now() WHERE id = $1
+`
+
+func (q *Queries) TouchClusterHealth(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, touchClusterHealth, id)
+	return err
+}
+
 const updateActiveOnboardingPolicy = `-- name: UpdateActiveOnboardingPolicy :one
 UPDATE onboarding_policies
 SET default_cluster_id = $1, entitlement_template = $2, grant_template = $3, updated_at = now()

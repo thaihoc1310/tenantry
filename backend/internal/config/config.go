@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -180,4 +181,37 @@ func LoadKeycloakSync() (KeycloakSync, error) {
 		errs = append(errs, errors.New("TENANTRY_KEYCLOAK_CLIENT_SECRET is required"))
 	}
 	return k, errors.Join(errs...)
+}
+
+// Provisioning configures the provisioning loop (IMPLEMENTATION-PLAN §5.1).
+type Provisioning struct {
+	// TENANTRY_CLUSTER_ID: the cluster this worker's credential reaches; it
+	// delivers that cluster's events only.
+	ClusterID string
+	// KUBECONFIG: outside the cluster only (dev); in it, the ServiceAccount.
+	Kubeconfig string
+	// TENANTRY_OPERATION_TIMEOUT: how long a delivered operation may wait for
+	// the controller before it is Failed; default 10m (§12, decision 8).
+	OperationTimeout time.Duration
+}
+
+// LoadProvisioning reads Provisioning and reports every invalid variable at once.
+func LoadProvisioning() (Provisioning, error) {
+	p := Provisioning{
+		ClusterID:        os.Getenv("TENANTRY_CLUSTER_ID"),
+		Kubeconfig:       os.Getenv("KUBECONFIG"),
+		OperationTimeout: 10 * time.Minute,
+	}
+	var errs []error
+	if p.ClusterID == "" {
+		errs = append(errs, errors.New("TENANTRY_CLUSTER_ID is required"))
+	}
+	if v := os.Getenv("TENANTRY_OPERATION_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Minute {
+			errs = append(errs, fmt.Errorf("TENANTRY_OPERATION_TIMEOUT=%q: want a duration of 1m or more, e.g. 10m", v))
+		}
+		p.OperationTimeout = d
+	}
+	return p, errors.Join(errs...)
 }

@@ -99,6 +99,11 @@ chart-lint: ## Lint and render the charts
 	helm template tenantry deploy/charts/tenantry-backend $(CHART_LINT_SET) | python3 -c 'import sys; \
 		docs = [d for d in sys.stdin.read().split("\n---") if "tenantry-keycloak-sync" in d]; \
 		sys.exit(None if len(docs) == 1 and "name: tenantry-worker-groupsync" in docs[0] else "only tenantry-worker-groupsync may get the Keycloak sync secret")'
+	@# The provisioning worker may touch the tenantry.io CRs and nothing else (architecture/06 §7).
+	helm template tenantry deploy/charts/tenantry-backend $(CHART_LINT_SET) | python3 -c 'import sys, yaml; \
+		rules = [r for d in yaml.safe_load_all(sys.stdin) if d and d["kind"] == "ClusterRole" for r in d["rules"]]; \
+		assert rules and all(r["apiGroups"] == ["tenantry.io"] and "*" not in r["verbs"] and not any("/" in x or x == "*" for x in r["resources"]) for r in rules), \
+			"the backend ClusterRole reaches beyond the tenantry.io CRs"'
 	helm template tenantry deploy/charts/tenantry-backend $(CHART_LINT_SET) --set seed.enabled=true \
 		--set seed.proxyEndpoint=https://kube.example.com --set seed.consoleURL=https://console.example.com --set seed.appsDomain=apps.example.com >/dev/null
 	helm lint deploy/charts/tenantry-web $(WEB_LINT_SET)

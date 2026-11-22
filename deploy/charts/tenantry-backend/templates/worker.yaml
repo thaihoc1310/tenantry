@@ -1,7 +1,46 @@
-# Delivers outbox events to clusters and deletes expired rows
-# (IMPLEMENTATION-PLAN §5.3). Its ServiceAccount, with rights on the
-# tenantry.io CRDs only, comes with those CRDs (M6); the group sync loop runs
-# in a second Deployment with its own credentials, below.
+# Delivers outbox events to this cluster, copies the CRs' status back and
+# deletes expired rows (IMPLEMENTATION-PLAN §5.3). Its ServiceAccount may
+# touch the four tenantry.io CRs and nothing else (architecture/06 §7); the
+# CRDs themselves come with the tenantry-operator chart. The group sync loop
+# runs in a second Deployment with its own credentials, below.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tenantry-worker-provisioning
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tenantry-worker-provisioning
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+rules:
+  # Not */status: the controller reports, the worker only reads.
+  - apiGroups: [tenantry.io]
+    resources: [platformworkspaces, platformnodegrants, platformsharedpools]
+    verbs: [get, list, watch, create, patch, delete]
+  # The one object the operator chart creates.
+  - apiGroups: [tenantry.io]
+    resources: [platformnodeinventories]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tenantry-worker-provisioning
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tenantry-worker-provisioning
+subjects:
+  - kind: ServiceAccount
+    name: tenantry-worker-provisioning
+    namespace: {{ .Release.Namespace }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,8 +60,8 @@ spec:
         {{- include "tenantry.labels" . | nindent 8 }}
         app.kubernetes.io/component: worker-provisioning
     spec:
-      # Does not call Kubernetes yet.
-      automountServiceAccountToken: false
+      serviceAccountName: tenantry-worker-provisioning
+      automountServiceAccountToken: true
       # On SIGTERM the worker finishes the batch in hand, for up to 2 minutes
       # (outbox.batchTimeout); killing it earlier only means redelivery.
       terminationGracePeriodSeconds: 150
@@ -37,6 +76,10 @@ spec:
           args: [--loops=provisioning,housekeeping]
           env:
             {{- include "tenantry.env" . | nindent 12 }}
+            - name: TENANTRY_CLUSTER_ID
+              value: {{ required "worker.provisioning.clusterId or seed.clusterId is required" (.Values.worker.provisioning.clusterId | default .Values.seed.clusterId) | quote }}
+            - name: TENANTRY_OPERATION_TIMEOUT
+              value: {{ .Values.worker.provisioning.operationTimeout | quote }}
           resources:
             {{- toYaml .Values.worker.provisioning.resources | nindent 12 }}
           securityContext:

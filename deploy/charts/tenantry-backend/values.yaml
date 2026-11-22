@@ -44,6 +44,10 @@ api:
 worker:
   provisioning:
     replicas: 1        # more are safe (SKIP LOCKED) but not needed
+    # The cluster this chart runs on, as registered (its events only are
+    # delivered here); its ServiceAccount may touch the tenantry.io CRs only.
+    clusterId: ""      # default: seed.clusterId
+    operationTimeout: 10m  # a delivered operation not Ready by then is Failed
     resources:
       requests: { cpu: 20m, memory: 64Mi }
       limits: { memory: 256Mi }

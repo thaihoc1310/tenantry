@@ -141,7 +141,7 @@ func TestDeliversInOrderAndMarksOperationRunning(t *testing.T) {
 	db := newDB(t)
 	op := enqueue(t, db, "ws-1", "first", "second", "third")
 	h := &recorder{}
-	w := outbox.NewWorker(db, h, quiet)
+	w := outbox.NewWorker(db, "cluster-a", h, quiet)
 
 	if n := runOnce(t, w); n != 1 {
 		t.Fatalf("handled %d, want 1: events of one resource go one at a time", n)
@@ -163,7 +163,7 @@ func TestFailuresBackOffThenFailTheOperation(t *testing.T) {
 	db := newDB(t)
 	op := enqueue(t, db, "ws-1", "apply")
 	h := &recorder{fail: map[string]bool{"apply": true}}
-	w := outbox.NewWorker(db, h, quiet)
+	w := outbox.NewWorker(db, "cluster-a", h, quiet)
 
 	runOnce(t, w)
 	var attempts int32
@@ -211,7 +211,7 @@ func TestFailingEventHoldsBackOnlyItsOwnResource(t *testing.T) {
 	enqueue(t, db, "ws-1", "ws1-create", "ws1-delete")
 	enqueue(t, db, "ws-2", "ws2-create")
 	h := &recorder{fail: map[string]bool{"ws1-create": true}}
-	w := outbox.NewWorker(db, h, quiet)
+	w := outbox.NewWorker(db, "cluster-a", h, quiet)
 
 	runOnce(t, w)
 	if got := h.take(); !slices.Equal(got, []string{"ws1-create", "ws2-create"}) {
@@ -235,7 +235,7 @@ func TestFailingEventHoldsBackOnlyItsOwnResource(t *testing.T) {
 func TestHandlerPanicCountsAsFailure(t *testing.T) {
 	db := newDB(t)
 	enqueue(t, db, "ws-1", "apply")
-	w := outbox.NewWorker(db, outbox.HandlerFunc(func(context.Context, store.OutboxEvent) error {
+	w := outbox.NewWorker(db, "cluster-a", outbox.HandlerFunc(func(context.Context, store.OutboxEvent) error {
 		panic("nil map")
 	}), quiet)
 
@@ -270,7 +270,7 @@ func TestConcurrentWorkersDeliverEachEventOnce(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 4 {
-		w := outbox.NewWorker(db, h, quiet)
+		w := outbox.NewWorker(db, "cluster-a", h, quiet)
 		wg.Go(func() {
 			for {
 				n, err := w.RunOnce(context.Background())
@@ -303,7 +303,7 @@ func TestRunStopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		outbox.NewWorker(db, outbox.LogHandler(quiet), quiet).Run(ctx)
+		outbox.NewWorker(db, "cluster-a", &recorder{}, quiet).Run(ctx)
 		close(done)
 	}()
 
@@ -319,5 +319,50 @@ func TestRunStopsOnCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("Run did not return after cancel")
+	}
+}
+
+// A worker delivers its own cluster's events only, and none while that
+// cluster is Unavailable: they wait without spending attempts.
+func TestClusterScopeAndUnavailable(t *testing.T) {
+	db := newDB(t)
+	op := enqueue(t, db, "ws-1", "apply")
+	h := &recorder{}
+	if n := runOnce(t, outbox.NewWorker(db, "cluster-b", h, quiet)); n != 0 {
+		t.Fatalf("another cluster's worker took %d events", n)
+	}
+	if _, err := db.Exec(context.Background(), `UPDATE clusters SET status = 'Unavailable' WHERE id = 'cluster-a'`); err != nil {
+		t.Fatal(err)
+	}
+	w := outbox.NewWorker(db, "cluster-a", h, quiet)
+	if n := runOnce(t, w); n != 0 {
+		t.Fatalf("delivered %d events to an Unavailable cluster", n)
+	}
+	var attempts int
+	if err := db.QueryRow(context.Background(), `SELECT attempts FROM outbox_events`).Scan(&attempts); err != nil || attempts != 0 {
+		t.Fatalf("attempts %d (%v), want 0", attempts, err)
+	}
+	if got := getOp(t, db, op.ID); got.State != "Pending" {
+		t.Fatalf("operation %s, want Pending", got.State)
+	}
+	if _, err := db.Exec(context.Background(), `UPDATE clusters SET status = 'Ready' WHERE id = 'cluster-a'`); err != nil {
+		t.Fatal(err)
+	}
+	if n := runOnce(t, w); n != 1 {
+		t.Fatal("not delivered once the cluster is Ready again")
+	}
+}
+
+// A failure retrying cannot fix fails the operation at once.
+func TestPermanentFailure(t *testing.T) {
+	db := newDB(t)
+	op := enqueue(t, db, "ws-1", "apply")
+	w := outbox.NewWorker(db, "cluster-a", outbox.HandlerFunc(func(context.Context, store.OutboxEvent) error {
+		return outbox.Permanent(errors.New("forbidden: the credential may not create platformworkspaces"))
+	}), quiet)
+	runOnce(t, w)
+	if got := getOp(t, db, op.ID); got.State != "Failed" || got.ErrorCode != operation.ApplyFailed ||
+		!strings.Contains(got.ErrorMessage, "forbidden") {
+		t.Fatalf("after a permanent failure: %+v", got)
 	}
 }

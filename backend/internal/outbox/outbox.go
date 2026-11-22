@@ -7,6 +7,7 @@ package outbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -70,15 +71,34 @@ const (
 // 1s, 2s, 4s, ... capped at 5 minutes, the schedule all worker loops share.
 func Backoff(failures int32) time.Duration { return backoff.After(failures) }
 
-type Worker struct {
-	db      *pgxpool.Pool
-	q       *store.Queries
-	handler Handler
-	log     *slog.Logger
+// Permanent marks a delivery error retrying cannot fix, such as the cluster
+// refusing the worker's credential or the CR itself: the operation goes
+// Failed at once instead of after FailAfter attempts. Delivery still goes on
+// at backoff, in case someone fixes the cause.
+func Permanent(err error) error { return permanentError{err} }
+
+type permanentError struct{ error }
+
+// IsPermanent tells whether err was marked with Permanent.
+func IsPermanent(err error) bool {
+	var p permanentError
+	return errors.As(err, &p)
 }
 
-func NewWorker(db *pgxpool.Pool, h Handler, log *slog.Logger) *Worker {
-	return &Worker{db: db, q: store.New(db), handler: h, log: log}
+func (e permanentError) Unwrap() error { return e.error }
+
+type Worker struct {
+	db        *pgxpool.Pool
+	q         *store.Queries
+	clusterID string
+	handler   Handler
+	log       *slog.Logger
+}
+
+// NewWorker delivers the events of clusterID, the cluster h reaches. Phase 1
+// has one cluster per worker; Phase 2's Cluster Agent pulls its own.
+func NewWorker(db *pgxpool.Pool, clusterID string, h Handler, log *slog.Logger) *Worker {
+	return &Worker{db: db, q: store.New(db), clusterID: clusterID, handler: h, log: log}
 }
 
 // Run delivers events until ctx is cancelled. A full batch is followed
@@ -109,7 +129,7 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 	n := 0
 	err := pgx.BeginFunc(ctx, w.db, func(tx pgx.Tx) error {
 		q := w.q.WithTx(tx)
-		events, err := q.ClaimDueEvents(ctx, BatchSize)
+		events, err := q.ClaimDueEvents(ctx, store.ClaimDueEventsParams{ClusterID: w.clusterID, BatchSize: BatchSize})
 		if err != nil {
 			return err
 		}
@@ -137,7 +157,7 @@ func (w *Worker) deliver(ctx context.Context, q *store.Queries, e store.OutboxEv
 			return err
 		}
 		log.Warn("outbox delivery failed", "err", herr, "attempts", attempts)
-		if attempts >= FailAfter {
+		if attempts >= FailAfter || IsPermanent(herr) {
 			if _, _, err := operation.Move(ctx, q, e.OperationID, operation.Failed, operation.ApplyFailed, herr.Error()); err != nil {
 				return err
 			}
@@ -163,14 +183,4 @@ func (w *Worker) handle(ctx context.Context, e store.OutboxEvent) (err error) {
 		}
 	}()
 	return w.handler.Handle(ctx, e)
-}
-
-// LogHandler only logs events. It stands in until the provisioning worker
-// applies CRs to clusters (M6).
-func LogHandler(log *slog.Logger) Handler {
-	return HandlerFunc(func(_ context.Context, e store.OutboxEvent) error {
-		log.Info("outbox event delivered (log only)", "event_id", e.ID, "event_type", e.Type,
-			"cluster_id", e.TargetClusterID, "version", e.Version, "payload", json.RawMessage(e.Payload))
-		return nil
-	})
 }

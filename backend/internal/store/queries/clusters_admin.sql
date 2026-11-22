@@ -88,3 +88,6 @@ WHERE (sqlc.narg(state)::text IS NULL OR state = sqlc.narg(state))
   AND (sqlc.narg(cursor)::text IS NULL OR id < sqlc.narg(cursor))
 ORDER BY id DESC
 LIMIT @page_size;
+
+-- name: TouchClusterHealth :exec
+UPDATE clusters SET last_health_check = now() WHERE id = $1;

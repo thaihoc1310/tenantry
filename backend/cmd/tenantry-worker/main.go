@@ -2,7 +2,7 @@
 // §5.3). It ships in the same image as tenantry-api but runs as its own
 // Deployments, one per set of credentials, picked with --loops:
 //
-//	provisioning  delivers outbox events to clusters
+//	provisioning  delivers outbox events to its cluster and copies status back (TENANTRY_CLUSTER_ID)
 //	housekeeping  deletes expired rows (PostgreSQL only)
 //	groupsync     mirrors organization groups to Keycloak (TENANTRY_KEYCLOAK_*)
 //	all           every loop; for running locally
@@ -25,8 +25,10 @@ import (
 
 	"github.com/thaihoc1310/tenantry/backend/internal/config"
 	"github.com/thaihoc1310/tenantry/backend/internal/housekeeping"
+	"github.com/thaihoc1310/tenantry/backend/internal/k8s"
 	"github.com/thaihoc1310/tenantry/backend/internal/keycloak"
 	"github.com/thaihoc1310/tenantry/backend/internal/outbox"
+	"github.com/thaihoc1310/tenantry/backend/internal/provisioning"
 )
 
 var allLoops = []string{"provisioning", "housekeeping", "groupsync"}
@@ -64,6 +66,21 @@ func run(args []string) error {
 		}
 		kc = keycloak.NewClient(k)
 	}
+	// Only the provisioning Deployment holds the cluster credential.
+	var prov config.Provisioning
+	var cluster *k8s.Client
+	if slices.Contains(loops, "provisioning") {
+		if prov, err = config.LoadProvisioning(); err != nil {
+			return err
+		}
+		rc, err := k8s.Config(prov.Kubeconfig)
+		if err != nil {
+			return fmt.Errorf("cluster credential: %w", err)
+		}
+		if cluster, err = k8s.New(rc); err != nil {
+			return err
+		}
+	}
 
 	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
 	if err == nil {
@@ -85,7 +102,7 @@ func run(args []string) error {
 			log.Info("loop started")
 			switch l {
 			case "provisioning":
-				outbox.NewWorker(pool, outbox.LogHandler(log), log).Run(ctx)
+				runProvisioning(ctx, pool, prov, cluster, log)
 			case "housekeeping":
 				housekeeping.Run(ctx, pool, log)
 			case "groupsync":
@@ -96,6 +113,15 @@ func run(args []string) error {
 	}
 	wg.Wait()
 	return nil
+}
+
+// runProvisioning delivers events and keeps the health check fresh until ctx
+// ends; each part stops on its own when it does.
+func runProvisioning(ctx context.Context, pool *pgxpool.Pool, cfg config.Provisioning, cluster *k8s.Client, log *slog.Logger) {
+	var wg sync.WaitGroup
+	wg.Go(func() { outbox.NewWorker(pool, cfg.ClusterID, provisioning.Handler(cluster), log).Run(ctx) })
+	wg.Go(func() { provisioning.RunHealth(ctx, pool, cfg.ClusterID, cluster, log) })
+	wg.Wait()
 }
 
 // parseLoops reads --loops. It is required: a Deployment that forgot it
