@@ -123,16 +123,42 @@ token_for_kubernetes() {
     { echo "iss ${iss}, aud ${aud}"; return 1; }
 }
 
-# The group sync worker's service account (tenantry-sync) holds exactly
-# manage-users and query-groups of realm-management, and its token carries
-# them with the admin API scope; nothing else (IMPLEMENTATION-PLAN §5.2).
+# Whether the realm runs Keycloak's fine-grained admin permissions v2, read
+# with kcadm in the Keycloak Pod (its bootstrap admin, never printed).
+fgap_enabled() {
+  kubectl -n keycloak exec -i keycloak-0 -- bash -s <<'SH'
+set -euo pipefail
+kcadm=/opt/keycloak/bin/kcadm.sh
+cfg=$(mktemp); trap 'rm -f "$cfg"' EXIT
+$kcadm config credentials --config "$cfg" --server http://localhost:8080 --realm master \
+  --user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD" >/dev/null
+$kcadm get realms/tenantry --config "$cfg" --fields adminPermissionsEnabled --format csv --noquotes
+SH
+}
+# The group sync worker's service account (tenantry-sync) and what its token
+# carries, with the admin API scope (IMPLEMENTATION-PLAN §5.2):
+# - with fine-grained admin permissions (architecture/06 §7, keycloak-fgap.py):
+#   exactly query-users and query-groups of realm-management, the rest coming
+#   from the permissions, which keycloak-fgap.py check verifies (no group with
+#   a role mapping, every platform-admin in the marker group, the denying
+#   permission in place);
+# - without: exactly manage-users and query-groups. This branch goes once
+#   the permissions are on the lab.
 sync_token_rights() {
-  local token access scope
+  local token access scope want fgap roles out
+  fgap="$(fgap_enabled)" || { echo "cannot read the realm's adminPermissionsEnabled"; return 1; }
+  want='["manage-users", "query-groups"]'
+  [[ "${fgap}" == true ]] && want='["query-groups", "query-users"]'
   token="$(keycloak_token tenantry-sync TENANTRY_SYNC_CLIENT_SECRET)" || return 1
   access="$(jwt_claim "${token}" resource_access)" scope="$(jwt_claim "${token}" scope)"
-  [[ "${access}" == '{"realm-management": {"roles": ["manage-users", "query-groups"]}}' ||
-    "${access}" == '{"realm-management": {"roles": ["query-groups", "manage-users"]}}' ]] &&
-    [[ " ${scope//\"/} " == *" kc-admin-api "* ]] || { echo "resource_access ${access}, scope ${scope}"; return 1; }
+  roles="$(python3 -c 'import json, sys; a = json.loads(sys.argv[1]) or {}; print(json.dumps(sorted(a.get("realm-management", {}).get("roles", []))) if list(a) == ["realm-management"] else "other clients: " + sys.argv[1])' "${access}")"
+  [[ "${roles}" == "${want}" && " ${scope//\"/} " == *" kc-admin-api "* ]] ||
+    { echo "admin permissions ${fgap}: realm-management roles ${roles}, want ${want}; scope ${scope}"; return 1; }
+  if [[ "${fgap}" == true ]]; then
+    [[ -f "${CLUSTER_DIR}/keycloak-fgap.py" ]] || { echo "admin permissions are on but keycloak-fgap.py is missing"; return 1; }
+    out="$(python3 "${CLUSTER_DIR}/keycloak-fgap.py" check | kubectl -n keycloak exec -i keycloak-0 -- bash -s 2>&1)" ||
+      { tail -3 <<<"${out}"; return 1; }
+  fi
 }
 
 check "Keycloak is ready" field_is statefulset/keycloak '{.status.readyReplicas}' 1 keycloak
