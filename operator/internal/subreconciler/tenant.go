@@ -3,6 +3,7 @@ package subreconciler
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -13,9 +14,24 @@ import (
 	"github.com/thaihoc1310/tenantry/operator/internal/render"
 )
 
+// ReasonTenantTerminating: the Tenant of a previous Workspace of the same
+// name is still being deleted.
+const ReasonTenantTerminating = "TenantTerminating"
+
 // Tenant applies the Capsule Tenant of ws and reports CapsuleTenantReady
 // (sub-reconciler tenant). It returns the Tenant as the API server has it.
 func Tenant(ctx context.Context, c client.Client, scheme *runtime.Scheme, ws *v1.PlatformWorkspace, o render.Options) (Result, *unstructured.Unstructured) {
+	// A force-deleted Workspace of the same name may have left its Tenant
+	// terminating behind a stuck Pod: Capsule finishes it once the Pod goes.
+	// No watch maps the old Tenant to this CR, hence a slow look again.
+	live := &unstructured.Unstructured{}
+	live.SetGroupVersionKind(render.TenantGVK)
+	if err := c.Get(ctx, client.ObjectKey{Name: ws.Name}, live); err == nil && live.GetDeletionTimestamp() != nil {
+		r := failed(v1.ConditionCapsuleTenantReady, ReasonTenantTerminating,
+			"Tenant "+ws.Name+" of a previous Workspace of this name is still being deleted; it goes once its Namespaces are gone")
+		r.Wait, r.After = false, 30*time.Second
+		return r, nil
+	}
 	t, err := ApplyTenant(ctx, c, scheme, ws, o, false)
 	if err != nil {
 		return failure(v1.ConditionCapsuleTenantReady, err), nil
@@ -48,6 +64,9 @@ func TenantState(conditionType string, t *unstructured.Unstructured) Result {
 		}
 		if cond["status"] == "True" {
 			return ok(conditionType)
+		}
+		if cond["reason"] == capsuleReconciling {
+			return waiting(conditionType, "waiting for Capsule to reconcile Tenant "+t.GetName())
 		}
 		return failed(conditionType, ReasonCapsuleNotReady, fmt.Sprintf("Capsule: %v: %v", cond["reason"], cond["message"]))
 	}

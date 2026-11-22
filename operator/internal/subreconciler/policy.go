@@ -3,6 +3,9 @@ package subreconciler
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -57,6 +60,65 @@ func Policy(ctx context.Context, c client.Client, scheme *runtime.Scheme, ws *v1
 	return ok(t), quota
 }
 
+// capsuleReconciling is the reason Capsule gives Ready=False while it is
+// still working on an object, which under load can last a minute: under
+// way, not a failure.
+const capsuleReconciling = "Reconciling"
+
+// replicationRaceGrace is how long a GlobalTenantResource may stay
+// Ready=False from a race before it counts as a failure. Capsule 0.15.2
+// replicates into a new Namespace from two controllers at once and the one
+// that loses the race fails: AlreadyExists when both create an object
+// (createTarget), Conflict ("the object has been modified") when both update
+// it; its next reconcile, a few seconds later, succeeds (seen on the lab). Past this, Capsule is stuck for
+// real and the Workspace must say so.
+const replicationRaceGrace = 2 * time.Minute
+
+// raceMessages are the item errors of those races, all seen on the lab:
+// both controllers create an object, both update it, or one writes into a
+// Namespace being deleted (Capsule reads its state from a cache).
+var raceMessages = []string{
+	"already exists",
+	"the object has been modified",
+	"because it is being terminated",
+}
+
+// now is time.Now, replaced in tests.
+var now = time.Now
+
+// replicationRace looks at a replication's items when it is Ready=False:
+// retrying is true while, within replicationRaceGrace, every failed item
+// failed only because another writer created or changed it first, or no
+// item failed at all (the condition is behind its items). detail carries the items' own
+// messages either way.
+func replicationRace(obj *unstructured.Unstructured, cond map[string]any) (retrying bool, detail string) {
+	items, found, _ := unstructured.NestedSlice(obj.Object, "status", "processedItems")
+	if !found {
+		return false, ""
+	}
+	var messages []string
+	raced := true
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		st, _ := item["status"].(map[string]any)
+		if st == nil || st["status"] != "False" {
+			continue
+		}
+		msg, _ := st["message"].(string)
+		messages = append(messages, msg)
+		raced = raced && slices.ContainsFunc(raceMessages, func(m string) bool { return strings.Contains(msg, m) })
+	}
+	detail = strings.Join(messages, "; ")
+	if len(messages) == 0 {
+		detail = "every item is replicated, Capsule's condition is behind"
+	}
+	since, err := time.Parse(time.RFC3339, fmt.Sprint(cond["lastTransitionTime"]))
+	if err != nil || now().Sub(since) > replicationRaceGrace {
+		return false, detail
+	}
+	return raced, detail
+}
+
 // capsuleReady reads the Ready condition Capsule keeps on its objects, for
 // the object's current generation when Capsule reports one.
 func capsuleReady(t string, obj *unstructured.Unstructured, what string) (Result, bool) {
@@ -71,6 +133,14 @@ func capsuleReady(t string, obj *unstructured.Unstructured, what string) (Result
 		}
 		if cond["status"] == "True" {
 			return Result{}, true
+		}
+		if cond["reason"] == capsuleReconciling {
+			return waiting(t, "waiting for Capsule to reconcile "+what), false
+		}
+		if retrying, detail := replicationRace(obj, cond); retrying {
+			return waiting(t, "waiting for Capsule to retry "+what+": "+detail), false
+		} else if detail != "" {
+			return failed(t, ReasonCapsuleNotReady, fmt.Sprintf("Capsule: %s: %v: %v: %s", what, cond["reason"], cond["message"], detail)), false
 		}
 		return failed(t, ReasonCapsuleNotReady, fmt.Sprintf("Capsule: %s: %v: %v", what, cond["reason"], cond["message"])), false
 	}

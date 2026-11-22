@@ -1,0 +1,4 @@
+n,ready_p50_s,ready_p95_s,ready_max_s,all_ready_s,all_deleted_s,apiserver_requests_all,operator_requests,capsule_requests,operator_cpu_peak_m,operator_mem_peak_mi,capsule_cpu_peak_m,capsule_mem_peak_mi
+10,102,141.8,151.1,155,15,11489,2260,8875,20,22,101,50
+20,155.8,232.3,232.5,235,27,21633,3418,17595,31,25,103,53
+50,230.9,528.5,529.1,537,98,56204,9182,46589,64,34,160,65

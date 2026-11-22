@@ -1,0 +1,4 @@
+environment,time_to_ready_s,idle_cpu_millicores,idle_memory_mib,extra_pods,notes
+kind cluster,33.4,100,655,9,"kind v0.32.0, node v1.36.1, image cached, one control-plane container, docker stats"
+vcluster (1st),26.9,40,303,2,"chart loft/vcluster 0.37.7 in the kind host, images preloaded; syncer container from crictl stats, plus a synced CoreDNS Pod"
+vcluster (2nd),24.8,40,304,2,"same, second instance"

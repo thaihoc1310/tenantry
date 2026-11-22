@@ -13,3 +13,7 @@ tolerations:
 # kubeadm's admin group: 10-nodes.sh labels and taints the system pool.
 nodeLabelAdmins:
   - kubeadm:cluster-admins
+
+# Prometheus metrics over HTTPS (Service tenantry-operator-metrics:8443).
+metrics:
+  enabled: true

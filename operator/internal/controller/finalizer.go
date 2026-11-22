@@ -119,13 +119,20 @@ func (r *PlatformWorkspaceReconciler) finalize(ctx context.Context, ws *v1.Platf
 	case !apierrors.IsNotFound(err):
 		return ctrl.Result{}, err
 	}
+	// Under :force with Namespaces still held (a stuck Pod), Capsule's own
+	// finalizer keeps the Tenant until they are gone: the Tenant is deleted
+	// but not waited for. Its owners and RoleBindings went in step 1, so
+	// nobody of the tenant reaches what is left.
+	forced := ws.Annotations[v1.AnnotationForceDelete] == "true" && len(namespaces) > 0
 	if tenantExists {
 		if tenant.GetDeletionTimestamp() == nil {
 			if err := r.Delete(ctx, tenant); err != nil && !apierrors.IsNotFound(err) {
 				return ctrl.Result{}, err
 			}
 		}
-		return progress("waiting for Tenant " + ws.Name + " to go away")
+		if !forced {
+			return progress("waiting for Tenant " + ws.Name + " to go away")
+		}
 	}
 
 	// 5. The IPPool, once Calico gives out no address of the CIDR: the
@@ -191,8 +198,44 @@ func (r *PlatformWorkspaceReconciler) finalize(ctx context.Context, ws *v1.Platf
 	if r.Proxy != nil {
 		r.Proxy.Forget(ws.Name)
 	}
+	if forced {
+		r.Recorder.Eventf(ws, nil, corev1.EventTypeWarning, "ForceDeleteLeftovers", "Finalize",
+			"force-delete left Tenant %s and Namespaces %s terminating; stuck Pods: %s",
+			ws.Name, strings.Join(names(namespaces), ", "), r.stuckPods(ctx, namespaces))
+	}
 	controllerutil.RemoveFinalizer(ws, v1.WorkspaceFinalizer)
 	return ctrl.Result{}, client.IgnoreNotFound(r.Update(ctx, ws))
+}
+
+func names(namespaces []corev1.Namespace) []string {
+	var out []string
+	for _, ns := range namespaces {
+		out = append(out, ns.Name)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// stuckPods names the Pods still in namespaces, which hold their deletion.
+func (r *PlatformWorkspaceReconciler) stuckPods(ctx context.Context, namespaces []corev1.Namespace) string {
+	if r.APIReader == nil {
+		return "unknown"
+	}
+	var out []string
+	for _, ns := range namespaces {
+		var pods corev1.PodList
+		if err := r.APIReader.List(ctx, &pods, client.InNamespace(ns.Name)); err != nil {
+			return "unknown (" + err.Error() + ")"
+		}
+		for _, p := range pods.Items {
+			out = append(out, ns.Name+"/"+p.Name)
+		}
+	}
+	if len(out) == 0 {
+		return "none"
+	}
+	slices.Sort(out)
+	return strings.Join(out, ", ")
 }
 
 // revoked is true once the live Tenant has no owner but the operator and no

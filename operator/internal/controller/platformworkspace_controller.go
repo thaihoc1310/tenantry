@@ -47,6 +47,9 @@ type PlatformWorkspaceReconciler struct {
 	// Proxy runs sub-reconciler proxyaccess; nil leaves it out, and
 	// ProxyAccessReady with it.
 	Proxy *subreconciler.ProxyProber
+	// APIReader lists the Pods a force-delete leaves behind, straight from
+	// the API server, so the operator does not cache every Pod; nil skips them.
+	APIReader client.Reader
 }
 
 func (r *PlatformWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -134,9 +137,18 @@ func (r *PlatformWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		ws.Status.CapsuleTenantRef = tenant.GetName()
 	}
 	wait := false
+	after := probeAgain
 	for _, res := range results {
 		setCondition(ws, res.Condition)
 		wait = wait || res.Wait
+		if res.After > 0 && (after == 0 || res.After < after) {
+			after = res.After
+		}
+	}
+	// Everything after the Tenant waits on it; the old Tenant goes at its
+	// own pace, so look again slowly.
+	if tenantRes.Condition.Reason == subreconciler.ReasonTenantTerminating {
+		wait = false
 	}
 	ws.Status.Phase = phase(before.Status.Phase, ws.Status.Conditions, applicable(ws, r.Proxy != nil))
 	if ws.Status.Phase == v1.PhaseReady && (before.Status.Phase == "" || before.Status.Phase == v1.PhaseProvisioning) {
@@ -149,7 +161,7 @@ func (r *PlatformWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if wait {
 		return ctrl.Result{RequeueAfter: recheck}, nil
 	}
-	return ctrl.Result{RequeueAfter: probeAgain}, nil
+	return ctrl.Result{RequeueAfter: after}, nil
 }
 
 // merge folds the namespaces step into CapsuleTenantReady: the worse of the two.
