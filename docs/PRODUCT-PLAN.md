@@ -397,7 +397,7 @@ sharedPoolRefs: [shared-general]
 allowedNetworkPoolRefs: [onboarding-pod-network]
 ```
 
-Admin duyệt nguyên mẫu hoặc sửa trước khi bấm duyệt; grant đã cấp là snapshot, đổi policy sau đó không ảnh hưởng. Nâng quota, cấp thêm Cluster/compute mode/dedicated node về sau vẫn qua admin UI — policy chỉ là giá trị mặc định của cùng data model, không phải một luồng cấp phát riêng.
+Admin duyệt nguyên mẫu hoặc sửa trước khi bấm duyệt; grant đã cấp là snapshot, đổi policy sau đó không ảnh hưởng. Nâng quota, cấp thêm Cluster/shared pool/dedicated node về sau vẫn qua admin UI — policy chỉ là giá trị mặc định của cùng data model, không phải một luồng cấp phát riêng.
 
 ### 5.3 Reservation invariant
 
@@ -483,7 +483,7 @@ Portal chỉ trả về các ClusterGrant của Organization mà user đang thao
 
 - display name và trạng thái `Ready/Maintenance/Unavailable`;
 - quota còn lại;
-- compute mode được phép;
+- compute mode dùng được (suy ra theo 5.2);
 - số dedicated node `Ready` còn reservable capacity;
 - NetworkPool còn dùng được;
 - optional location/description.
@@ -678,7 +678,6 @@ IPAM service kiểm tra:
 - requested CIDR nằm hoàn toàn trong NetworkPool của đúng Organization và Cluster;
 - không overlap Pod CIDR Cluster, Service CIDR hoặc allocation khác trong Cluster;
 - prefix hợp lệ;
-- compute mode tương thích;
 - còn đủ địa chỉ.
 
 IPAM dùng database transaction + unique/exclusion constraint để chống race.

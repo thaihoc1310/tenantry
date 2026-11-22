@@ -59,7 +59,7 @@ stateDiagram-v2
 |---|---|---|---|
 | `[*]` | Wizard submit hoặc `POST /workspaces:validate` (dry-run) | `Draft` | Chưa ghi DB. `Draft` chỉ tồn tại trong request (giả định: không persist Draft) |
 | `Draft` | `POST /organizations/{orgId}/workspaces` với `Idempotency-Key`; actor là OrgOwner/OrgAdmin của đúng Organization | `Validating` | Bắt đầu chạy 17.1 bước 1–8 |
-| `Validating` | Tên/slug hợp lệ và unique; Cluster thuộc ClusterGrant và `Ready`; compute mode được grant; Shared: pool hợp lệ, Dedicated: node `Ready` và đủ remaining; có ít nhất một Owner group; group thuộc Org và đã `Synced`; entitlement/ClusterGrant budget đủ | `Reserving` | Không side effect ngoài log |
+| `Validating` | Tên/slug hợp lệ và unique; Cluster thuộc ClusterGrant và `Ready`; compute mode dùng được (Shared: grant có shared pool và pool hợp lệ; Dedicated: Organization có node grant, node `Ready` và đủ remaining); có ít nhất một Owner group; group thuộc Org và đã `Synced`; entitlement/ClusterGrant budget đủ | `Reserving` | Không side effect ngoài log |
 | `Validating` | Bất kỳ guard trên fail | `Failed` | Trả HTTP 4xx với error code (`CLUSTER_NOT_READY`, `DEDICATED_NODE_INSUFFICIENT_CAPACITY`, `CIDR_OVERLAP`, `GROUP_SYNC_PENDING`, ...). Không có row Workspace (giả định: Failed trước commit chỉ là kết quả API, không phải row) |
 | `Reserving` | Transaction: lock ClusterGrant, DedicatedNodeGrant (nếu Dedicated), range của NetworkPool; re-check invariant 5.3 dưới lock | `Provisioning` | Commit đồng thời: Workspace row, ClusterGrant reservation `Pending`, NodeReservation `Pending` (Dedicated), NetworkAllocation `Allocated`, Operation `Pending`, outbox event, audit |
 | `Reserving` | Re-check dưới lock fail (concurrent request đã lấy capacity/CIDR) | `Failed` | Rollback toàn bộ, trả 409 kèm code; không giữ gì |
@@ -221,7 +221,7 @@ stateDiagram-v2
 
 | From | Event / Guard | To | Side effects |
 |---|---|---|---|
-| `[*]` | IPAM trong transaction tạo Workspace: pool thuộc grant và đúng Cluster; compute mode tương thích; prefix ∈ `allowedPrefixLengths` (mặc định `defaultPrefixLength`); không overlap Pod CIDR Cluster, Service CIDR, allocation khác (mọi state trừ `Released`) trong Cluster; còn đủ địa chỉ | `Allocated` | Row `network_allocations` (workspace_id, cluster_id, pool_id, CIDR); exclusion constraint chống race; CR `spec.network.cidr` |
+| `[*]` | IPAM trong transaction tạo Workspace: pool thuộc grant và đúng Cluster; prefix ∈ `allowedPrefixLengths` (mặc định `defaultPrefixLength`); không overlap Pod CIDR Cluster, Service CIDR, allocation khác (mọi state trừ `Released`) trong Cluster; còn đủ địa chỉ | `Allocated` | Row `network_allocations` (workspace_id, cluster_id, pool_id, CIDR); exclusion constraint chống race; CR `spec.network.cidr` |
 | `Allocated` | Workspace Controller tạo IPPool `assignmentMode: Manual`, Namespace annotation | (giữ `Allocated`) | Condition `NetworkReady` True |
 | `Allocated` | Delete workflow bắt đầu (bước 2 của 17.4) | `Releasing` | CIDR vẫn bị coi là chiếm; không thể cấp lại |
 | `Releasing` | Controller: Namespace đã xóa, Calico WorkloadEndpoint và IPAM block của pool đã release, IPPool đã xóa | `Quarantined` | `quarantine_until = now + T`, T cấu hình được, mặc định 10 phút; audit |

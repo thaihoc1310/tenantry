@@ -146,7 +146,7 @@ flowchart TB
   B1["1. Name + slug preview<br/>'acme-solar' sẽ là tên Tenant"]:::st
   B2["2. Cluster<br/>auto-select nếu 1 grant"]:::auto
   B3["3. Remaining quota của grant<br/>(read-only)"]:::auto
-  B4["4. Compute mode<br/>Shared | Dedicated (disabled nếu grant không cho)"]:::st
+  B4["4. Compute mode<br/>Shared | Dedicated (disabled nếu grant không có shared pool / Organization chưa có dedicated node)"]:::st
   B5s["5a. Shared pool<br/>auto nếu 1 pool; hiện allocated/ratio×reservable"]:::auto
   B5d["5b. Dedicated node picker<br/>card: health, capacity state,<br/>remaining CPU/RAM/Pod, Workspaces đang dùng"]:::st
   B6["6. Resources<br/>Shared: requests + limits theo ratio<br/>Dedicated: requests = limits, khóa limits<br/>live check ≤ remaining"]:::st

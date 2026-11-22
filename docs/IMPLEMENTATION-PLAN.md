@@ -456,7 +456,7 @@ Trong một feature: trang (`*Page.vue`), component riêng của feature, và m�
      - Migrations cho mọi bảng mà bước duyệt ghi vào: `clusters`, `onboarding_policies`, `organization_entitlements`, `organization_cluster_grants`, `shared_compute_pools`, `network_pools`, `cluster_grant_shared_pools`, `cluster_grant_network_pools`, `groups`, `group_members` (đủ cột sync và tombstone).
      - `tenantry-seed`: `cluster-a`, onboarding policy theo spec §5.2.1, shared pool `shared-general`, NetworkPool `onboarding-pod-network`.
      - `RequirePlatformAdmin`; `GET /admin/organizations?status=Pending` trả kèm grant điền sẵn từ policy; `POST /admin/organizations/{id}:approve|reject`.
-     - Duyệt là một transaction: `Active`, entitlement, ClusterGrant đầy đủ (quota, compute mode, shared pool, NetworkPool), 3 group mặc định `admins/developers/viewers`, Owner vào `admins`, audit. Từ chối: `Rejected` + `review_note`, nhả slug.
+     - Duyệt là một transaction: `Active`, entitlement, ClusterGrant đầy đủ (quota, shared pool, NetworkPool), 3 group mặc định `admins/developers/viewers`, Owner vào `admins`, audit. Từ chối: `Rejected` + `review_note`, nhả slug.
      - Ranh giới với milestone sau: group nằm ở `sync_status=Pending` cho tới khi Group Sync Worker có ở M4. Pool ở M3 chỉ có bảng và dữ liệu seed; API và UI quản lý pool, capacity math thuộc M5.
   5. `GET /me`, `GET /organizations`, `/entitlement`, `/usage` (usage = 0 lúc này).
   6. **Web**: dựng khung `web/` theo mục 6 (Vue 3, Vite, Vue Router, TanStack Query, Element Plus, client TypeScript sinh từ OpenAPI bằng `make generate`), kèm bộ component dùng chung `ErrorState`, `EmptyState`, `QuotaBar`, `StatusBadge`. Gồm layout, login redirect, màn trống "xin tạo Organization" (báo `SLUG_TAKEN` tại chỗ), trạng thái yêu cầu (chờ, hoặc bị từ chối kèm lý do), org switcher, Overview hiển thị grant/quota, trang Admin duyệt yêu cầu.
@@ -763,7 +763,7 @@ make realm-export / realm-import
   - Từ M3, mỗi lần chạy script cài Keycloak có thêm một bước đồng bộ chạy lại được nhiều lần: cài đặt realm và client theo đúng file; user, group, membership và client secret đang có giữ nguyên.
   - Không bao giờ xóa realm rồi nạp lại: làm vậy `sub` của mọi user đổi, và row `users` của portal (khóa theo `(issuer, subject)`) mồ côi.
   - `make realm-export` kéo thay đổi làm trên UI về file để commit. Realm chứa user demo `alice/joe/bob/mallory` + `admin` có realm role `platform-admin`.
-- **Seed**: `tenantry-seed` idempotent: insert `clusters` (cluster-a, endpoints proxy/console/ingress domain), `onboarding_policies` theo mẫu spec §5.2.1, `shared_compute_pools` (`shared-general`, nodeSelector `tenantry.io/compute-pool=shared-general`, ratio 3.0), `network_pools` (`onboarding-pod-network` 10.240.0.0/16 org null), Organization demo `acme` + grant nếu flag `--demo`.
+- **Seed**: `tenantry-seed` idempotent: insert `clusters` (cluster-a, endpoints proxy/console/ingress domain), `onboarding_policies` theo mẫu spec §5.2.1, `shared_compute_pools` (`shared-general`, ratio 3.0; bảng không có cột selector, node của pool mang label `tenantry.io/compute-pool=<pool-id>` do operator gắn từ M5), `network_pools` (`onboarding-pod-network` 10.240.0.0/16 org null), Organization demo `acme` + grant nếu flag `--demo`.
 - **Pre-commit**: gofmt/golangci-lint, eslint/prettier, `make generate` diff check.
 
 ---
