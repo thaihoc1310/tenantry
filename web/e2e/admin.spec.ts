@@ -1,10 +1,10 @@
 // M5's acceptance on the cluster (IMPLEMENTATION-PLAN M5, "Đầu ra kiểm chứng"):
 // a Platform Admin creates an Organization with its owner and grant, takes
-// fdp-k8s-wk3 out of the shared pool on the portal (only the database changes
-// in M5) and gives it to the Organization, whose owner then sees the node and
-// its remaining capacity; an ordinary user is refused /admin/*. The lab's
-// database is put back as it was (wk3 in the pool again) even when a step
-// fails.
+// fdp-k8s-wk3 out of the shared pool on the portal and gives it to the
+// Organization, whose owner then sees the node and its remaining capacity; an
+// ordinary user is refused /admin/*. From M6 each step is an operation the
+// operator carries out on the node's labels. The lab is put back as it was
+// (wk3 in the pool again, dedicated to nobody) even when a step fails.
 import { expect, test, type Page } from '@playwright/test'
 import { adminPassword, logIn, signUp } from './support'
 
@@ -105,7 +105,6 @@ test('an Admin creates an Organization and gives it a dedicated node', async ({ 
     await owner.page.goto(`/orgs/${slug}/clusters`)
     const row = owner.page.locator('.el-table__row', { hasText: node })
     await expect(row).toContainText('2.5 of 2.5')
-    await expect(row).toContainText('Not ready') // the operator checks the node from M8
     await expect(owner.page.getByRole('heading', { name: 'Shared pool' })).toBeVisible()
     await shot(owner.page, 'org-clusters')
     const options = await api(owner.page, 'GET', `/organizations/${slug}/clusters/cluster-a/compute-options`)

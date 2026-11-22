@@ -17,14 +17,21 @@ INSERT INTO workspace_namespaces (id, workspace_id, cluster_id, name, source, st
 VALUES (@id, @workspace_id, @cluster_id, @name, @source, 'Active', @usage_snapshot);
 
 -- name: TimedOutOperations :many
--- Workspace operations delivered (Running) longer ago than the timeout, on a
--- cluster that is not Unavailable: time does not count while it is
--- (04-state-machines §6).
+-- Operations on this cluster delivered (Running) longer ago than the
+-- timeout, while the cluster is not Unavailable: time does not count while
+-- it is (04-state-machines §6).
 SELECT op.* FROM operations op
-JOIN workspaces w ON w.id = op.resource_id AND op.resource_type = 'Workspace'
-JOIN clusters c ON c.id = w.cluster_id
-WHERE op.state = 'Running' AND w.cluster_id = @cluster_id AND c.status <> 'Unavailable'
+JOIN clusters c ON c.id = @cluster_id
+WHERE op.state = 'Running' AND c.status <> 'Unavailable'
   AND op.updated_at < now() - make_interval(secs => @timeout_seconds::float8)
+  AND EXISTS (SELECT 1 FROM outbox_events e WHERE e.operation_id = op.id AND e.target_cluster_id = @cluster_id)
+ORDER BY op.id;
+
+-- name: RunningOperationsOf :many
+-- Delivered operations on this cluster's resources of the given types.
+SELECT op.* FROM operations op
+WHERE op.state = 'Running' AND op.resource_type = ANY(@resource_types::text[])
+  AND EXISTS (SELECT 1 FROM outbox_events e WHERE e.operation_id = op.id AND e.target_cluster_id = @cluster_id)
 ORDER BY op.id;
 
 -- name: RecordObservedNode :exec

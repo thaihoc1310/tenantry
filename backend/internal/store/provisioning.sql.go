@@ -210,12 +210,60 @@ func (q *Queries) RecordWorkspaceStatus(ctx context.Context, arg RecordWorkspace
 	return i, err
 }
 
+const runningOperationsOf = `-- name: RunningOperationsOf :many
+SELECT op.id, op.org_id, op.resource_type, op.resource_id, op.type, op.state, op.progress, op.error_code, op.error_message, op.correlation_id, op.created_by, op.created_at, op.updated_at, op.finished_at FROM operations op
+WHERE op.state = 'Running' AND op.resource_type = ANY($1::text[])
+  AND EXISTS (SELECT 1 FROM outbox_events e WHERE e.operation_id = op.id AND e.target_cluster_id = $2)
+ORDER BY op.id
+`
+
+type RunningOperationsOfParams struct {
+	ResourceTypes []string
+	ClusterID     string
+}
+
+// Delivered operations on this cluster's resources of the given types.
+func (q *Queries) RunningOperationsOf(ctx context.Context, arg RunningOperationsOfParams) ([]Operation, error) {
+	rows, err := q.db.Query(ctx, runningOperationsOf, arg.ResourceTypes, arg.ClusterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Operation
+	for rows.Next() {
+		var i Operation
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ResourceType,
+			&i.ResourceID,
+			&i.Type,
+			&i.State,
+			&i.Progress,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.CorrelationID,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const timedOutOperations = `-- name: TimedOutOperations :many
 SELECT op.id, op.org_id, op.resource_type, op.resource_id, op.type, op.state, op.progress, op.error_code, op.error_message, op.correlation_id, op.created_by, op.created_at, op.updated_at, op.finished_at FROM operations op
-JOIN workspaces w ON w.id = op.resource_id AND op.resource_type = 'Workspace'
-JOIN clusters c ON c.id = w.cluster_id
-WHERE op.state = 'Running' AND w.cluster_id = $1 AND c.status <> 'Unavailable'
+JOIN clusters c ON c.id = $1
+WHERE op.state = 'Running' AND c.status <> 'Unavailable'
   AND op.updated_at < now() - make_interval(secs => $2::float8)
+  AND EXISTS (SELECT 1 FROM outbox_events e WHERE e.operation_id = op.id AND e.target_cluster_id = $1)
 ORDER BY op.id
 `
 
@@ -224,9 +272,9 @@ type TimedOutOperationsParams struct {
 	TimeoutSeconds float64
 }
 
-// Workspace operations delivered (Running) longer ago than the timeout, on a
-// cluster that is not Unavailable: time does not count while it is
-// (04-state-machines §6).
+// Operations on this cluster delivered (Running) longer ago than the
+// timeout, while the cluster is not Unavailable: time does not count while
+// it is (04-state-machines §6).
 func (q *Queries) TimedOutOperations(ctx context.Context, arg TimedOutOperationsParams) ([]Operation, error) {
 	rows, err := q.db.Query(ctx, timedOutOperations, arg.ClusterID, arg.TimeoutSeconds)
 	if err != nil {

@@ -17,7 +17,6 @@ import (
 	"github.com/thaihoc1310/tenantry/backend/internal/apperr"
 	"github.com/thaihoc1310/tenantry/backend/internal/audit"
 	"github.com/thaihoc1310/tenantry/backend/internal/id"
-	"github.com/thaihoc1310/tenantry/backend/internal/org"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
 )
 
@@ -126,11 +125,13 @@ func (s *Service) Retry(ctx context.Context, userID string, platformAdmin bool, 
 	if err != nil {
 		return store.Operation{}, err
 	}
-	var role org.Role // empty for a Platform Admin who is not a member
+	// The organization roles (org.RoleOwner, org.RoleAdmin), spelled out so
+	// that services below org (reservation) can start operations.
+	var role string // empty for a Platform Admin who is not a member
 	if row.Role != nil {
-		role = org.Role(*row.Role)
+		role = *row.Role
 	}
-	if !platformAdmin && role != org.RoleOwner && role != org.RoleAdmin {
+	if !platformAdmin && role != "OrgOwner" && role != "OrgAdmin" {
 		return store.Operation{}, ErrForbidden
 	}
 

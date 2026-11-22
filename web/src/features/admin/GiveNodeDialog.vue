@@ -1,8 +1,7 @@
 <script setup lang="ts">
 // Give a free node of a cluster to an Organization (docs/design/mockups:
-// AdminClusters, "Give a node"; PRODUCT-PLAN §6.3). In M5 only the database
-// changes: the operator checks the node and labels it from M8, so the node
-// stays NotReady until then.
+// AdminClusters, "Give a node"; PRODUCT-PLAN §6.3). A node.grant operation
+// has the operator check the node and label it for the Organization.
 import { ElMessage } from 'element-plus'
 import { computed, reactive, watch } from 'vue'
 import { cores, cpu, gib, memory } from '@/api/units'
@@ -34,7 +33,7 @@ async function submit() {
       ...nodes,
       { name: form.node, systemReserve: { cpu: cpu(form.cpu), memory: memory(form.memory), pods: form.pods } },
     ])
-    ElMessage.success(`${form.node} is dedicated to ${org?.displayName}.`)
+    ElMessage.success(`${form.node} is dedicated to ${org?.displayName}; the operator checks and labels it now.`)
     open.value = false
   } catch (err) {
     showFailure(err)

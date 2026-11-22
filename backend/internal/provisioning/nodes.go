@@ -8,11 +8,13 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	v1 "github.com/thaihoc1310/tenantry/operator/api/v1alpha1"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/k8s"
+	"github.com/thaihoc1310/tenantry/backend/internal/operation"
 	"github.com/thaihoc1310/tenantry/backend/internal/reservation"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
 )
@@ -96,6 +98,9 @@ func (s *Syncer) syncNodes(ctx context.Context) error {
 	}
 	pools, err := s.cluster.SharedPools()
 	if err != nil {
+		return err
+	}
+	if err := s.finishNodeOperations(ctx, pools); err != nil {
 		return err
 	}
 	for _, p := range pools {
@@ -190,4 +195,90 @@ func poolSnapshot(p v1.PlatformSharedPool) ([]byte, error) {
 		snap.Ready, snap.Message = c.Status == "True", c.Message
 	}
 	return json.Marshal(snap)
+}
+
+// finishNodeOperations ends the sharedpool.update, node.grant and
+// node.revoke operations the operator has carried out: a pool CR reconciled
+// with the nodes the database has, a node grant reconciled Ready, a revoked
+// grant's CR gone. A refusal (a node not eligible or not clean) fails the
+// operation; a node not Ready yet is waited for, up to the timeout.
+func (s *Syncer) finishNodeOperations(ctx context.Context, pools []v1.PlatformSharedPool) error {
+	ops, err := s.q.RunningOperationsOf(ctx, store.RunningOperationsOfParams{
+		ClusterID: s.clusterID, ResourceTypes: []string{reservation.ResourceSharedPool, reservation.ResourceNodeGrant},
+	})
+	if err != nil || len(ops) == 0 {
+		return err
+	}
+	wantPools, err := reservation.SharedPoolCRs(ctx, s.q, s.clusterID)
+	if err != nil {
+		return err
+	}
+	want := map[string][]string{}
+	for _, p := range wantPools {
+		want[p.Name] = p.Spec.Nodes
+	}
+	havePools := map[string]v1.PlatformSharedPool{}
+	for _, p := range pools {
+		havePools[p.Name] = p
+	}
+	grants, err := s.cluster.NodeGrants()
+	if err != nil {
+		return err
+	}
+	haveGrants := map[string]v1.PlatformNodeGrant{}
+	for _, g := range grants {
+		haveGrants[g.Name] = g
+	}
+
+	for _, op := range ops {
+		var conds []metav1.Condition
+		switch {
+		case op.ResourceType == reservation.ResourceSharedPool:
+			p, ok := havePools[op.ResourceID]
+			if !ok || p.Status.ObservedGeneration != p.Generation || !sameNodes(p.Spec.Nodes, want[op.ResourceID]) {
+				continue
+			}
+			conds = p.Status.Conditions
+		case op.Type == "node.revoke":
+			if _, ok := haveGrants[op.ResourceID]; ok {
+				continue
+			}
+		default:
+			g, ok := haveGrants[op.ResourceID]
+			if !ok || g.Status.ObservedGeneration != g.Generation {
+				continue
+			}
+			conds = g.Status.Conditions
+		}
+		to, code, msg := operation.Succeeded, "", ""
+		if op.Type != "node.revoke" {
+			c := meta.FindStatusCondition(conds, v1.ConditionReady)
+			switch {
+			case c == nil || (c.Status != metav1.ConditionTrue && c.Reason == v1.ReasonNodeNotReady):
+				continue // not reported yet, or a node that may still come Ready
+			case c.Status != metav1.ConditionTrue:
+				to, code, msg = operation.Failed, "RECONCILE_FAILED", c.Reason+": "+c.Message
+			}
+		}
+		if _, _, err := operation.Move(ctx, s.q, op.ID, to, code, msg); err != nil {
+			return fmt.Errorf("operation %s: %w", op.ID, err)
+		}
+	}
+	return nil
+}
+
+func sameNodes(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, x := range a {
+		seen[x] = true
+	}
+	for _, x := range b {
+		if !seen[x] {
+			return false
+		}
+	}
+	return true
 }

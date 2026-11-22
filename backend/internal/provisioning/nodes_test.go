@@ -11,6 +11,7 @@ import (
 	v1 "github.com/thaihoc1310/tenantry/operator/api/v1alpha1"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/k8s"
+	"github.com/thaihoc1310/tenantry/backend/internal/reservation"
 )
 
 const nodesSeed = `
@@ -160,4 +161,90 @@ func countRows(t *testing.T, e *env, query string) int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// Operations on pools and dedicated nodes end when the operator has done
+// what the database says: a pool reconciled with its nodes, a node grant
+// Ready (a refusal fails it, a node not Ready yet is waited for), a revoked
+// grant's CR gone.
+func TestNodeOperations(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if _, err := e.db.Exec(ctx, nodesSeed); err != nil {
+		t.Fatal(err)
+	}
+	res := reservation.NewService(e.db)
+	pool, err := res.UpdateSharedPool(ctx, "usr-ann", "req-1", "cluster-a", "shared-general", reservation.SharedPool{
+		Name: "General", RatioHundredths: 200, Nodes: []string{"wk1"},
+	})
+	if err != nil || pool.Operation == nil {
+		t.Fatalf("pool change: %v %+v", err, pool.Operation)
+	}
+	e.deliver()
+	if got := e.cluster.get(k8s.SharedPools, "shared-general"); got == nil {
+		t.Fatal("pool CR not applied")
+	}
+	e.sync()
+	if o := e.op(pool.Operation.ID); o.State != "Running" {
+		t.Fatalf("succeeded before the operator reported: %s", o.State)
+	}
+	e.cluster.setStatus(k8s.SharedPools, "shared-general", &v1.PlatformSharedPoolStatus{ObservedGeneration: 1,
+		Conditions: []metav1.Condition{cond(v1.ConditionReady, true, "Labelled", "")}})
+	e.sync()
+	if o := e.op(pool.Operation.ID); o.State != "Succeeded" {
+		t.Fatalf("pool operation %+v", o)
+	}
+
+	_, ops, err := res.SetDedicatedNodes(ctx, "usr-ann", "req-2", "org-01", "cluster-a", []reservation.NodeRequest{{Name: "wk3"}, {Name: "wk2"}})
+	if err != nil || len(ops) != 1 {
+		t.Fatalf("give wk2: %v %d operations", err, len(ops))
+	}
+	grant := ops[0].ResourceID
+	e.deliver()
+	report := func(ok bool, reason string) {
+		e.cluster.setStatus(k8s.NodeGrants, grant, &v1.PlatformNodeGrantStatus{ObservedGeneration: 1,
+			Conditions: []metav1.Condition{cond(v1.ConditionReady, ok, reason, "the node has tenant Pods")}})
+		e.sync()
+	}
+	report(false, v1.ReasonNodeNotReady)
+	if o := e.op(ops[0].ID); o.State != "Running" {
+		t.Fatalf("a node not Ready yet failed the operation: %s", o.State)
+	}
+	report(false, v1.ReasonNodeNotClean)
+	if o := e.op(ops[0].ID); o.State != "Failed" || o.ErrorCode != "RECONCILE_FAILED" || o.ErrorMessage != "NodeNotClean: the node has tenant Pods" {
+		t.Fatalf("refused grant: %+v", o)
+	}
+
+	_, ops, err = res.SetDedicatedNodes(ctx, "usr-ann", "req-3", "org-01", "cluster-a", nil)
+	if err != nil || len(ops) != 2 || ops[0].Type != "node.revoke" {
+		t.Fatalf("revoke both: %v %+v", err, ops)
+	}
+	// nodegrant-1 (wk3, from the seed) was never applied: its delete finds nothing.
+	e.deliver()
+	e.deliver()
+	e.sync()
+	for _, op := range ops {
+		if o := e.op(op.ID); o.State != "Succeeded" {
+			t.Fatalf("revoke %s: %+v", op.ResourceID, o)
+		}
+	}
+	if e.cluster.get(k8s.NodeGrants, grant) != nil {
+		t.Fatal("revoked grant's CR still there")
+	}
+
+	// A pool change the operator never reports on times out.
+	pool, err = res.UpdateSharedPool(ctx, "usr-ann", "req-4", "cluster-a", "shared-general", reservation.SharedPool{
+		Name: "General", RatioHundredths: 200, Nodes: []string{"wk1", "wk2"},
+	})
+	if err != nil || pool.Operation == nil {
+		t.Fatalf("wk2 back into the pool: %v", err)
+	}
+	e.deliver() // the operator has not reconciled this generation
+	if _, err := e.db.Exec(ctx, `UPDATE operations SET updated_at = now() - interval '11 minutes' WHERE id = $1`, pool.Operation.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.sync()
+	if o := e.op(pool.Operation.ID); o.State != "Failed" || o.ErrorCode != ReconcileTimeout {
+		t.Fatalf("pool operation past the timeout: %+v", o)
+	}
 }

@@ -88,8 +88,23 @@ func TestSharedPools(t *testing.T) {
 	sgBody := func(nodes string) string {
 		return `{"name":"Shared general","allocationOvercommitRatio":3,"systemReserve":` + reserve + `,"nodes":` + nodes + `}`
 	}
-	if code, body := put("shared-general", sgBody(`["wk2"]`)); code != 200 || !strings.Contains(string(body), `"reservable":{"cpu":"2500m"`) {
+	code, body = put("shared-general", sgBody(`["wk2"]`))
+	var changed oapi.SharedPool
+	if code != 200 || !strings.Contains(string(body), `"reservable":{"cpu":"2500m"`) || json.Unmarshal(body, &changed) != nil ||
+		changed.Operation == nil || changed.Operation.Type != "sharedpool.update" || changed.Operation.OrgId != nil {
 		t.Fatalf("take wk3 out: %d %s", code, body)
+	}
+	// The pool's CR goes to the cluster under an operation of no organization.
+	var payload string
+	if err := db.QueryRow(context.Background(), `SELECT payload::text FROM outbox_events WHERE operation_id = $1 AND type = 'sharedpool.apply'`,
+		changed.Operation.Id).Scan(&payload); err != nil || !strings.Contains(payload, `"spec": {"nodes": ["wk2"]}`) ||
+		!strings.Contains(payload, `"name": "shared-general"`) {
+		t.Fatalf("outbox %s (%v)", payload, err)
+	}
+	// Nodes unchanged: nothing for the cluster.
+	if code, body := put("shared-general", strings.Replace(sgBody(`["wk2"]`), `"allocationOvercommitRatio":3`, `"allocationOvercommitRatio":2`, 1)); code != 200 ||
+		strings.Contains(string(body), `"operation"`) {
+		t.Fatalf("ratio only: %d %s", code, body)
 	}
 	if code, body := put("gpu", strings.Replace(pool("gpu", `["wk3"]`), `"id":"gpu",`, "", 1)); code != 200 {
 		t.Fatalf("wk3 into gpu: %d %s", code, body)
@@ -134,8 +149,13 @@ func TestDedicatedNodes(t *testing.T) {
 	}
 	code, body := put(orgID, "cluster-a", node("wk3"))
 	var l oapi.DedicatedNodeList
-	if code != 200 || json.Unmarshal(body, &l) != nil || len(l.Items) != 1 {
+	if code != 200 || json.Unmarshal(body, &l) != nil || len(l.Items) != 1 || l.Operations == nil || len(*l.Operations) != 1 ||
+		(*l.Operations)[0].Type != "node.grant" || *(*l.Operations)[0].OrgId != orgID {
 		t.Fatalf("grant wk3: %d %s", code, body)
+	}
+	if n := count(t, db, `SELECT count(*) FROM outbox_events WHERE type = 'nodegrant.apply' AND payload->'spec'->>'nodeName' = 'wk3'
+		AND payload->'spec'->>'organizationId' = $1`, orgID); n != 1 {
+		t.Fatal("no node grant CR in the outbox")
 	}
 	// 3 CPU / 11.5Gi less 0.5 CPU / 1.5Gi: 2.5 CPU / 10Gi reservable (the M8 demo node).
 	d := l.Items[0]
@@ -169,7 +189,7 @@ func TestDedicatedNodes(t *testing.T) {
 	}
 	// Changing the reserve of a node kept.
 	code, body = put(orgID, "cluster-a", `{"nodes":[{"name":"wk3","systemReserve":{"cpu":"1","memory":"2Gi","pods":10}}]}`)
-	if code != 200 || !strings.Contains(string(body), `"reservable":{"cpu":"2","memory":"9728Mi"`) {
+	if code != 200 || !strings.Contains(string(body), `"reservable":{"cpu":"2","memory":"9728Mi"`) || strings.Contains(string(body), `"operations"`) {
 		t.Fatalf("change the reserve: %d %s", code, body)
 	}
 	if code, _ := put(orgID, "cluster-b", node("wk3")); code != 404 {
@@ -177,8 +197,13 @@ func TestDedicatedNodes(t *testing.T) {
 	}
 
 	// Revoke, and wk3 goes back to the pool: the lab's database as before.
-	if code, body := put(orgID, "cluster-a", `{"nodes":[]}`); code != 200 || !strings.Contains(string(body), `"items":[]`) {
+	if code, body := put(orgID, "cluster-a", `{"nodes":[]}`); code != 200 || !strings.Contains(string(body), `"items":[]`) ||
+		!strings.Contains(string(body), `"type":"node.revoke"`) {
 		t.Fatalf("revoke: %d %s", code, body)
+	}
+	if n := count(t, db, `SELECT count(*) FROM outbox_events e JOIN dedicated_node_grants g ON g.id = e.payload->>'name'
+		WHERE e.type = 'nodegrant.delete' AND g.node_name = 'wk3'`); n != 1 {
+		t.Fatal("no node grant delete in the outbox")
 	}
 	if n := count(t, db, `SELECT count(*) FROM dedicated_node_grants WHERE node_name = 'wk3' AND revoked_at IS NOT NULL`); n != 1 {
 		t.Fatal("not revoked")

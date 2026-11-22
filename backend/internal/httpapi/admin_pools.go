@@ -73,6 +73,10 @@ func fromSharedPool(v reservation.PoolView) oapi.SharedPool {
 		SystemReserve: fromCapacity(reserve), Nodes: v.Nodes,
 	}
 	p.Capacity.Reservable, p.Capacity.Ceiling, p.Capacity.Allocated = fromCapacity(v.Reservable), fromCapacity(v.Ceiling), fromCapacity(v.Allocated)
+	if v.Operation != nil {
+		op := toOperation(*v.Operation)
+		p.Operation = &op
+	}
 	return p
 }
 
@@ -95,7 +99,7 @@ func (s server) CreateSharedPool(ctx context.Context, req oapi.CreateSharedPoolR
 		return nil, err
 	}
 	p.ID = string(b.Id)
-	v, err := s.clusters.CreateSharedPool(ctx, userID(ctx), string(req.ClusterId), p)
+	v, err := s.clusters.CreateSharedPool(ctx, userID(ctx), requestID(ctx), string(req.ClusterId), p)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +111,7 @@ func (s server) PutSharedPool(ctx context.Context, req oapi.PutSharedPoolRequest
 	if err != nil {
 		return nil, err
 	}
-	v, err := s.clusters.UpdateSharedPool(ctx, userID(ctx), string(req.ClusterId), string(req.PoolId), p)
+	v, err := s.clusters.UpdateSharedPool(ctx, userID(ctx), requestID(ctx), string(req.ClusterId), string(req.PoolId), p)
 	if err != nil {
 		return nil, err
 	}
@@ -207,13 +211,20 @@ func (s server) PutDedicatedNodes(ctx context.Context, req oapi.PutDedicatedNode
 		}
 		nodes = append(nodes, reservation.NodeRequest{Name: n.Name, SystemReserve: r})
 	}
-	out, err := s.clusters.SetDedicatedNodes(ctx, userID(ctx), req.OrgId, string(req.ClusterId), nodes)
+	out, ops, err := s.clusters.SetDedicatedNodes(ctx, userID(ctx), requestID(ctx), req.OrgId, string(req.ClusterId), nodes)
 	if err != nil {
 		return nil, err
 	}
 	resp := oapi.DedicatedNodeList{Items: make([]oapi.DedicatedNode, 0, len(out))}
 	for _, d := range out {
 		resp.Items = append(resp.Items, toDedicatedNode(d))
+	}
+	if len(ops) > 0 {
+		list := make([]oapi.Operation, len(ops))
+		for i, op := range ops {
+			list[i] = toOperation(op)
+		}
+		resp.Operations = &list
 	}
 	return oapi.PutDedicatedNodes200JSONResponse(resp), nil
 }

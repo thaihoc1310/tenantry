@@ -47,6 +47,7 @@ type SharedPool struct {
 }
 
 // PoolView is a shared pool with its nodes and capacity (architecture/05 §4).
+// Operation is the sharedpool.update a change of nodes started, if any.
 type PoolView struct {
 	store.SharedComputePool
 	RatioHundredths int64
@@ -54,6 +55,7 @@ type PoolView struct {
 	Reservable      Capacity
 	Ceiling         Capacity
 	Allocated       Capacity
+	Operation       *store.Operation
 }
 
 func (p *SharedPool) check() error {
@@ -127,7 +129,7 @@ func poolReserve(p store.SharedComputePool) Capacity {
 }
 
 // CreateSharedPool adds a shared pool to a cluster, with free nodes.
-func (s *Service) CreateSharedPool(ctx context.Context, adminID, clusterID string, p SharedPool) (PoolView, error) {
+func (s *Service) CreateSharedPool(ctx context.Context, adminID, correlationID, clusterID string, p SharedPool) (PoolView, error) {
 	if !dnsLabel.MatchString(p.ID) {
 		return PoolView{}, apperr.Invalid("id", "must be a DNS label: lowercase letters, digits and hyphens, at most 63")
 	}
@@ -159,9 +161,14 @@ func (s *Service) CreateSharedPool(ctx context.Context, adminID, clusterID strin
 		if out, err = poolView(ctx, q, row, p.Nodes); err != nil {
 			return err
 		}
+		op, err := enqueuePool(ctx, q, clusterID, p.ID, adminID, correlationID)
+		if err != nil {
+			return err
+		}
+		out.Operation = &op
 		return audit.Record(ctx, q, audit.Event{
 			Actor: adminID, Action: audit.SharedPoolCreate, TargetType: "SharedPool", TargetID: p.ID,
-			Detail: map[string]any{"after": poolDetail(out)},
+			Detail: map[string]any{"after": poolDetail(out), "operationId": op.ID},
 		})
 	})
 	if c, ok := store.UniqueViolation(err); ok && c == "shared_compute_pools_pkey" {
@@ -175,7 +182,7 @@ func (s *Service) CreateSharedPool(ctx context.Context, adminID, clusterID strin
 // ponytail: refusing a change that brings the ceiling below what Shared
 // Workspaces hold (fewer nodes, a lower ratio, a larger reserve:
 // COMPUTE_POOL_CAPACITY_EXCEEDED) comes with those Workspaces (M8).
-func (s *Service) UpdateSharedPool(ctx context.Context, adminID, clusterID, poolID string, p SharedPool) (PoolView, error) {
+func (s *Service) UpdateSharedPool(ctx context.Context, adminID, correlationID, clusterID, poolID string, p SharedPool) (PoolView, error) {
 	if err := p.check(); err != nil {
 		return PoolView{}, err
 	}
@@ -212,9 +219,17 @@ func (s *Service) UpdateSharedPool(ctx context.Context, adminID, clusterID, pool
 		if out, err = poolView(ctx, q, row, p.Nodes); err != nil {
 			return err
 		}
+		detail := map[string]any{"before": poolDetail(before), "after": poolDetail(out)}
+		// Only the nodes reach the cluster: the operator labels them.
+		if !sameSet(before.Nodes, out.Nodes) {
+			op, err := enqueuePool(ctx, q, clusterID, poolID, adminID, correlationID)
+			if err != nil {
+				return err
+			}
+			out.Operation, detail["operationId"] = &op, op.ID
+		}
 		return audit.Record(ctx, q, audit.Event{
-			Actor: adminID, Action: audit.SharedPoolUpdate, TargetType: "SharedPool", TargetID: poolID,
-			Detail: map[string]any{"before": poolDetail(before), "after": poolDetail(out)},
+			Actor: adminID, Action: audit.SharedPoolUpdate, TargetType: "SharedPool", TargetID: poolID, Detail: detail,
 		})
 	})
 	return out, err
@@ -559,22 +574,23 @@ func DedicatedNodesOf(ctx context.Context, q *store.Queries, orgID, clusterID st
 //
 // ponytail: refusing to revoke a node that still holds reservations comes
 // with Dedicated Workspaces (M8).
-func (s *Service) SetDedicatedNodes(ctx context.Context, adminID, orgID, clusterID string, nodes []NodeRequest) ([]DedicatedNode, error) {
+func (s *Service) SetDedicatedNodes(ctx context.Context, adminID, correlationID, orgID, clusterID string, nodes []NodeRequest) ([]DedicatedNode, []store.Operation, error) {
 	names := make([]string, len(nodes))
 	for i, n := range nodes {
 		names[i] = n.Name
 		r := n.SystemReserve
 		if r.CPUMilli < 0 || r.MemoryBytes < 0 || r.Pods < 0 {
-			return nil, apperr.Invalid("nodes", "systemReserve must not be negative")
+			return nil, nil, apperr.Invalid("nodes", "systemReserve must not be negative")
 		}
 	}
 	if dup := duplicate(names); dup != "" {
-		return nil, apperr.Invalid("nodes", fmt.Sprintf("lists %q twice", dup))
+		return nil, nil, apperr.Invalid("nodes", fmt.Sprintf("lists %q twice", dup))
 	}
 	if len(nodes) > maxNodes {
-		return nil, apperr.Invalid("nodes", fmt.Sprintf("at most %d", maxNodes))
+		return nil, nil, apperr.Invalid("nodes", fmt.Sprintf("at most %d", maxNodes))
 	}
 	var out []DedicatedNode
+	var ops []store.Operation
 	err := store.InTx(ctx, s.db, func(tx pgx.Tx) error {
 		q := s.q.WithTx(tx)
 		o, err := q.LockOrganization(ctx, orgID)
@@ -637,20 +653,31 @@ func (s *Service) SetDedicatedNodes(ctx context.Context, adminID, orgID, cluster
 				return apperr.Invalid("nodes", fmt.Sprintf("%s is dedicated to another organization", n.Name))
 			}
 			alloc := Capacity{CPUMilli: node.AllocatableCpuMilli, MemoryBytes: node.AllocatableMemoryBytes, Pods: int64(node.AllocatablePods)}
-			if _, err := q.CreateDedicatedNodeGrant(ctx, store.CreateDedicatedNodeGrantParams{
+			g, err := q.CreateDedicatedNodeGrant(ctx, store.CreateDedicatedNodeGrantParams{
 				ID: id.New(id.NodeGrant), OrgID: orgID, ClusterID: clusterID, NodeName: n.Name,
 				AllocatableCpuMilli: alloc.CPUMilli, AllocatableMemoryBytes: alloc.MemoryBytes, AllocatablePods: int32(alloc.Pods),
 				SystemReserveCpuMilli: r.CPUMilli, SystemReserveMemoryBytes: r.MemoryBytes, SystemReservePods: int32(r.Pods),
 				CapacityState: CapacityState(Reservable(alloc, r), Capacity{}),
-			}); err != nil {
+			})
+			if err != nil {
 				return err
 			}
+			op, err := enqueueNodeGrant(ctx, q, g, false, adminID, correlationID)
+			if err != nil {
+				return err
+			}
+			ops = append(ops, op)
 		}
-		for name, g := range held {
-			if !slices.Contains(names, name) {
+		for _, g := range current {
+			if !slices.Contains(names, g.NodeName) {
 				if err := q.RevokeDedicatedNodeGrant(ctx, g.ID); err != nil {
 					return err
 				}
+				op, err := enqueueNodeGrant(ctx, q, g, true, adminID, correlationID)
+				if err != nil {
+					return err
+				}
+				ops = append(ops, op)
 			}
 		}
 		rows, err := q.ListLiveDedicatedNodes(ctx, store.ListLiveDedicatedNodesParams{OrgID: orgID, ClusterID: clusterID})
@@ -665,8 +692,32 @@ func (s *Service) SetDedicatedNodes(ctx context.Context, adminID, orgID, cluster
 		}
 		return audit.Record(ctx, q, audit.Event{
 			Actor: adminID, OrgID: orgID, Action: audit.DedicatedNodesUpdate, TargetType: "ClusterGrant", TargetID: clusterID,
-			Detail: map[string]any{"before": before, "after": after},
+			Detail: map[string]any{"before": before, "after": after, "operationIds": opIDs(ops)},
 		})
 	})
-	return out, err
+	if err != nil {
+		return nil, nil, err
+	}
+	return out, ops, nil
+}
+
+func opIDs(ops []store.Operation) []string {
+	out := make([]string, len(ops))
+	for i, op := range ops {
+		out[i] = op.ID
+	}
+	return out
+}
+
+// sameSet tells whether a and b hold the same names, in any order.
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, x := range a {
+		if !slices.Contains(b, x) {
+			return false
+		}
+	}
+	return true
 }

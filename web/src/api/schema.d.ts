@@ -1116,8 +1116,9 @@ export interface paths {
         };
         /**
          * The nodes of a cluster as last reported, free, in a pool or dedicated (Platform Admin)
-         * @description From M6 the operator reports them (PlatformNodeInventory); before
-         *     that, the seed writes them once.
+         * @description The operator reports them (PlatformNodeInventory) and the
+         *     provisioning worker copies them here; the seed writes them once
+         *     before the operator has.
          */
         get: operations["listClusterNodes"];
         put?: never;
@@ -1144,8 +1145,8 @@ export interface paths {
          * Add a shared pool to a cluster (Platform Admin)
          * @description The id is a DNS label unique across clusters; `system` is the label
          *     of the system pool and refused. A node that joins must be free: a
-         *     Ready worker of the cluster, in no pool and dedicated to nobody. Only
-         *     the database changes until the operator labels nodes (M6).
+         *     Ready worker of the cluster, in no pool and dedicated to nobody. A
+         *     `sharedpool.update` operation has the operator label them.
          */
         post: operations["createSharedPool"];
         delete?: never;
@@ -1169,8 +1170,10 @@ export interface paths {
          * Change a shared pool's name, overcommit ratio, system reserve and nodes (Platform Admin)
          * @description `nodes` is the whole list: a node left out leaves the pool (its Pods
          *     keep running: drain it yourself to take it out for good). A node
-         *     that joins must be free. Only the database changes until the
-         *     operator follows (M6); the audit event keeps before and after.
+         *     that joins must be free. A change of nodes starts a
+         *     `sharedpool.update` operation: the operator labels the pool's nodes
+         *     and takes the label off the others. The audit event keeps before
+         *     and after.
          */
         put: operations["putSharedPool"];
         post?: never;
@@ -1247,9 +1250,10 @@ export interface paths {
          * @description `nodes` is the whole set, under the organization's grant on the
          *     cluster (404 without one). A new node must be a worker of the cluster
          *     in no pool and dedicated to nobody; it starts `NotReady` until the
-         *     operator has checked it (M8). A node left out is revoked; a node kept
-         *     takes the system reserve given. Only the database changes in M5;
-         *     the audit event keeps before and after.
+         *     operator has checked it. A node left out is revoked; a node kept
+         *     takes the system reserve given. Each node given or taken back starts
+         *     a `node.grant` or `node.revoke` operation. The audit event keeps
+         *     before and after.
          */
         put: operations["putDedicatedNodes"];
         post?: never;
@@ -1762,6 +1766,8 @@ export interface components {
                 ceiling: components["schemas"]["NodeCapacity"];
                 allocated: components["schemas"]["NodeCapacity"];
             };
+            /** @description Set when the change gave the pool other nodes: the `sharedpool.update` that labels them on the cluster */
+            operation?: components["schemas"]["Operation"];
         };
         SharedPoolList: {
             items: components["schemas"]["SharedPool"][];
@@ -1812,6 +1818,8 @@ export interface components {
         };
         DedicatedNodeList: {
             items: components["schemas"]["DedicatedNode"][];
+            /** @description On a change: a `node.grant` per node given and a `node.revoke` per node taken back, which the cluster follows */
+            operations?: components["schemas"]["Operation"][];
         };
         /** @description A cluster as an organization sees it, without the ranges it reserves. */
         OrgCluster: {

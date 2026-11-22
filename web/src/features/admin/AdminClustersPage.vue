@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // Clusters registered with the platform, and the pools and nodes
 // Organizations can be given on them (docs/design/mockups: AdminClusters;
-// PRODUCT-PLAN §6, §7.1, §16.5). In M5 every change of pools and nodes is
-// written to the database only; the operator follows from M6.
+// PRODUCT-PLAN §6, §7.1, §16.5). A change of a pool's nodes or of a
+// dedicated node starts an operation the operator carries out (Operations).
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'

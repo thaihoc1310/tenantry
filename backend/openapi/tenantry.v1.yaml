@@ -1458,8 +1458,9 @@ paths:
       operationId: listClusterNodes
       summary: The nodes of a cluster as last reported, free, in a pool or dedicated (Platform Admin)
       description: |
-        From M6 the operator reports them (PlatformNodeInventory); before
-        that, the seed writes them once.
+        The operator reports them (PlatformNodeInventory) and the
+        provisioning worker copies them here; the seed writes them once
+        before the operator has.
       responses:
         "200":
           description: OK
@@ -1492,8 +1493,8 @@ paths:
       description: |
         The id is a DNS label unique across clusters; `system` is the label
         of the system pool and refused. A node that joins must be free: a
-        Ready worker of the cluster, in no pool and dedicated to nobody. Only
-        the database changes until the operator labels nodes (M6).
+        Ready worker of the cluster, in no pool and dedicated to nobody. A
+        `sharedpool.update` operation has the operator label them.
       parameters:
         - $ref: "#/components/parameters/idempotencyKeyRequired"
       requestBody:
@@ -1530,8 +1531,10 @@ paths:
       description: |
         `nodes` is the whole list: a node left out leaves the pool (its Pods
         keep running: drain it yourself to take it out for good). A node
-        that joins must be free. Only the database changes until the
-        operator follows (M6); the audit event keeps before and after.
+        that joins must be free. A change of nodes starts a
+        `sharedpool.update` operation: the operator labels the pool's nodes
+        and takes the label off the others. The audit event keeps before
+        and after.
       requestBody:
         required: true
         content:
@@ -1643,9 +1646,10 @@ paths:
         `nodes` is the whole set, under the organization's grant on the
         cluster (404 without one). A new node must be a worker of the cluster
         in no pool and dedicated to nobody; it starts `NotReady` until the
-        operator has checked it (M8). A node left out is revoked; a node kept
-        takes the system reserve given. Only the database changes in M5;
-        the audit event keeps before and after.
+        operator has checked it. A node left out is revoked; a node kept
+        takes the system reserve given. Each node given or taken back starts
+        a `node.grant` or `node.revoke` operation. The audit event keeps
+        before and after.
       requestBody:
         required: true
         content:
@@ -2554,6 +2558,9 @@ components:
             reservable: { $ref: "#/components/schemas/NodeCapacity" }
             ceiling: { $ref: "#/components/schemas/NodeCapacity" }
             allocated: { $ref: "#/components/schemas/NodeCapacity" }
+        operation:
+          description: "Set when the change gave the pool other nodes: the `sharedpool.update` that labels them on the cluster"
+          allOf: [{ $ref: "#/components/schemas/Operation" }]
 
     SharedPoolList:
       type: object
@@ -2659,6 +2666,10 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/DedicatedNode" }
+        operations:
+          type: array
+          description: "On a change: a `node.grant` per node given and a `node.revoke` per node taken back, which the cluster follows"
+          items: { $ref: "#/components/schemas/Operation" }
 
     OrgCluster:
       type: object

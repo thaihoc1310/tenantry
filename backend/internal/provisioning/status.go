@@ -258,6 +258,13 @@ func (s *Syncer) failTimedOut(ctx context.Context, crs []v1.PlatformWorkspace) e
 		byID[cr.Spec.WorkspaceID] = cr
 	}
 	for _, op := range ops {
+		if op.ResourceType != "Workspace" {
+			msg := fmt.Sprintf("the operator did not finish within %s", s.timeout)
+			if _, _, err := operation.Move(ctx, s.q, op.ID, operation.Failed, ReconcileTimeout, msg); err != nil {
+				return fmt.Errorf("operation %s: %w", op.ID, err)
+			}
+			continue
+		}
 		err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 			q := s.q.WithTx(tx)
 			ws, err := q.LockWorkspace(ctx, op.ResourceID)

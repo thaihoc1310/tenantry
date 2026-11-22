@@ -66,9 +66,11 @@ async function submit() {
     nodes: form.nodes,
   }
   try {
-    if (props.pool) await put.mutateAsync({ clusterId: props.clusterId, poolId: props.pool.id, body })
-    else await create.mutateAsync({ clusterId: props.clusterId, body: { id: form.id.trim(), ...body } })
-    ElMessage.success(props.pool ? 'Pool saved.' : `Pool ${form.id} added.`)
+    const saved = props.pool
+      ? await put.mutateAsync({ clusterId: props.clusterId, poolId: props.pool.id, body })
+      : await create.mutateAsync({ clusterId: props.clusterId, body: { id: form.id.trim(), ...body } })
+    const follows = saved.operation ? ' The operator labels the nodes now (see Operations).' : ''
+    ElMessage.success((props.pool ? 'Pool saved.' : `Pool ${form.id} added.`) + follows)
     open.value = false
   } catch (err) {
     if (err instanceof ApiError && err.field) errors.value = { [err.field]: err.message }
