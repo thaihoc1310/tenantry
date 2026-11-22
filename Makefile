@@ -65,6 +65,12 @@ run-worker: ## Run the worker loops locally (outbox events are only logged; no c
 	cd $(BACKEND) && go run ./cmd/tenantry-worker --loops=$(WORKER_LOOPS)
 
 .PHONY: e2e
+.PHONY: demo-preflight demo-reset
+demo-preflight: ## Is the lab ready for the defence demo? Read only; VERIFY=1 also runs cluster-verify (deploy/demo)
+	deploy/demo/preflight.py $(if $(VERIFY),--verify)
+demo-reset: ## Back to before the demo: removes the organization acme only; prints the plan unless CONFIRM=acme (deploy/demo)
+	deploy/demo/reset.py $(if $(CONFIRM),--confirm $(CONFIRM))
+
 e2e: ## End-to-end tests of the portal on the lab (signs up test accounts e2e*; E2E_SLOW=1 adds the 5-minute refresh test)
 	deploy/cluster/e2e.sh
 
