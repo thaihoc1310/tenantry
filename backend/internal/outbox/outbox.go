@@ -174,7 +174,7 @@ func (w *Worker) handle(ctx context.Context, e store.OutboxEvent) (err error) {
 }
 
 // LogHandler only logs events. It stands in until the provisioning worker
-// applies CRs to clusters (M4).
+// applies CRs to clusters (M6).
 func LogHandler(log *slog.Logger) Handler {
 	return HandlerFunc(func(_ context.Context, e store.OutboxEvent) error {
 		log.Info("outbox event delivered (log only)", "event_id", e.ID, "event_type", e.Type,

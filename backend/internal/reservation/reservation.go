@@ -243,7 +243,7 @@ type Allocation struct {
 
 // Allocations returns, for each grant, what its Workspaces hold.
 //
-// ponytail: zero until the workspaces table exists (M7); then the sums go here.
+// ponytail: zero until the workspaces table exists (M6); then the sums go here.
 func Allocations(grants []Grant) []Allocation {
 	out := make([]Allocation, len(grants))
 	for i, g := range grants {

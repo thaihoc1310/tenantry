@@ -27,7 +27,7 @@ type Usage struct {
 	Quota
 	Members     int32
 	Groups      int32
-	Workspaces  int32 // ponytail: 0 until Workspaces exist (M7)
+	Workspaces  int32 // ponytail: 0 until the workspaces table exists (M6)
 	Allocations []reservation.Allocation
 }
 

@@ -108,7 +108,7 @@ func (s *Service) Get(ctx context.Context, userID string, platformAdmin bool, op
 // sent again at once (OrgOwner, OrgAdmin, or a Platform Admin for any organization).
 //
 // A failure the controller reported has no undelivered event left; the
-// Workspace service will re-enqueue the apply for that case when it exists (M4).
+// Workspace service will re-enqueue the apply for that case when it exists (M6).
 func (s *Service) Retry(ctx context.Context, userID string, platformAdmin bool, opID string) (store.Operation, error) {
 	row, err := s.find(ctx, userID, platformAdmin, opID)
 	if err != nil {

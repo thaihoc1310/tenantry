@@ -30,7 +30,7 @@ CREATE TABLE shared_compute_pools (
     name                        text NOT NULL,
     allocation_overcommit_ratio numeric(4, 2) NOT NULL CHECK (allocation_overcommit_ratio >= 1),
     system_reserve              jsonb NOT NULL DEFAULT '{}',
-    capacity_snapshot           jsonb NOT NULL DEFAULT '{}', -- copied from PlatformSharedPool status (M5)
+    capacity_snapshot           jsonb NOT NULL DEFAULT '{}', -- copied from PlatformSharedPool status (M6)
     created_at                  timestamptz NOT NULL DEFAULT now(),
     updated_at                  timestamptz NOT NULL DEFAULT now()
 );
