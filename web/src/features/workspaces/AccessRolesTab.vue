@@ -30,11 +30,13 @@ const why = computed(() => (!props.manages ? 'Only owners and admins of the Orga
 
 const put = usePutBinding()
 const del = useDeleteBinding()
-const done = 'Members get the change with their next login, within 5 minutes.'
+// The revocation contract (architecture/06 §5), in the words the UI promises.
+const granted = 'Members get it with their next token, within 5 minutes.'
+const revoked = 'Kubernetes stops honouring it at once: the role binding is gone.'
 async function setRole(b: Schemas['WorkspaceBinding'], role: Role) {
   try {
     await put.mutateAsync({ id: props.ws.id, groupId: b.groupId, role })
-    ElMessage.success(`${b.groupName} is ${role} now. ${done}`)
+    ElMessage.success(`${b.groupName} is ${role} now. ${granted}`)
   } catch (err) {
     showFailure(err)
   }
@@ -42,7 +44,7 @@ async function setRole(b: Schemas['WorkspaceBinding'], role: Role) {
 async function remove(b: Schemas['WorkspaceBinding']) {
   try {
     await del.mutateAsync({ id: props.ws.id, groupId: b.groupId })
-    ElMessage.success(`${b.groupName} has no role here now. ${done}`)
+    ElMessage.success(`${b.groupName} has no role here now. ${revoked}`)
   } catch (err) {
     showFailure(err)
   }
@@ -65,7 +67,7 @@ async function add() {
   if (!g) return
   try {
     await put.mutateAsync({ id: props.ws.id, groupId: g.id, role: role.value })
-    ElMessage.success(`${g.name} is ${role.value} now. ${done}`)
+    ElMessage.success(`${g.name} is ${role.value} now. ${granted}`)
     adding.value = false
   } catch (err) {
     showFailure(err)
@@ -145,7 +147,8 @@ async function add() {
       </el-table>
     </div>
     <div class="t-panel-foot">
-      After a group is removed, its members lose Kubernetes access within 5 minutes and must log in again.
+      Removing a group's role here takes effect in Kubernetes at once. Removing a person from a group takes their
+      Kubernetes access away within 5 minutes, when their token expires; their portal access goes at once.
     </div>
   </TPanel>
   <TPanel title="What each role can do">

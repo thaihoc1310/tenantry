@@ -40,7 +40,8 @@ const roles = computed(() => {
         :items="[
           ['Role here', roles],
           ['Session', 'renewed every 5 minutes while you are logged in'],
-          ['If you lose a role', 'kubectl and the console stop working when your token expires, within 5 minutes'],
+          ['If your group loses its role here', 'kubectl and the console stop at once'],
+          ['If you leave the group', 'they stop when your token expires, within 5 minutes'],
         ]"
       />
     </TPanel>

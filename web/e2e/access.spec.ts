@@ -4,7 +4,9 @@
 // Ingress or create a Namespace; a Viewer only reads; neither reaches a
 // Workspace their groups have no role in. The web console (Headlamp) signs in
 // with the portal's Keycloak session, also for someone in 20 groups, whose
-// session cookie is the largest.
+// session cookie is the largest. Taking someone out of a group keeps the
+// revocation contract (architecture/06 §5): the portal at once, Kubernetes
+// when the token already issued expires, within 5 minutes.
 import { execFileSync } from 'node:child_process'
 import { expect, test, type Page } from '@playwright/test'
 import {
@@ -226,6 +228,54 @@ test('the console signs in someone in 20 groups', async ({ browser }) => {
   console.log(`console cookies for ${claims.groups?.length} groups, token ${token.length} bytes: ${sizes}`)
   await expect(headlamp.getByText(ws.ns).first()).toBeVisible({ timeout: 60_000 })
   await headlamp.screenshot({ path: test.info().outputPath('headlamp-20-groups.png'), fullPage: true })
+
+  await cleanUp()
+})
+
+test('someone taken out of a group loses the portal at once and Kubernetes within 5 minutes', async ({ browser }) => {
+  test.setTimeout(20 * 60_000)
+  const { owner, slug, admins } = await workspaceOrganization(browser, 'e2erv')
+  const page = owner.page
+  const groups = (await api(page, 'GET', `/organizations/${slug}/groups`)).body.items as { id: string; name: string }[]
+  const developers = groups.find((g) => g.name === 'developers')!
+  await until('developers in Keycloak', async () => {
+    const r = await api(page, 'GET', `/organizations/${slug}/groups`)
+    return (r.body.items as { name: string; syncStatus: string }[]).every((g) => g.syncStatus === 'Synced')
+      ? true
+      : undefined
+  })
+  const solar = await workspace(page, slug, 'solar', [
+    { groupId: admins.id, role: 'TenantOwner' },
+    { groupId: developers.id, role: 'Developer' },
+  ])
+  const joe = await member(browser, page, slug, [developers])
+  const before = await kubectlTokens(joe.page)
+  const exp = (JSON.parse(Buffer.from(before.id_token.split('.')[1]!, 'base64url').toString()) as { exp: number }).exp
+  expect(kubectlAs(before.id_token, '', '-n', solar.ns, 'get', 'pods').ok).toBe(true)
+
+  const removed = Date.now()
+  const r = await api(page, 'DELETE', `/groups/${developers.id}/members/${joe.userId}`)
+  expect([200, 204], JSON.stringify(r.body)).toContain(r.status)
+  // The portal: at once.
+  expect((await api(joe.page, 'GET', `/workspaces/${solar.id}`)).status).toBe(404)
+  await until('Joe out of developers in Keycloak', async () => {
+    const g = await api(page, 'GET', `/organizations/${slug}/groups`)
+    const dev = (g.body.items as { id: string; members: { userId: string }[] }[]).find((x) => x.id === developers.id)!
+    return dev.members.some((m) => m.userId === joe.userId) ? undefined : true
+  })
+  // A new token has no developers group and gets nothing.
+  const after = await kubectlTokens(joe.page)
+  expect(kubectlAs(after.id_token, '', '-n', solar.ns, 'get', 'pods').ok).toBe(false)
+  // The token issued before works until it expires, and not after.
+  const end = await until(
+    'the old token refused',
+    async () => (kubectlAs(before.id_token, '', '-n', solar.ns, 'get', 'pods').ok ? undefined : Date.now()),
+    7 * 60_000,
+  )
+  const seconds = Math.round((end - removed) / 1000)
+  test.info().annotations.push({ type: 'Kubernetes access ended after (s)', description: String(seconds) })
+  expect(seconds).toBeLessThanOrEqual(5 * 60 + 30)
+  expect(end / 1000).toBeGreaterThanOrEqual(exp - 30) // it lasted as long as the token, no longer
 
   await cleanUp()
 })
