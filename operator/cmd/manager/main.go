@@ -3,6 +3,7 @@ package main
 
 import (
 	"flag"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -12,26 +13,31 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	tenantryv1alpha1 "github.com/thaihoc1310/tenantry/operator/api/v1alpha1"
 	"github.com/thaihoc1310/tenantry/operator/internal/controller"
+	"github.com/thaihoc1310/tenantry/operator/internal/metrics"
 	"github.com/thaihoc1310/tenantry/operator/internal/render"
+	"github.com/thaihoc1310/tenantry/operator/internal/subreconciler"
 )
 
 func main() {
-	var metricsAddr, probeAddr, serviceAccount, registries, kubeContext string
+	var metricsAddr, probeAddr, serviceAccount, registries, kubeContext, proxyURL, proxyProbe string
 	// Outside the cluster (make run-operator): which kubeconfig context.
 	flag.StringVar(&kubeContext, "context", "", "kubeconfig context, when running outside the cluster")
 	var blockedAfter, resync time.Duration
 	// Every object is reconciled again this often, so drift that no watch
 	// reports is restored too (IMPLEMENTATION-PLAN M7, decision 8).
 	flag.DurationVar(&resync, "resync", 5*time.Minute, "how often every object is reconciled again")
-	// Metrics stay off until M12 scrapes them (plain HTTP, inside the cluster).
-	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "address of the metrics endpoint, 0 to disable")
+	// Metrics over HTTPS; a scraper needs a token allowed to get /metrics
+	// (ClusterRole tenantry-operator-metrics-reader of the chart).
+	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "address of the HTTPS metrics endpoint, 0 to disable")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "address of /healthz and /readyz")
 	flag.StringVar(&serviceAccount, "service-account", "",
 		"the operator's own username, system:serviceaccount:<namespace>:<name>: made an owner of every Tenant")
@@ -40,6 +46,10 @@ func main() {
 	flag.DurationVar(&blockedAfter, "blocked-after", 10*time.Minute,
 		"how long a delete waits for Namespaces before it reports BlockedByFinalizer")
 	opts := zap.Options{}
+	flag.StringVar(&proxyURL, "proxy-url", "http://capsule-proxy.capsule-system.svc:9001",
+		"Capsule Proxy inside the cluster, for the proxyaccess probe; empty leaves proxyaccess out")
+	flag.StringVar(&proxyProbe, "proxy-probe", "tenantry-proxy-probe",
+		"ServiceAccount of the proxyaccess probe, in the operator's namespace; it must have no RBAC right")
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
@@ -62,8 +72,10 @@ func main() {
 		os.Exit(1)
 	}
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
+		Scheme: scheme,
+		Metrics: metricsserver.Options{
+			BindAddress: metricsAddr, SecureServing: true, FilterProvider: filters.WithAuthenticationAndAuthorization,
+		},
 		HealthProbeBindAddress: probeAddr,
 		Cache:                  cache.Options{SyncPeriod: &resync},
 	})
@@ -77,6 +89,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	metrics.Register(mgr.GetClient())
 	must("setting up platformworkspace", (&controller.PlatformWorkspaceReconciler{
 		Client:   mgr.GetClient(),
 		Recorder: mgr.GetEventRecorder("tenantry-operator"),
@@ -85,6 +98,7 @@ func main() {
 			AllowedRegistries:      strings.Split(registries, ","),
 		},
 		BlockedAfter: blockedAfter,
+		Proxy:        proxyProber(mgr.GetClient(), serviceAccount, proxyURL, proxyProbe),
 	}).SetupWithManager(mgr))
 	must("setting up platformsharedpool", (&controller.PlatformSharedPoolReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr))
 	must("setting up platformnodegrant", (&controller.PlatformNodeGrantReconciler{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader()}).SetupWithManager(mgr))
@@ -94,4 +108,15 @@ func main() {
 
 	log.Info("starting")
 	must("running the manager", mgr.Start(ctrl.SetupSignalHandler()))
+}
+
+// proxyProber is the proxyaccess probe, a ServiceAccount next to the
+// operator's own; nil when no proxy URL is given.
+func proxyProber(c client.Client, operatorAccount, url, probe string) *subreconciler.ProxyProber {
+	if url == "" {
+		return nil
+	}
+	// system:serviceaccount:<namespace>:<name>, checked above.
+	namespace := strings.Split(operatorAccount, ":")[2]
+	return &subreconciler.ProxyProber{Client: c, URL: url, Namespace: namespace, Name: probe, HTTP: &http.Client{}}
 }

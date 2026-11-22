@@ -15,12 +15,17 @@ var baseConditions = []string{
 	v1.ConditionComputeReady, v1.ConditionCapsuleTenantReady, v1.ConditionPolicyReady, v1.ConditionIdentityBindingsReady,
 }
 
-// applicable: NetworkReady counts only for a Workspace with a network.
-func applicable(ws *v1.PlatformWorkspace) []string {
-	if ws.Spec.Network == nil {
-		return baseConditions
+// applicable: NetworkReady counts only for a Workspace with a network,
+// ProxyAccessReady only when the operator probes Capsule Proxy.
+func applicable(ws *v1.PlatformWorkspace, proxy bool) []string {
+	out := slices.Clone(baseConditions)
+	if ws.Spec.Network != nil {
+		out = append(out, v1.ConditionNetworkReady)
 	}
-	return append(slices.Clone(baseConditions), v1.ConditionNetworkReady)
+	if proxy {
+		out = append(out, v1.ConditionProxyAccessReady)
+	}
+	return out
 }
 
 // phase derives status.phase from the conditions (architecture/04 §1.4).

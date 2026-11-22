@@ -66,6 +66,8 @@ spec:
             managed: shared-general
           tenantry.io/managed:
             managed: "true"
+          tenantry.io/network:
+            managed: "true"
           tenantry.io/org:
             managed: 01jabc
           tenantry.io/organization-id:

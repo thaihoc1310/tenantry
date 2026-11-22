@@ -10,7 +10,20 @@ options:
   # kube-apiserver who that is (TokenReview), so the user is exactly the one
   # kube-apiserver sees: oidc:<sub> with oidc:-prefixed groups.
   authPreferredTypes: BearerToken
+  # The chart always passes --oidc-username-claim. Unused on the BearerToken
+  # path (the user comes from TokenReview); sub matches kube-apiserver.
+  oidcUsernameClaim: sub
   logLevel: 2
+  # Cluster-scoped objects only through GlobalProxySettings (none here):
+  # without it, every member of a Tenant reads the Nodes its nodeSelector
+  # picks, with the proxy's own rights (labels, internal IPs, every image
+  # cached on a shared node). With it a tenant gets an empty Node list, and
+  # a Node, its subresources or metrics are asked with the tenant's own
+  # rights: 403. Alpha in 0.15.3: check again on every proxy upgrade. The
+  # proxy reads API discovery once at start and exits if an APIService is
+  # down: cluster-verify checks every APIService is Available.
+  extraArgs:
+    - --feature-gates=ProxyClusterScoped=true
 certManager:
   generateCertificates: false
 

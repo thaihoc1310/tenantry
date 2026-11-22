@@ -12,6 +12,12 @@ allowedRegistries:
   - quay.io
   - registry.k8s.io
 
+# Prometheus metrics over HTTPS on port 8443 (Service tenantry-operator-metrics).
+# A scraper's token must be allowed to get /metrics: bind it to the
+# ClusterRole tenantry-operator-metrics-reader.
+metrics:
+  enabled: false
+
 # Log level of the operator: debug, info or error.
 logLevel: info
 

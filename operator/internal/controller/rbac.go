@@ -24,9 +24,16 @@ package controller
 
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+// Services: is a Route's target there, with its port.
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 // Pods: is a node clean, what still runs on it.
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // Nodes: labels and taints with keys tenantry.io/* and workspaces.tenantry.io/*
 // only, held by a ValidatingAdmissionPolicy from M8 (architecture/06 §7).
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups="";events.k8s.io,resources=events,verbs=create;patch
+// The metrics endpoint checks a scraper's token and right.
+// +kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
+// +kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
+// The token of the proxyaccess probe is a namespaced Role of the chart,
+// limited to that one ServiceAccount (templates/rbac.yaml).

@@ -188,6 +188,9 @@ func (r *PlatformWorkspaceReconciler) finalize(ctx context.Context, ws *v1.Platf
 
 	// 7. Done: the CR goes, and the worker releases what the Workspace held.
 	// A pass that read a stale copy may find the CR already gone: done too.
+	if r.Proxy != nil {
+		r.Proxy.Forget(ws.Name)
+	}
 	controllerutil.RemoveFinalizer(ws, v1.WorkspaceFinalizer)
 	return ctrl.Result{}, client.IgnoreNotFound(r.Update(ctx, ws))
 }

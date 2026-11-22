@@ -1,0 +1,18 @@
+# Used by verify.sh (M11): a Workspace the operator provisions, so that its
+# proxyaccess probe is a member of a Tenant; verify.sh then looks through
+# Capsule Proxy with the probe's token. Deleted when the check is done.
+apiVersion: tenantry.io/v1alpha1
+kind: PlatformWorkspace
+metadata:
+  name: cluster-verify-proxy
+spec:
+  organizationId: org-clusterverify
+  workspaceId: ws-cluster-verify-proxy
+  clusterId: cluster-verify
+  displayName: cluster-verify proxy
+  namespaceQuota: 1
+  namespaces: [web]
+  compute: {mode: Shared, sharedPoolId: shared-general}
+  storageClasses: [standard]
+  accessBindings:
+    - {groupSubject: "oidc:org_clusterverify:group_owner", role: TenantOwner}
