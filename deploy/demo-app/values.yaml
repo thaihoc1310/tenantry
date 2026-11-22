@@ -1,0 +1,24 @@
+# The page it serves.
+message: Hello from a Tenantry Workspace
+
+image:
+  repository: docker.io/nginxinc/nginx-unprivileged
+  tag: 1.27-alpine
+initImage:
+  repository: docker.io/library/busybox
+  tag: "1.37.0"
+
+# A PVC on standard (the Workspace's StorageClass); it counts against the
+# Workspace's storage quota.
+storage:
+  className: standard
+  size: 1Gi
+
+# Every container states what it needs: Workspaces refuse BestEffort Pods.
+resources:
+  requests: {cpu: 50m, memory: 32Mi}
+  limits: {cpu: 200m, memory: 64Mi}
+
+# The Route on the portal points at this Service and port.
+service:
+  port: 80
