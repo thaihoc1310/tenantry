@@ -194,7 +194,10 @@ test('the wizard creates a Shared Workspace that reaches Ready', async ({ browse
   await page.getByRole('link', { name: 'Access roles' }).click()
   await expect(page.getByRole('row', { name: /admins/ }).getByRole('button', { name: 'Remove' })).toBeDisabled()
   await expect(page.getByRole('button', { name: 'Add group' })).toBeEnabled({ timeout: 60_000 })
-  await page.getByRole('combobox', { name: 'Role of group developers' }).click()
+  await page
+    .getByRole('row', { name: /developers/ })
+    .locator('.el-select')
+    .click()
   await page.getByRole('option', { name: 'Viewer', exact: true }).click()
   await expect(page.getByText('developers is Viewer now.')).toBeVisible()
   await until('the binding changed', async () => {

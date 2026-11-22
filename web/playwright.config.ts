@@ -12,6 +12,9 @@ export default defineConfig({
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL: process.env.E2E_PORTAL ?? 'https://portal.tenantry.site',
+    // A click on something that never shows fails in 30 s instead of
+    // hanging until the test's timeout, so the cleanup still has time.
+    actionTimeout: 30_000,
     viewport: { width: 1440, height: 900 },
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
