@@ -253,13 +253,13 @@ Finalizer `tenantry.io/workspace` làm phần trong Cluster của delete (spec �
 
 1. gỡ owners và RoleBinding của Tenant → tenant mất quyền;
 2. bỏ `cordoned` trên Tenant: ở lab cũ, Capsule cordon chặn cả ghi của controller (kiểm lại trên 0.15.x ở M6);
-3. xóa Namespace của Tenant (cả portal và kubectl) → đợi biến mất (PVC và Pod mất theo Namespace); quá ngưỡng 10 phút → condition `Deleting=False, reason=BlockedByFinalizer` kèm tên object; worker map thành Operation `Blocked`;
+3. xóa Namespace của Tenant (cả portal và kubectl) → đợi biến mất (PVC và Pod mất theo Namespace); quá ngưỡng 10 phút → condition `Deleting=False, reason=BlockedByFinalizer` kèm tên object; worker map thành Operation `Blocked`. Capsule 0.15.2 có controller `namespace-cleanup`: Namespace có ownerRef tới Tenant mà đang Terminating thì sau khoảng 10 giây, khi không còn Pod, nó xóa mọi object còn lại và gỡ finalizer của chúng (trừ finalizer của Capsule); không có cờ tắt. Vì vậy trong Namespace tenant, PVC finalizer (kể cả của tool backup) không giữ được việc xóa; chỉ Pod kẹt (finalizer trên Pod, node mất) mới giữ được (đo ở M12).
 4. xóa tường minh GlobalTenantResource, Tenant → đợi biến mất;
 5. IPPool (từ M9): đợi không còn địa chỉ đang cấp trong các `IPAMBlock` thuộc CIDR (Calico v3.32 không serve `workloadendpoints` qua API server) → xóa IPPool qua API `projectcalico.org/v3` (để Calico nhả block affinity) → đợi `IPAMBlock` của CIDR biến mất (kiểm trên lab); Lab có Calico API server (`v3.projectcalico.org`, Service `calico-system/calico-api`), nên xóa qua `projectcalico.org/v3` được.
 6. Dedicated (từ M8): gỡ membership label `workspaces.tenantry.io/<ws-id>` khỏi node (giữ org label/taint);
 7. gỡ finalizer. Worker xóa CR với propagation `Background`; thấy CR mất thì trong một transaction: reservation `Released`, CIDR `Quarantined` (từ M9), Workspace `Deleted`.
 
-`:force` của Platform Admin = worker patch annotation `tenantry.io/force-delete=true`; controller bỏ qua chờ finalizer PVC ở bước 3 và ghi event (audit ở API); không bỏ qua bước 5, IP rò gỡ tay theo `architecture/05-network-and-scheduling.md` mục 5.
+`:force` của Platform Admin = worker patch annotation `tenantry.io/force-delete=true` (audit ở API). Controller thôi chờ Namespace ở bước 3 và thôi chờ Tenant ở bước 4: Tenant của Capsule 0.15.2 có finalizer `controller.projectcapsule.dev/finalize` chờ mọi Namespace mất hẳn, nên có Pod kẹt thì Tenant cũng kẹt (đo ở M12). Controller vẫn ra lệnh xóa Tenant và GlobalTenantResource rồi đi tiếp; trước khi gỡ finalizer của CR, ghi Event Warning nêu Tenant, các Namespace còn Terminating và Pod đang kẹt. Bước 1 (gỡ quyền) đã xong nên Namespace bỏ lại không còn ai trong tenant truy cập được; Capsule tự dọn xong khi Pod hết kẹt. `:force` không bỏ qua bước 5: IP rò gỡ tay theo `architecture/05-network-and-scheduling.md` mục 5. PlatformWorkspace mới trùng tên khi Tenant cũ còn Terminating báo `CapsuleTenantReady=False` reason `TenantTerminating`. Runbook Pod kẹt: gỡ finalizer của Pod, hoặc `kubectl delete pod --grace-period=0 --force`; việc xóa tự đi tiếp.
 
 ### 4.4 Quan sát Namespace
 

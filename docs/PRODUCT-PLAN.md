@@ -1497,7 +1497,7 @@ Với Dedicated mode, API coi `requestsCpu`/`requestsMemory`/`pods` là phần c
 GET    /api/v1/operations/{operationId}
 GET    /api/v1/operations/{operationId}/events     # M7, SSE, cùng payload với GET operation; portal fallback poll 2s
 POST   /api/v1/operations/{operationId}:retry      # nhận Operation Failed hoặc Blocked; OrgOwner/OrgAdmin/Platform Admin
-POST   /api/v1/operations/{operationId}:force      # chỉ Platform Admin: bỏ qua finalizer/PVC kẹt khi delete
+POST   /api/v1/operations/{operationId}:force      # chỉ Platform Admin: thôi chờ Namespace/Tenant kẹt khi delete (vẫn chờ IPAM sạch)
 
 GET    /api/v1/admin/organizations                 # ?status=Pending cho hàng đợi duyệt
 GET    /api/v1/admin/organizations/{orgId}         # M5, entitlement + ClusterGrant + usage (cùng số với /usage)
@@ -2042,7 +2042,7 @@ Các con số là target để đo trong đồ án, không phải SLA thương m
 - controller restart giữa provisioning;
 - Keycloak tạm lỗi khi group sync;
 - kube-apiserver tạm lỗi sau DB commit;
-- delete bị PVC finalizer;
+- delete bị giữ bởi Pod kẹt (trong Namespace tenant, Capsule tự gỡ finalizer của PVC), và `:force` khi Pod còn kẹt;
 - operation retry không duplicate resource.
 
 ### 24.6 Performance/overhead report

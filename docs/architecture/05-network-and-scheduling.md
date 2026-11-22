@@ -625,7 +625,7 @@ flowchart LR
 
 Quota storage là quota chung của cả Workspace (`PRODUCT-PLAN.md` mục 5.4): PVC ở Namespace nào cũng dùng phần còn trống của Workspace.
 
-Lifecycle khi xóa Workspace (plan 17.4): xóa Namespace → PVC bị xóa theo → `reclaimPolicy Delete` → driver xóa subdir (`onDelete: delete`, không archive, để "xóa hết" đúng nghĩa và khớp cảnh báo UI). PVC kẹt finalizer (`kubernetes.io/pvc-protection` khi Pod còn dùng, hoặc NFS server không phản hồi) → Operation `Blocked`, retry hoặc Platform Admin `:force`.
+Lifecycle khi xóa Workspace (plan 17.4): xóa Namespace → PVC bị xóa theo → `reclaimPolicy Delete` → driver xóa subdir (`onDelete: delete`, không archive, để "xóa hết" đúng nghĩa và khớp cảnh báo UI). Trong Namespace tenant, finalizer của PVC không giữ được việc xóa: controller `namespace-cleanup` của Capsule 0.15.2 gỡ chúng khoảng 10 giây sau khi Namespace Terminating và không còn Pod (IMPLEMENTATION-PLAN §4.3 bước 3). Thứ giữ được là Pod kẹt (finalizer trên Pod, node mất, NFS không phản hồi khi unmount) → Operation `Blocked`, retry hoặc Platform Admin `:force`.
 
 **Điểm cần review**
 
