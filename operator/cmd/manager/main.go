@@ -87,7 +87,7 @@ func main() {
 		BlockedAfter: blockedAfter,
 	}).SetupWithManager(mgr))
 	must("setting up platformsharedpool", (&controller.PlatformSharedPoolReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr))
-	must("setting up platformnodegrant", (&controller.PlatformNodeGrantReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr))
+	must("setting up platformnodegrant", (&controller.PlatformNodeGrantReconciler{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader()}).SetupWithManager(mgr))
 	must("setting up platformnodeinventory", (&controller.PlatformNodeInventoryReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr))
 	must("adding the health check", mgr.AddHealthzCheck("healthz", healthz.Ping))
 	must("adding the ready check", mgr.AddReadyzCheck("readyz", healthz.Ping))

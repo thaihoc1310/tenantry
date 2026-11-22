@@ -32,7 +32,7 @@ func (r *PlatformWorkspaceReconciler) finalize(ctx context.Context, ws *v1.Platf
 	ws.Status.Phase = v1.PhaseDeleting
 	progress := func(msg string) (ctrl.Result, error) {
 		setCondition(ws, metav1.Condition{Type: v1.ConditionDeleting, Status: metav1.ConditionTrue, Reason: subreconciler.ReasonProgressing, Message: msg})
-		return ctrl.Result{RequeueAfter: recheck}, r.patchStatus(ctx, before, ws)
+		return ctrl.Result{RequeueAfter: recheck}, client.IgnoreNotFound(r.patchStatus(ctx, before, ws))
 	}
 
 	tenant := &unstructured.Unstructured{}
@@ -99,7 +99,7 @@ func (r *PlatformWorkspaceReconciler) finalize(ctx context.Context, ws *v1.Platf
 				Type: v1.ConditionDeleting, Status: metav1.ConditionFalse, Reason: v1.ReasonBlockedByFinalizer,
 				Message: "Namespaces still terminating: " + describe(namespaces),
 			})
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.patchStatus(ctx, before, ws)
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, client.IgnoreNotFound(r.patchStatus(ctx, before, ws))
 		default:
 			return progress("waiting for Namespaces to go away: " + strings.Join(names, ", "))
 		}
@@ -129,9 +129,26 @@ func (r *PlatformWorkspaceReconciler) finalize(ctx context.Context, ws *v1.Platf
 		return progress("waiting for Tenant " + ws.Name + " to go away")
 	}
 
+	// 6. Dedicated: the node keeps the Organization's label and taint and
+	// the other Workspaces' labels, only this Workspace's goes.
+	if ws.Spec.Compute.Mode == v1.ComputeDedicated && ws.Spec.Compute.NodeName != "" {
+		node := &corev1.Node{}
+		switch err := r.Get(ctx, client.ObjectKey{Name: ws.Spec.Compute.NodeName}, node); {
+		case err == nil:
+			if _, labelled := node.Labels[render.MembershipLabel(ws)]; labelled {
+				if err := subreconciler.SetNodeLabel(ctx, r.Client, node.Name, render.MembershipLabel(ws), nil); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+		case !apierrors.IsNotFound(err):
+			return ctrl.Result{}, err
+		}
+	}
+
 	// 7. Done: the CR goes, and the worker releases what the Workspace held.
+	// A pass that read a stale copy may find the CR already gone: done too.
 	controllerutil.RemoveFinalizer(ws, v1.WorkspaceFinalizer)
-	return ctrl.Result{}, r.Update(ctx, ws)
+	return ctrl.Result{}, client.IgnoreNotFound(r.Update(ctx, ws))
 }
 
 // revoked is true once the live Tenant has no owner but the operator and no

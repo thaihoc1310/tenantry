@@ -44,15 +44,20 @@ func solar() *v1.PlatformWorkspace {
 }
 
 func TestGolden(t *testing.T) {
+	water := solar()
+	water.Name, water.Spec.WorkspaceID = "acme-water", "ws-01jwat"
+	water.Spec.Compute = v1.Compute{Mode: v1.ComputeDedicated, DedicatedNodeGrantID: "nodegrant-a1", NodeName: "worker-a-05"}
 	cordoned := solar()
 	cordoned.Spec.Cordoned = true
 	cordoned.Spec.NamespaceQuota = 0
 	cases := map[string]*unstructured.Unstructured{
-		"tenant":          Tenant(solar(), opts, false),
-		"tenant-revoked":  Tenant(solar(), opts, true),
-		"tenant-cordoned": Tenant(cordoned, opts, false),
-		"namespace":       Namespace(solar(), "frontend"),
-		"replication":     Replication(solar()),
+		"tenant":                Tenant(solar(), opts, false),
+		"tenant-revoked":        Tenant(solar(), opts, true),
+		"tenant-cordoned":       Tenant(cordoned, opts, false),
+		"namespace":             Namespace(solar(), "frontend"),
+		"replication":           Replication(solar()),
+		"tenant-dedicated":      Tenant(water, opts, false),
+		"replication-dedicated": Replication(water),
 	}
 	for name, obj := range cases {
 		t.Run(name, func(t *testing.T) {

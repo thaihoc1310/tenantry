@@ -1,0 +1,34 @@
+apiVersion: capsule.clastix.io/v1beta2
+kind: GlobalTenantResource
+metadata:
+  labels:
+    tenantry.io/cluster-id: cluster-a
+    tenantry.io/compute-mode: dedicated
+    tenantry.io/managed: "true"
+    tenantry.io/organization-id: org-01jabc
+    tenantry.io/workspace-id: ws-01jwat
+  name: acme-water
+spec:
+  pruningOnDelete: true
+  resources:
+  - rawItems:
+    - apiVersion: v1
+      kind: LimitRange
+      metadata:
+        name: tenantry-defaults
+      spec:
+        limits:
+        - default:
+            cpu: 100m
+            memory: 128Mi
+          defaultRequest:
+            cpu: 100m
+            memory: 128Mi
+          maxLimitRequestRatio:
+            cpu: "1"
+            memory: "1"
+          type: Container
+  scope: Namespace
+  tenantSelector:
+    matchLabels:
+      tenantry.io/workspace-id: ws-01jwat

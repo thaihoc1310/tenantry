@@ -59,7 +59,13 @@ func (r *PlatformWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	before := ws.DeepCopy()
-	// 1. tenant (owners, namespace options, storage classes, guardrails and,
+	// 1. compute: the Dedicated node's membership label (the nodeSelector is
+	// part of the Tenant).
+	computeRes := subreconciler.Compute(ctx, r.Client, ws)
+	if computeRes.Condition.Reason == subreconciler.ReasonApplyFailed {
+		return ctrl.Result{}, r.fail(ctx, before, ws, computeRes.Condition)
+	}
+	// 2. tenant (owners, namespace options, storage classes, guardrails and,
 	// for rbac, the RoleBindings: one object, one apply).
 	tenantRes, tenant := subreconciler.Tenant(ctx, r.Client, r.Scheme(), ws, r.Render)
 	if tenantRes.Condition.Reason == subreconciler.ReasonApplyFailed {
@@ -67,7 +73,7 @@ func (r *PlatformWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 	// 2. namespaces, folded into CapsuleTenantReady: the Tenant must exist
 	// for Capsule to accept them.
-	results := []subreconciler.Result{tenantRes}
+	results := []subreconciler.Result{tenantRes, computeRes}
 	if tenant != nil {
 		nsRes := subreconciler.Namespaces(ctx, r.Client, ws, subreconciler.TenantCordoned(tenant))
 		if nsRes.Condition.Reason == subreconciler.ReasonApplyFailed {
@@ -171,11 +177,29 @@ func (r *PlatformWorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}
 		return nil
 	})
+	// A node changing (Ready, labels) matters to the Workspaces on it: its
+	// Dedicated ones, and the Shared ones of the pool it is in.
+	byNode := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
+		var list v1.PlatformWorkspaceList
+		if err := r.List(ctx, &list); err != nil {
+			return nil
+		}
+		pool := o.GetLabels()[v1.LabelComputePool]
+		var reqs []reconcile.Request
+		for _, ws := range list.Items {
+			c := ws.Spec.Compute
+			if (c.Mode == v1.ComputeDedicated && c.NodeName == o.GetName()) || (c.Mode == v1.ComputeShared && pool != "" && c.SharedPoolID == pool) {
+				reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKey{Name: ws.Name}})
+			}
+		}
+		return reqs
+	})
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1.PlatformWorkspace{}).
 		Owns(tenant).
 		Owns(replication).
 		Watches(quota, byQuotaTenant).
+		Watches(&corev1.Node{}, byNode).
 		Watches(&corev1.Namespace{}, byTenantLabel, builder.WithPredicates(hasTenantLabel)).
 		Named("platformworkspace").
 		Complete(r)

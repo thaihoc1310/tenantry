@@ -1,13 +1,8 @@
 package controller
 
 import (
-	"context"
-	"encoding/json"
-
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1 "github.com/thaihoc1310/tenantry/operator/api/v1alpha1"
 )
@@ -55,16 +50,4 @@ func addTo(sum v1.ResourceList, l v1.ResourceList) {
 		total.Add(q)
 		sum[k] = total
 	}
-}
-
-// setNodeLabel sets (value != nil) or removes (nil) one label of a node and
-// touches nothing else: a JSON merge patch of that key alone.
-func setNodeLabel(ctx context.Context, c client.Client, node, key string, value *string) error {
-	patch, err := json.Marshal(map[string]any{"metadata": map[string]any{"labels": map[string]any{key: value}}})
-	if err != nil {
-		return err
-	}
-	n := &corev1.Node{}
-	n.Name = node
-	return c.Patch(ctx, n, client.RawPatch(types.MergePatchType, patch))
 }
