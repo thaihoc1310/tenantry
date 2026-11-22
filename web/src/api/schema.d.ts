@@ -710,6 +710,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workspaces/{workspaceId}/bindings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        /** Groups bound to the Workspace and their role (anyone who sees the Workspace) */
+        get: operations["listWorkspaceBindings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces/{workspaceId}/bindings/{groupId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+                groupId: components["parameters"]["groupId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Give a group of the organization a role in the Workspace (OrgOwner or OrgAdmin)
+         * @description Answers 200 when the group already holds that role; otherwise 202
+         *     with the `workspace.update` operation that reaches the cluster. The
+         *     members get or lose `tenantry:tenant-users` and the role with their
+         *     next token.
+         */
+        put: operations["putWorkspaceBinding"];
+        post?: never;
+        /**
+         * Take a group's role in the Workspace away (OrgOwner or OrgAdmin)
+         * @description Answers 204 when the group holds no role; otherwise 202 with the
+         *     `workspace.update` operation.
+         */
+        delete: operations["deleteWorkspaceBinding"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/operations/{operationId}": {
         parameters: {
             query?: never;
@@ -1259,7 +1309,7 @@ export interface components {
          * @description Stable error codes the UI switches on (IMPLEMENTATION-PLAN §3.3). Grows with the endpoints.
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "METHOD_NOT_ALLOWED" | "IDEMPOTENCY_KEY_REUSED" | "RATE_LIMITED" | "SLUG_TAKEN" | "ORG_REQUEST_PENDING" | "CLUSTER_NOT_READY" | "ORG_NOT_ACTIVE" | "ENTITLEMENT_EXCEEDED" | "INVITATION_INVALID" | "INVITATION_EMAIL_MISMATCH" | "TRANSFER_NOT_ALLOWED" | "RECIPIENT_NOT_ORG_ADMIN" | "TRANSFER_INVALID" | "LEAVE_NOT_ALLOWED" | "OWNER_USER_NOT_FOUND" | "ENTITLEMENT_BELOW_USAGE" | "CIDR_OVERLAP" | "CLUSTER_NOT_GRANTED" | "LAST_OWNER_BINDING" | "GROUP_SYNC_PENDING" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "METHOD_NOT_ALLOWED" | "IDEMPOTENCY_KEY_REUSED" | "RATE_LIMITED" | "SLUG_TAKEN" | "ORG_REQUEST_PENDING" | "CLUSTER_NOT_READY" | "ORG_NOT_ACTIVE" | "ENTITLEMENT_EXCEEDED" | "INVITATION_INVALID" | "INVITATION_EMAIL_MISMATCH" | "TRANSFER_NOT_ALLOWED" | "RECIPIENT_NOT_ORG_ADMIN" | "TRANSFER_INVALID" | "LEAVE_NOT_ALLOWED" | "OWNER_USER_NOT_FOUND" | "ENTITLEMENT_BELOW_USAGE" | "CIDR_OVERLAP" | "CLUSTER_NOT_GRANTED" | "LAST_OWNER_BINDING" | "GROUP_SYNC_PENDING" | "WORKSPACE_NOT_READY" | "INTERNAL";
         ErrorResponse: {
             code: components["schemas"]["ErrorCode"];
             message: string;
@@ -1430,6 +1480,22 @@ export interface components {
             namespaces?: components["schemas"]["NamespaceSuffix"][];
             /** @description Groups of the organization and their role; at least one TenantOwner, each group once. */
             bindings: components["schemas"]["WorkspaceBindingInput"][];
+        };
+        WorkspaceBindingRole: {
+            role: components["schemas"]["WorkspaceRole"];
+        };
+        WorkspaceBinding: {
+            groupId: string;
+            groupName: string;
+            role: components["schemas"]["WorkspaceRole"];
+        };
+        WorkspaceBindingList: {
+            items: components["schemas"]["WorkspaceBinding"][];
+        };
+        WorkspaceBindingChange: {
+            /** @description Every binding of the Workspace after the change */
+            items: components["schemas"]["WorkspaceBinding"][];
+            operation?: components["schemas"]["Operation"];
         };
         WorkspaceCondition: {
             /** @description e.g. CapsuleTenantReady (architecture/04 §1.2) */
@@ -3063,6 +3129,15 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            /** @description `CONFLICT`: the group still has a role in a Workspace (`details.workspaceIds`); take the roles away first. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             429: components["responses"]["RateLimited"];
         };
     };
@@ -3267,6 +3342,130 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    listWorkspaceBindings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceBindingList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    putWorkspaceBinding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+                groupId: components["parameters"]["groupId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceBindingRole"];
+            };
+        };
+        responses: {
+            /** @description Unchanged */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceBindingChange"];
+                };
+            };
+            /** @description Changed; the cluster follows */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceBindingChange"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /**
+             * @description `WORKSPACE_NOT_READY`: the Workspace is not Ready or Degraded, or an operation on it is under way.
+             *     `LAST_OWNER_BINDING`: the group is the last TenantOwner.
+             *     `GROUP_SYNC_PENDING`: the group has not reached Keycloak yet.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteWorkspaceBinding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+                groupId: components["parameters"]["groupId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed; the cluster follows */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceBindingChange"];
+                };
+            };
+            /** @description The group holds no role in the Workspace */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /**
+             * @description `WORKSPACE_NOT_READY`: the Workspace is not Ready or Degraded, or an operation on it is under way.
+             *     `LAST_OWNER_BINDING`: the group is the last TenantOwner.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
         };
     };
     getOperation: {

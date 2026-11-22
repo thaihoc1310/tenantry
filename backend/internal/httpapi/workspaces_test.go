@@ -235,3 +235,117 @@ func TestWorkspaceVisibility(t *testing.T) {
 		t.Fatal("detail visibility")
 	}
 }
+
+// settle plays the worker: the Workspace's operations succeeded and it is Ready.
+func settle(t *testing.T, db *pgxpool.Pool, wsID string) {
+	t.Helper()
+	for _, q := range []string{
+		`UPDATE operations SET state = 'Succeeded', finished_at = now() WHERE resource_id = $1 AND state <> 'Succeeded'`,
+		`UPDATE workspaces SET state = 'Ready', observed_generation = desired_generation WHERE id = $1`,
+	} {
+		if _, err := db.Exec(context.Background(), q, wsID); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestWorkspaceBindings(t *testing.T) {
+	h, db, orgID, owner, admins, devs := workspaceOrg(t)
+	viewers := groupID(t, db, orgID, "viewers")
+	rec := createWorkspace(h, owner, "zeta", workspaceBody("solar", admins, devs, ""))
+	var created oapi.WorkspaceAccepted
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &created) != nil {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	wsID := created.Workspace.Id
+	bind := func(token, group, role string) *httptest.ResponseRecorder {
+		return asAdmin(h, token, http.MethodPut, "/api/v1/workspaces/"+wsID+"/bindings/"+group, "", `{"role":"`+role+`"}`)
+	}
+	unbind := func(token, group string) *httptest.ResponseRecorder {
+		return asAdmin(h, token, http.MethodDelete, "/api/v1/workspaces/"+wsID+"/bindings/"+group, "", "")
+	}
+	refused := func(name string, rec *httptest.ResponseRecorder, status int, code oapi.ErrorCode) {
+		t.Helper()
+		if rec.Code != status || errorBody(t, rec).Code != code {
+			t.Fatalf("%s: %d %s", name, rec.Code, rec.Body)
+		}
+	}
+
+	// One operation at a time: not while it is being provisioned.
+	refused("while Provisioning", bind(owner, viewers, "Viewer"), 409, oapi.WORKSPACENOTREADY)
+	settle(t, db, wsID)
+
+	rec = bind(owner, viewers, "Viewer")
+	var change oapi.WorkspaceBindingChange
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &change) != nil || len(change.Items) != 3 ||
+		change.Operation == nil || change.Operation.Type != "workspace.update" {
+		t.Fatalf("bind viewers: %d %s", rec.Code, rec.Body)
+	}
+	var payload []byte
+	var version int64
+	if err := db.QueryRow(context.Background(), `SELECT payload, version FROM outbox_events WHERE operation_id = $1`, change.Operation.Id).Scan(&payload, &version); err != nil {
+		t.Fatal(err)
+	}
+	var cr v1.PlatformWorkspace
+	if err := json.Unmarshal(payload, &cr); err != nil || version != 2 || cr.Annotations[workspace.AnnotationSpecVersion] != "2" ||
+		len(cr.Spec.AccessBindings) != 3 || !slices.Equal(cr.Spec.Namespaces, []string{"frontend"}) {
+		t.Fatalf("CR at version %d: %s", version, payload)
+	}
+	if n := count(t, db, `SELECT count(*) FROM workspaces WHERE id = $1 AND state = 'Updating' AND desired_generation = 2`, wsID); n != 1 {
+		t.Fatal("workspace not Updating at generation 2")
+	}
+	refused("while Updating", bind(owner, viewers, "Developer"), 409, oapi.WORKSPACENOTREADY)
+	settle(t, db, wsID)
+
+	// The same role again changes nothing and starts nothing.
+	ops := count(t, db, `SELECT count(*) FROM operations WHERE resource_id = $1`, wsID)
+	if rec := bind(owner, viewers, "Viewer"); rec.Code != 200 || count(t, db, `SELECT count(*) FROM operations WHERE resource_id = $1`, wsID) != ops {
+		t.Fatalf("same role: %d %s", rec.Code, rec.Body)
+	}
+
+	// The last TenantOwner stays one.
+	refused("demote the last owner", bind(owner, admins, "Developer"), 409, oapi.LASTOWNERBINDING)
+	refused("remove the last owner", unbind(owner, admins), 409, oapi.LASTOWNERBINDING)
+	// Groups of another organization, or none, are not found; roles need a manager.
+	if _, err := db.Exec(context.Background(), `INSERT INTO groups (id, org_id, display_name, machine_name, sync_status)
+		VALUES ('grp-acme', 'org-acme', 'x', 'org_acme:group_x', 'Synced')`); err != nil {
+		t.Fatal(err)
+	}
+	refused("group of another organization", bind(owner, "grp-acme", "Viewer"), 404, oapi.NOTFOUND)
+	refused("no such group", bind(owner, "grp-nope", "Viewer"), 404, oapi.NOTFOUND)
+	refused("OrgMember", bind(sessionOf("usr-bob"), viewers, "Developer"), 403, oapi.FORBIDDEN)
+	refused("non-member", bind(sessionOf("usr-dave"), viewers, "Developer"), 404, oapi.NOTFOUND)
+
+	// A group with a role cannot be deleted; without one it can.
+	rec = asAdmin(h, owner, http.MethodDelete, "/api/v1/groups/"+viewers, "", "")
+	if e := errorBody(t, rec); rec.Code != 409 || e.Code != oapi.CONFLICT || fmt.Sprint((*e.Details)["workspaceIds"]) != "["+wsID+"]" {
+		t.Fatalf("delete a bound group: %d %s", rec.Code, rec.Body)
+	}
+
+	// bob sees the bindings through developers, then loses the Workspace with them.
+	if rec := asAdmin(h, sessionOf("usr-bob"), http.MethodGet, "/api/v1/workspaces/"+wsID+"/bindings", "", ""); rec.Code != 200 {
+		t.Fatalf("bob lists bindings: %d", rec.Code)
+	}
+	if rec := unbind(owner, devs); rec.Code != 202 {
+		t.Fatalf("unbind developers: %d %s", rec.Code, rec.Body)
+	}
+	if n := count(t, db, `SELECT count(*) FROM group_members WHERE group_id = $1 AND user_id = 'usr-bob' AND sync_status = 'Pending'`, devs); n != 1 {
+		t.Fatal("bob is not due for a TenantUsers recount")
+	}
+	settle(t, db, wsID)
+	if rec := unbind(owner, devs); rec.Code != 204 {
+		t.Fatalf("unbind again: %d %s", rec.Code, rec.Body)
+	}
+	if rec := asAdmin(h, sessionOf("usr-bob"), http.MethodGet, "/api/v1/workspaces/"+wsID+"/bindings", "", ""); rec.Code != 404 {
+		t.Fatalf("bob still sees the Workspace: %d", rec.Code)
+	}
+	if rec := unbind(owner, viewers); rec.Code != 202 {
+		t.Fatalf("unbind viewers: %d %s", rec.Code, rec.Body)
+	}
+	if rec := asAdmin(h, owner, http.MethodDelete, "/api/v1/groups/"+viewers, "", ""); rec.Code != 204 {
+		t.Fatalf("delete an unbound group: %d %s", rec.Code, rec.Body)
+	}
+	if trail := auditTrail(t, db, "workspace_binding.delete"); len(trail) != 2 {
+		t.Fatalf("audit %+v", trail)
+	}
+}

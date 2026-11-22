@@ -9,6 +9,59 @@ import (
 	"context"
 )
 
+const activeWorkspaceOperation = `-- name: ActiveWorkspaceOperation :one
+SELECT id FROM operations
+WHERE resource_type = 'Workspace' AND resource_id = $1 AND state IN ('Pending', 'Running', 'Blocked')
+LIMIT 1
+`
+
+// The operation under way on a Workspace, if any: one at a time (04 §1.1).
+func (q *Queries) ActiveWorkspaceOperation(ctx context.Context, resourceID string) (string, error) {
+	row := q.db.QueryRow(ctx, activeWorkspaceOperation, resourceID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const beginWorkspaceUpdate = `-- name: BeginWorkspaceUpdate :one
+UPDATE workspaces SET desired_generation = desired_generation + 1, state = 'Updating', updated_at = now()
+WHERE id = $1
+RETURNING id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at
+`
+
+// A change that needs a new CR: the next spec version, and Updating until
+// the controller has reconciled it.
+func (q *Queries) BeginWorkspaceUpdate(ctx context.Context, id string) (Workspace, error) {
+	row := q.db.QueryRow(ctx, beginWorkspaceUpdate, id)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ClusterID,
+		&i.ClusterGrantID,
+		&i.Slug,
+		&i.K8sName,
+		&i.DisplayName,
+		&i.State,
+		&i.RequestsCpuMilli,
+		&i.RequestsMemoryBytes,
+		&i.LimitsCpuMilli,
+		&i.LimitsMemoryBytes,
+		&i.Pods,
+		&i.RequestsStorageBytes,
+		&i.NamespaceQuota,
+		&i.ComputeMode,
+		&i.SharedPoolID,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.Conditions,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createWorkspace = `-- name: CreateWorkspace :one
 INSERT INTO workspaces (
     id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name,
@@ -149,6 +202,20 @@ func (q *Queries) CreateWorkspaceNamespace(ctx context.Context, arg CreateWorksp
 	return i, err
 }
 
+const deleteWorkspaceBinding = `-- name: DeleteWorkspaceBinding :exec
+DELETE FROM workspace_group_bindings WHERE workspace_id = $1 AND group_id = $2
+`
+
+type DeleteWorkspaceBindingParams struct {
+	WorkspaceID string
+	GroupID     string
+}
+
+func (q *Queries) DeleteWorkspaceBinding(ctx context.Context, arg DeleteWorkspaceBindingParams) error {
+	_, err := q.db.Exec(ctx, deleteWorkspaceBinding, arg.WorkspaceID, arg.GroupID)
+	return err
+}
+
 const getGrantStorageClasses = `-- name: GetGrantStorageClasses :one
 SELECT allowed_storage_classes FROM organization_cluster_grants WHERE id = $1
 `
@@ -243,6 +310,39 @@ func (q *Queries) ListBindingsForCR(ctx context.Context, workspaceID string) ([]
 			&i.DisplayName,
 			&i.SyncStatus,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWorkspaceBindings = `-- name: ListWorkspaceBindings :many
+SELECT b.group_id, b.role, g.display_name
+FROM workspace_group_bindings b JOIN groups g ON g.id = b.group_id
+WHERE b.workspace_id = $1
+ORDER BY g.display_name, g.id
+`
+
+type ListWorkspaceBindingsRow struct {
+	GroupID     string
+	Role        string
+	DisplayName string
+}
+
+func (q *Queries) ListWorkspaceBindings(ctx context.Context, workspaceID string) ([]ListWorkspaceBindingsRow, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceBindings, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListWorkspaceBindingsRow
+	for rows.Next() {
+		var i ListWorkspaceBindingsRow
+		if err := rows.Scan(&i.GroupID, &i.Role, &i.DisplayName); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -397,6 +497,41 @@ func (q *Queries) ListWorkspacesOfMember(ctx context.Context, arg ListWorkspaces
 	return items, nil
 }
 
+const lockWorkspace = `-- name: LockWorkspace :one
+SELECT id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at FROM workspaces WHERE id = $1 AND state <> 'Deleted' FOR UPDATE
+`
+
+func (q *Queries) LockWorkspace(ctx context.Context, id string) (Workspace, error) {
+	row := q.db.QueryRow(ctx, lockWorkspace, id)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ClusterID,
+		&i.ClusterGrantID,
+		&i.Slug,
+		&i.K8sName,
+		&i.DisplayName,
+		&i.State,
+		&i.RequestsCpuMilli,
+		&i.RequestsMemoryBytes,
+		&i.LimitsCpuMilli,
+		&i.LimitsMemoryBytes,
+		&i.Pods,
+		&i.RequestsStorageBytes,
+		&i.NamespaceQuota,
+		&i.ComputeMode,
+		&i.SharedPoolID,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.Conditions,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const nestedWorkspaceSlug = `-- name: NestedWorkspaceSlug :one
 
 SELECT id, slug FROM workspaces
@@ -492,6 +627,28 @@ func (q *Queries) ShareLockGroups(ctx context.Context, arg ShareLockGroupsParams
 	return items, nil
 }
 
+const upsertWorkspaceBinding = `-- name: UpsertWorkspaceBinding :exec
+INSERT INTO workspace_group_bindings (workspace_id, group_id, org_id, role) VALUES ($1, $2, $3, $4)
+ON CONFLICT (workspace_id, group_id) DO UPDATE SET role = EXCLUDED.role, updated_at = now()
+`
+
+type UpsertWorkspaceBindingParams struct {
+	WorkspaceID string
+	GroupID     string
+	OrgID       string
+	Role        string
+}
+
+func (q *Queries) UpsertWorkspaceBinding(ctx context.Context, arg UpsertWorkspaceBindingParams) error {
+	_, err := q.db.Exec(ctx, upsertWorkspaceBinding,
+		arg.WorkspaceID,
+		arg.GroupID,
+		arg.OrgID,
+		arg.Role,
+	)
+	return err
+}
+
 const userHasWorkspaceBinding = `-- name: UserHasWorkspaceBinding :one
 SELECT EXISTS (
     SELECT 1 FROM workspace_group_bindings b
@@ -537,6 +694,31 @@ func (q *Queries) WorkspaceRolesOfUser(ctx context.Context, arg WorkspaceRolesOf
 			return nil, err
 		}
 		items = append(items, role)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workspacesBoundTo = `-- name: WorkspacesBoundTo :many
+SELECT workspace_id FROM workspace_group_bindings WHERE group_id = $1 ORDER BY workspace_id
+`
+
+// Workspaces a group holds a role in.
+func (q *Queries) WorkspacesBoundTo(ctx context.Context, groupID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, workspacesBoundTo, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var workspace_id string
+		if err := rows.Scan(&workspace_id); err != nil {
+			return nil, err
+		}
+		items = append(items, workspace_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

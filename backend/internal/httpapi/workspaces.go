@@ -120,3 +120,50 @@ func toWorkspace(ws store.Workspace) (oapi.Workspace, error) {
 	}
 	return w, nil
 }
+
+func (s server) ListWorkspaceBindings(ctx context.Context, req oapi.ListWorkspaceBindingsRequestObject) (oapi.ListWorkspaceBindingsResponseObject, error) {
+	bs, err := s.workspaces.Bindings(ctx, userID(ctx), req.WorkspaceId)
+	if err != nil {
+		return nil, err
+	}
+	return oapi.ListWorkspaceBindings200JSONResponse{Items: toBindings(bs)}, nil
+}
+
+func (s server) PutWorkspaceBinding(ctx context.Context, req oapi.PutWorkspaceBindingRequestObject) (oapi.PutWorkspaceBindingResponseObject, error) {
+	c, err := s.workspaces.PutBinding(ctx, userID(ctx), req.WorkspaceId, req.GroupId, workspace.Role(req.Body.Role), requestID(ctx))
+	if err != nil {
+		return nil, err
+	}
+	if c.Operation == nil {
+		return oapi.PutWorkspaceBinding200JSONResponse(toBindingChange(c)), nil
+	}
+	return oapi.PutWorkspaceBinding202JSONResponse(toBindingChange(c)), nil
+}
+
+func (s server) DeleteWorkspaceBinding(ctx context.Context, req oapi.DeleteWorkspaceBindingRequestObject) (oapi.DeleteWorkspaceBindingResponseObject, error) {
+	c, err := s.workspaces.DeleteBinding(ctx, userID(ctx), req.WorkspaceId, req.GroupId, requestID(ctx))
+	if err != nil {
+		return nil, err
+	}
+	if c.Operation == nil {
+		return oapi.DeleteWorkspaceBinding204Response{}, nil
+	}
+	return oapi.DeleteWorkspaceBinding202JSONResponse(toBindingChange(c)), nil
+}
+
+func toBindings(bs []workspace.BindingView) []oapi.WorkspaceBinding {
+	out := make([]oapi.WorkspaceBinding, len(bs))
+	for i, b := range bs {
+		out[i] = oapi.WorkspaceBinding{GroupId: b.GroupID, GroupName: b.GroupName, Role: oapi.WorkspaceRole(b.Role)}
+	}
+	return out
+}
+
+func toBindingChange(c workspace.BindingChange) oapi.WorkspaceBindingChange {
+	out := oapi.WorkspaceBindingChange{Items: toBindings(c.Bindings)}
+	if c.Operation != nil {
+		op := toOperation(*c.Operation)
+		out.Operation = &op
+	}
+	return out
+}

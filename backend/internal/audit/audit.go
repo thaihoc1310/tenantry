@@ -53,7 +53,9 @@ const (
 	GroupMemberAdd    = "group_member.add"
 	GroupMemberRemove = "group_member.remove"
 
-	WorkspaceCreate = "workspace.create"
+	WorkspaceCreate        = "workspace.create"
+	WorkspaceBindingUpdate = "workspace_binding.update"
+	WorkspaceBindingDelete = "workspace_binding.delete"
 )
 
 // Results. An event written by the change it records Succeeded. A refused

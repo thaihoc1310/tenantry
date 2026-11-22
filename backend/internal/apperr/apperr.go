@@ -51,6 +51,7 @@ const (
 	ClusterNotGranted Code = "CLUSTER_NOT_GRANTED" // no grant of the organization on that cluster
 	LastOwnerBinding  Code = "LAST_OWNER_BINDING"  // no group would hold TenantOwner any more
 	GroupSyncPending  Code = "GROUP_SYNC_PENDING"  // a bound group is not in Keycloak yet
+	WorkspaceNotReady Code = "WORKSPACE_NOT_READY" // not Ready, or an operation on it is under way
 )
 
 type Error struct {

@@ -41,6 +41,7 @@ var statusOf = map[apperr.Code]int{
 	apperr.ClusterNotGranted: http.StatusConflict,
 	apperr.LastOwnerBinding:  http.StatusConflict,
 	apperr.GroupSyncPending:  http.StatusConflict,
+	apperr.WorkspaceNotReady: http.StatusConflict,
 }
 
 // writeError answers with an ErrorResponse.

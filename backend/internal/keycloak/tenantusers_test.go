@@ -31,13 +31,14 @@ func TestTenantUsersFollowBindings(t *testing.T) {
 	}
 
 	ws := workspace.NewService(db, org.NewService(db))
-	if _, err := ws.Create(context.Background(), "usr-ann", "acme", workspace.New{
+	created, err := ws.Create(context.Background(), "usr-ann", "acme", workspace.New{
 		Slug: "solar", DisplayName: "Solar", ClusterID: "cluster-a", ComputeMode: workspace.ComputeShared,
 		SharedPoolID: "shared-general",
 		Resources: workspace.Resources{RequestsCPUMilli: 1000, RequestsMemoryBytes: 1 << 30, LimitsCPUMilli: 1000,
 			LimitsMemoryBytes: 1 << 30, Pods: 10, RequestsStorageBytes: 1 << 30, NamespaceQuota: 2},
 		Bindings: []workspace.Binding{{GroupID: "grp-a", Role: workspace.RoleTenantOwner}},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if rowState(t, db, "grp-a", "usr-ann") != "live:Pending" || rowState(t, db, "grp-b", "usr-bob") != "live:Synced" {
@@ -46,5 +47,27 @@ func TestTenantUsersFollowBindings(t *testing.T) {
 	runOnce(t, w)
 	if !kc.isMember("kc-ann", TenantUsers) || kc.isMember("kc-bob", TenantUsers) {
 		t.Fatalf("TenantUsers: ann %v (want true), bob %v (want false)", kc.isMember("kc-ann", TenantUsers), kc.isMember("kc-bob", TenantUsers))
+	}
+
+	// A role for group B brings Bob in; taking it away takes him out.
+	ready := func() {
+		exec(t, db, `UPDATE operations SET state = 'Succeeded' WHERE resource_id = $1`, created.Workspace.ID)
+		exec(t, db, `UPDATE workspaces SET state = 'Ready' WHERE id = $1`, created.Workspace.ID)
+	}
+	ready()
+	if _, err := ws.PutBinding(context.Background(), "usr-ann", created.Workspace.ID, "grp-b", workspace.RoleViewer, ""); err != nil {
+		t.Fatal(err)
+	}
+	runOnce(t, w)
+	if !kc.isMember("kc-bob", TenantUsers) {
+		t.Fatal("Bob not in TenantUsers with a Viewer binding")
+	}
+	ready()
+	if _, err := ws.DeleteBinding(context.Background(), "usr-ann", created.Workspace.ID, "grp-b", ""); err != nil {
+		t.Fatal(err)
+	}
+	runOnce(t, w)
+	if kc.isMember("kc-bob", TenantUsers) || !kc.isMember("kc-ann", TenantUsers) {
+		t.Fatal("Bob still in TenantUsers without a binding, or Ann taken out")
 	}
 }

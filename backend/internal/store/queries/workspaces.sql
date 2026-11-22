@@ -98,3 +98,36 @@ SELECT EXISTS (
     JOIN workspaces w ON w.id = b.workspace_id AND w.state <> 'Deleted'
     WHERE gm.user_id = $1
 );
+
+-- name: LockWorkspace :one
+SELECT * FROM workspaces WHERE id = $1 AND state <> 'Deleted' FOR UPDATE;
+
+-- name: ActiveWorkspaceOperation :one
+-- The operation under way on a Workspace, if any: one at a time (04 §1.1).
+SELECT id FROM operations
+WHERE resource_type = 'Workspace' AND resource_id = $1 AND state IN ('Pending', 'Running', 'Blocked')
+LIMIT 1;
+
+-- name: BeginWorkspaceUpdate :one
+-- A change that needs a new CR: the next spec version, and Updating until
+-- the controller has reconciled it.
+UPDATE workspaces SET desired_generation = desired_generation + 1, state = 'Updating', updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: ListWorkspaceBindings :many
+SELECT b.group_id, b.role, g.display_name
+FROM workspace_group_bindings b JOIN groups g ON g.id = b.group_id
+WHERE b.workspace_id = $1
+ORDER BY g.display_name, g.id;
+
+-- name: UpsertWorkspaceBinding :exec
+INSERT INTO workspace_group_bindings (workspace_id, group_id, org_id, role) VALUES ($1, $2, $3, $4)
+ON CONFLICT (workspace_id, group_id) DO UPDATE SET role = EXCLUDED.role, updated_at = now();
+
+-- name: DeleteWorkspaceBinding :exec
+DELETE FROM workspace_group_bindings WHERE workspace_id = $1 AND group_id = $2;
+
+-- name: WorkspacesBoundTo :many
+-- Workspaces a group holds a role in.
+SELECT workspace_id FROM workspace_group_bindings WHERE group_id = $1 ORDER BY workspace_id;

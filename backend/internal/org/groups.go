@@ -18,9 +18,8 @@ import (
 // after Keycloak has caught up, so no change is lost while Keycloak is down.
 // A tombstone no longer counts anywhere in the portal.
 //
-// Deleting a group still bound to a Workspace is refused from M6, with the
-// table that holds the bindings (workspace_group_bindings); before M6 a group
-// cannot have bindings.
+// Deleting a group that still holds a role in a Workspace is refused: the
+// roles go first (PRODUCT-PLAN §9.4).
 
 // groupNameIndex keeps live group names unique in an organization.
 const groupNameIndex = "groups_display_name_uq"
@@ -179,7 +178,9 @@ func (s *Service) RenameGroup(ctx context.Context, userID, groupID, name string)
 }
 
 // DeleteGroup turns the group into a tombstone; the worker removes it from
-// Keycloak, which takes its memberships with it, then deletes the rows.
+// Keycloak, which takes its memberships with it, then deletes the rows. The
+// group's lock (FOR UPDATE) waits for any transaction binding it (FOR SHARE),
+// so a binding committed meanwhile is seen and refuses the delete.
 func (s *Service) DeleteGroup(ctx context.Context, userID, groupID string) error {
 	g, err := s.groupFor(ctx, userID, groupID)
 	if err != nil {
@@ -191,6 +192,16 @@ func (s *Service) DeleteGroup(ctx context.Context, userID, groupID string) error
 			return nil // deleted meanwhile
 		} else if err != nil {
 			return err
+		}
+		bound, err := q.WorkspacesBoundTo(ctx, g.ID)
+		if err != nil {
+			return err
+		}
+		if len(bound) > 0 {
+			return &apperr.Error{
+				Code: apperr.Conflict, Message: "the group still has a role in a Workspace; take the roles away first",
+				Details: map[string]any{"workspaceIds": bound},
+			}
 		}
 		if err := q.TombstoneGroup(ctx, g.ID); err != nil {
 			return err

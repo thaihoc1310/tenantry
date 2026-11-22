@@ -92,6 +92,10 @@ export const errorText: Record<ErrorCode | 'NETWORK', Text> = {
     en: 'A group has not reached the identity provider yet. Try again in a moment.',
     vi: 'Một group chưa đồng bộ sang Keycloak. Hãy thử lại sau giây lát.',
   },
+  WORKSPACE_NOT_READY: {
+    en: 'The Workspace is busy with another change. Try again once it is Ready.',
+    vi: 'Workspace đang bận với một thay đổi khác. Hãy thử lại khi nó Ready.',
+  },
   INTERNAL: {
     en: 'Something went wrong on our side. Your data is safe; try again in a moment.',
     vi: 'Hệ thống gặp lỗi. Dữ liệu của bạn vẫn an toàn; thử lại sau ít phút.',

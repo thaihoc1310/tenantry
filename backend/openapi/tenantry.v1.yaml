@@ -750,6 +750,11 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`CONFLICT`: the group still has a role in a Workspace (`details.workspaceIds`); take the roles away first."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
   /groups/{groupId}/members/{userId}:
@@ -869,6 +874,89 @@ paths:
               schema: { $ref: "#/components/schemas/Workspace" }
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+
+  /workspaces/{workspaceId}/bindings:
+    parameters:
+      - $ref: "#/components/parameters/workspaceId"
+    get:
+      operationId: listWorkspaceBindings
+      summary: Groups bound to the Workspace and their role (anyone who sees the Workspace)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceBindingList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /workspaces/{workspaceId}/bindings/{groupId}:
+    parameters:
+      - $ref: "#/components/parameters/workspaceId"
+      - $ref: "#/components/parameters/groupId"
+    put:
+      operationId: putWorkspaceBinding
+      security: [{ session: [], csrf: [] }]
+      summary: Give a group of the organization a role in the Workspace (OrgOwner or OrgAdmin)
+      description: |
+        Answers 200 when the group already holds that role; otherwise 202
+        with the `workspace.update` operation that reaches the cluster. The
+        members get or lose `tenantry:tenant-users` and the role with their
+        next token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkspaceBindingRole" }
+      responses:
+        "200":
+          description: Unchanged
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceBindingChange" }
+        "202":
+          description: Changed; the cluster follows
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceBindingChange" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: |
+            `WORKSPACE_NOT_READY`: the Workspace is not Ready or Degraded, or an operation on it is under way.
+            `LAST_OWNER_BINDING`: the group is the last TenantOwner.
+            `GROUP_SYNC_PENDING`: the group has not reached Keycloak yet.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    delete:
+      operationId: deleteWorkspaceBinding
+      security: [{ session: [], csrf: [] }]
+      summary: Take a group's role in the Workspace away (OrgOwner or OrgAdmin)
+      description: |
+        Answers 204 when the group holds no role; otherwise 202 with the
+        `workspace.update` operation.
+      responses:
+        "202":
+          description: Removed; the cluster follows
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceBindingChange" }
+        "204": { description: The group holds no role in the Workspace }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: |
+            `WORKSPACE_NOT_READY`: the Workspace is not Ready or Degraded, or an operation on it is under way.
+            `LAST_OWNER_BINDING`: the group is the last TenantOwner.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
 
   /operations/{operationId}:
     parameters:
@@ -1789,6 +1877,7 @@ components:
         - CLUSTER_NOT_GRANTED
         - LAST_OWNER_BINDING
         - GROUP_SYNC_PENDING
+        - WORKSPACE_NOT_READY
         - INTERNAL
 
     ErrorResponse:
@@ -2021,6 +2110,39 @@ components:
           minItems: 1
           maxItems: 50
           items: { $ref: "#/components/schemas/WorkspaceBindingInput" }
+
+    WorkspaceBindingRole:
+      type: object
+      required: [role]
+      additionalProperties: false
+      properties:
+        role: { $ref: "#/components/schemas/WorkspaceRole" }
+
+    WorkspaceBinding:
+      type: object
+      required: [groupId, groupName, role]
+      properties:
+        groupId: { type: string }
+        groupName: { type: string }
+        role: { $ref: "#/components/schemas/WorkspaceRole" }
+
+    WorkspaceBindingList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/WorkspaceBinding" }
+
+    WorkspaceBindingChange:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          description: Every binding of the Workspace after the change
+          items: { $ref: "#/components/schemas/WorkspaceBinding" }
+        operation: { $ref: "#/components/schemas/Operation" }
 
     WorkspaceCondition:
       type: object
