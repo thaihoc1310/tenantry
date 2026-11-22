@@ -359,3 +359,12 @@ export function useChangeDedicatedNodes() {
     },
   }
 }
+
+// The Platform health page; refreshed like the operations list.
+export function usePlatformHealth() {
+  return useQuery({
+    queryKey: ['admin', 'health'],
+    queryFn: () => unwrap(api.GET('/admin/health')),
+    refetchInterval: 10_000,
+  })
+}

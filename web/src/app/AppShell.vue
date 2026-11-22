@@ -49,6 +49,7 @@ const adminNav = [
   ['grants', 'Grants', '/admin/grants', 'Coin'],
   ['operations', 'Operations', '/admin/operations', 'Operation'],
   ['users', 'Users', '/admin/users', 'UserFilled'],
+  ['health', 'Platform health', '/admin/health', 'Monitor'],
 ]
 
 // The review queue's length, for the admin menu.

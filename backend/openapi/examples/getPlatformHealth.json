@@ -1,0 +1,63 @@
+{
+  "responses": {
+    "200": {
+      "components": [
+        {
+          "name": "Platform API",
+          "state": "ok",
+          "detail": "Answering: this page came from it."
+        },
+        {
+          "name": "Provisioning worker",
+          "state": "ok",
+          "detail": "No event waiting for a cluster."
+        },
+        {
+          "name": "Group sync worker",
+          "state": "warn",
+          "detail": "1 changes waiting for Keycloak; the oldest for 4m0s."
+        },
+        {
+          "name": "Keycloak",
+          "state": "ok",
+          "detail": "No failed call from the group sync worker."
+        },
+        {
+          "name": "Cluster A",
+          "state": "ok",
+          "detail": "Ready; last check 20s ago."
+        }
+      ],
+      "work": {
+        "operationsRunning": 1,
+        "operationsNeedingAttention": 2,
+        "syncWaiting": 1,
+        "requestsWaiting": 2
+      },
+      "clusters": [
+        {
+          "id": "cluster-a",
+          "displayName": "Cluster A",
+          "status": "Ready",
+          "lastHealthCheck": "2026-11-23T10:00:00Z",
+          "pools": [
+            {
+              "id": "shared-general",
+              "name": "Shared general",
+              "allocated": {
+                "cpu": "5500m",
+                "memory": "11Gi",
+                "pods": 60
+              },
+              "ceiling": {
+                "cpu": "12",
+                "memory": "40Gi",
+                "pods": 600
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

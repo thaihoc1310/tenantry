@@ -118,3 +118,28 @@ func toAdminOrganization(o org.Reviewed) oapi.AdminOrganization {
 		Owner: oapi.UserSummary{Id: o.OwnerUserID, Email: o.OwnerEmail, DisplayName: o.OwnerDisplayName},
 	}
 }
+
+func (s server) GetPlatformHealth(ctx context.Context, _ oapi.GetPlatformHealthRequestObject) (oapi.GetPlatformHealthResponseObject, error) {
+	r, err := s.health.Check(ctx, timeNow())
+	if err != nil {
+		return nil, err
+	}
+	out := oapi.PlatformHealth{
+		Components: make([]oapi.HealthComponent, len(r.Components)),
+		Clusters:   make([]oapi.HealthCluster, len(r.Clusters)),
+	}
+	for i, c := range r.Components {
+		out.Components[i] = oapi.HealthComponent{Name: c.Name, State: oapi.HealthComponentState(c.State), Detail: c.Detail}
+	}
+	out.Work.OperationsRunning, out.Work.OperationsNeedingAttention = int(r.Work.OperationsRunning), int(r.Work.OperationsAttention)
+	out.Work.SyncWaiting, out.Work.RequestsWaiting = int(r.Work.SyncWaiting), int(r.Work.RequestsWaiting)
+	for i, c := range r.Clusters {
+		hc := oapi.HealthCluster{Id: c.ID, DisplayName: c.DisplayName, Status: oapi.HealthClusterStatus(c.Status),
+			LastHealthCheck: c.LastHealthCheck, Pools: make([]oapi.HealthPool, len(c.Pools))}
+		for j, p := range c.Pools {
+			hc.Pools[j] = oapi.HealthPool{Id: p.ID, Name: p.Name, Allocated: fromCapacity(p.Allocated), Ceiling: fromCapacity(p.Ceiling)}
+		}
+		out.Clusters[i] = hc
+	}
+	return oapi.GetPlatformHealth200JSONResponse(out), nil
+}

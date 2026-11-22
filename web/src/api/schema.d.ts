@@ -1263,6 +1263,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The parts the platform needs, the work in hand and each cluster's pools (Platform Admin)
+         * @description Judged from the database: how long events and group changes have
+         *     waited, the group sync worker's last failure, each cluster's status
+         *     and last health check (every 30 s by the provisioning worker).
+         */
+        get: operations["getPlatformHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/onboarding-policy": {
         parameters: {
             query?: never;
@@ -1768,6 +1790,41 @@ export interface components {
             };
             /** @description Set when the change gave the pool other nodes: the `sharedpool.update` that labels them on the cluster */
             operation?: components["schemas"]["Operation"];
+        };
+        PlatformHealth: {
+            components: components["schemas"]["HealthComponent"][];
+            work: {
+                /** @description Pending or Running */
+                operationsRunning: number;
+                /** @description Failed or Blocked */
+                operationsNeedingAttention: number;
+                /** @description Group, member and account changes Keycloak does not have yet */
+                syncWaiting: number;
+                /** @description Organization requests waiting for review */
+                requestsWaiting: number;
+            };
+            clusters: components["schemas"]["HealthCluster"][];
+        };
+        HealthComponent: {
+            name: string;
+            /** @enum {string} */
+            state: "ok" | "warn";
+            detail: string;
+        };
+        HealthCluster: {
+            id: string;
+            displayName: string;
+            /** @enum {string} */
+            status: "Registered" | "Ready" | "Maintenance" | "Unavailable";
+            /** Format: date-time */
+            lastHealthCheck?: string;
+            pools: components["schemas"]["HealthPool"][];
+        };
+        HealthPool: {
+            id: string;
+            name: string;
+            allocated: components["schemas"]["NodeCapacity"];
+            ceiling: components["schemas"]["NodeCapacity"];
         };
         SharedPoolList: {
             items: components["schemas"]["SharedPool"][];
@@ -4471,6 +4528,28 @@ export interface operations {
                 };
             };
             429: components["responses"]["RateLimited"];
+        };
+    };
+    getPlatformHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformHealth"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
         };
     };
     getOnboardingPolicy: {

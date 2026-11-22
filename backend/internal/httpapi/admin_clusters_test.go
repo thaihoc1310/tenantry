@@ -262,3 +262,54 @@ func TestAdminOperations(t *testing.T) {
 		t.Fatalf("page 2 %+v", rest)
 	}
 }
+
+// The health page warns about a cluster never checked and a stale backlog,
+// and reports the work in hand.
+func TestPlatformHealth(t *testing.T) {
+	h, db, admin := newReviewAPI(t)
+	get := func() oapi.PlatformHealth {
+		t.Helper()
+		rec := asAdmin(h, admin, http.MethodGet, "/api/v1/admin/health", "", "")
+		var out oapi.PlatformHealth
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
+			t.Fatalf("health: %d %s", rec.Code, rec.Body)
+		}
+		return out
+	}
+	state := func(r oapi.PlatformHealth) map[string]string {
+		out := map[string]string{}
+		for _, c := range r.Components {
+			out[c.Name] = string(c.State)
+		}
+		return out
+	}
+	r := get()
+	if s := state(r); s["Cluster A"] != "warn" || s["Cluster B"] != "warn" || s["Provisioning worker"] != "ok" || s["Keycloak"] != "ok" {
+		t.Fatalf("never checked clusters should warn: %+v", r.Components)
+	}
+	if r.Work.RequestsWaiting != 1 || len(r.Clusters) != 2 || len(r.Clusters[0].Pools) != 1 || r.Clusters[0].Pools[0].Id != "shared-general" {
+		t.Fatalf("report %+v", r)
+	}
+	for _, q := range []string{
+		`UPDATE clusters SET last_health_check = now() - interval '10 seconds' WHERE id = 'cluster-a'`,
+		`INSERT INTO operations (id, org_id, resource_type, resource_id, type, state) VALUES ('op-1', 'org-acme', 'Workspace', 'ws-1', 'workspace.create', 'Failed')`,
+		`INSERT INTO outbox_events (operation_id, ordering_key, target_cluster_id, type, payload, version, created_at)
+			VALUES ('op-1', 'Workspace/ws-1', 'cluster-a', 'workspace.apply', '{}', 1, now() - interval '5 minutes')`,
+		`INSERT INTO groups (id, org_id, display_name, machine_name, sync_status, last_error) VALUES ('grp-x', 'org-acme', 'x', 'org_acme:group_x', 'Error', 'keycloak token: 401')`,
+	} {
+		if _, err := db.Exec(context.Background(), q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r = get()
+	if s := state(r); s["Cluster A"] != "ok" || s["Cluster B"] != "warn" || s["Provisioning worker"] != "warn" ||
+		s["Keycloak"] != "warn" || s["Group sync worker"] != "ok" {
+		t.Fatalf("after a check, a stale event and a sync error: %+v", r.Components)
+	}
+	if r.Work.OperationsNeedingAttention != 1 || r.Work.SyncWaiting != 1 {
+		t.Fatalf("work %+v", r.Work)
+	}
+	if rec := asAdmin(h, sessionOf("usr-bob"), http.MethodGet, "/api/v1/admin/health", "", ""); rec.Code != 403 {
+		t.Fatalf("ordinary user: %d", rec.Code)
+	}
+}

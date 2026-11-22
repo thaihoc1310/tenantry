@@ -45,6 +45,7 @@ export const router = createRouter({
         },
         { path: 'operations', component: () => import('@/features/admin/AdminOperationsPage.vue') },
         { path: 'users', component: () => import('@/features/admin/AdminUsersPage.vue') },
+        { path: 'health', component: () => import('@/features/admin/AdminHealthPage.vue') },
       ],
     },
     { path: '/:rest(.*)*', component: () => import('@/app/NotFoundPage.vue'), meta: { public: true } },

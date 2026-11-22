@@ -20,6 +20,7 @@ import (
 
 	"github.com/thaihoc1310/tenantry/backend/internal/apperr"
 	"github.com/thaihoc1310/tenantry/backend/internal/auth"
+	"github.com/thaihoc1310/tenantry/backend/internal/health"
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi/oapi"
 	"github.com/thaihoc1310/tenantry/backend/internal/operation"
 	"github.com/thaihoc1310/tenantry/backend/internal/org"
@@ -35,6 +36,7 @@ type server struct {
 	clusters   *reservation.Service
 	ops        *operation.Service
 	workspaces *workspace.Service
+	health     *health.Service
 	publicURL  string // the portal origin, for links handed out (invitations)
 }
 
@@ -48,7 +50,7 @@ func Register(r chi.Router, db *pgxpool.Pool, a *auth.Service, trustedProxies []
 	orgs := org.NewService(db)
 	srv := server{
 		orgs: orgs, users: user.NewService(db), clusters: reservation.NewService(db), ops: operation.NewService(db, map[string]operation.Reapply{"Workspace": workspace.Reapply}),
-		workspaces: workspace.NewService(db, orgs), publicURL: publicURL(a),
+		workspaces: workspace.NewService(db, orgs), health: health.NewService(db), publicURL: publicURL(a),
 	}
 	api := oapi.NewStrictHandlerWithOptions(srv, nil, oapi.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: badRequest,

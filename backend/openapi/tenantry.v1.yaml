@@ -1672,6 +1672,23 @@ paths:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
+  /admin/health:
+    get:
+      operationId: getPlatformHealth
+      summary: The parts the platform needs, the work in hand and each cluster's pools (Platform Admin)
+      description: |
+        Judged from the database: how long events and group changes have
+        waited, the group sync worker's last failure, each cluster's status
+        and last health check (every 30 s by the provisioning worker).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformHealth" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
   /admin/onboarding-policy:
     get:
       operationId: getOnboardingPolicy
@@ -2561,6 +2578,54 @@ components:
         operation:
           description: "Set when the change gave the pool other nodes: the `sharedpool.update` that labels them on the cluster"
           allOf: [{ $ref: "#/components/schemas/Operation" }]
+
+    PlatformHealth:
+      type: object
+      required: [components, work, clusters]
+      properties:
+        components:
+          type: array
+          items: { $ref: "#/components/schemas/HealthComponent" }
+        work:
+          type: object
+          required: [operationsRunning, operationsNeedingAttention, syncWaiting, requestsWaiting]
+          properties:
+            operationsRunning: { type: integer, description: Pending or Running }
+            operationsNeedingAttention: { type: integer, description: Failed or Blocked }
+            syncWaiting: { type: integer, description: "Group, member and account changes Keycloak does not have yet" }
+            requestsWaiting: { type: integer, description: Organization requests waiting for review }
+        clusters:
+          type: array
+          items: { $ref: "#/components/schemas/HealthCluster" }
+
+    HealthComponent:
+      type: object
+      required: [name, state, detail]
+      properties:
+        name: { type: string }
+        state: { type: string, enum: [ok, warn] }
+        detail: { type: string }
+
+    HealthCluster:
+      type: object
+      required: [id, displayName, status, pools]
+      properties:
+        id: { type: string }
+        displayName: { type: string }
+        status: { type: string, enum: [Registered, Ready, Maintenance, Unavailable] }
+        lastHealthCheck: { type: string, format: date-time }
+        pools:
+          type: array
+          items: { $ref: "#/components/schemas/HealthPool" }
+
+    HealthPool:
+      type: object
+      required: [id, name, allocated, ceiling]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        allocated: { $ref: "#/components/schemas/NodeCapacity" }
+        ceiling: { $ref: "#/components/schemas/NodeCapacity" }
 
     SharedPoolList:
       type: object
