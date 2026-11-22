@@ -64,8 +64,10 @@ CREATE TABLE dedicated_node_grants (
     revoked_at                  timestamptz,
     created_at                  timestamptz NOT NULL DEFAULT now(),
     updated_at                  timestamptz NOT NULL DEFAULT now(),
-    -- a node granted to an organization needs its grant on that cluster
-    FOREIGN KEY (org_id, cluster_id) REFERENCES organization_cluster_grants (org_id, cluster_id),
+    -- A live node grant needs the organization's grant on that cluster: the
+    -- service checks it, and refuses to delete a grant with live nodes. No
+    -- foreign key: revoked rows outlive the grant, as history for the
+    -- reservations that point at them.
     -- the target of workspace_node_reservations' composite key (M8)
     CONSTRAINT dedicated_node_grants_id_org_cluster_uq UNIQUE (id, org_id, cluster_id)
 );

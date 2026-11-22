@@ -116,46 +116,8 @@ func duplicate(ids []string) string {
 // must be on that cluster, and a network pool must be shared or orgID's own
 // (02-data-model §3).
 func CreateGrant(ctx context.Context, q *store.Queries, orgID string, isDefault bool, g GrantSpec) (Grant, error) {
-	if err := g.check(); err != nil {
+	if _, err := checkGrant(ctx, q, orgID, g, true); err != nil {
 		return Grant{}, err
-	}
-	cluster, err := q.ShareLockCluster(ctx, g.ClusterID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Grant{}, apperr.Invalid("clusterId", fmt.Sprintf("no cluster %q", g.ClusterID))
-	}
-	if err != nil {
-		return Grant{}, err
-	}
-	if cluster.Status != ClusterReady {
-		return Grant{}, ErrClusterNotReady
-	}
-
-	shared, err := q.GetSharedPools(ctx, g.SharedPoolIDs)
-	if err != nil {
-		return Grant{}, err
-	}
-	sharedCluster := map[string]string{}
-	for _, p := range shared {
-		sharedCluster[p.ID] = p.ClusterID
-	}
-	for _, pid := range g.SharedPoolIDs {
-		if c, ok := sharedCluster[pid]; !ok || c != g.ClusterID {
-			return Grant{}, apperr.Invalid("sharedPoolIds", fmt.Sprintf("no shared pool %q on cluster %s", pid, g.ClusterID))
-		}
-	}
-	network, err := q.GetNetworkPools(ctx, g.NetworkPoolIDs)
-	if err != nil {
-		return Grant{}, err
-	}
-	usable := map[string]bool{}
-	for _, p := range network {
-		usable[p.ID] = p.ClusterID == g.ClusterID && (p.OrgID == nil || *p.OrgID == orgID)
-	}
-	for _, pid := range g.NetworkPoolIDs {
-		if !usable[pid] {
-			return Grant{}, apperr.Invalid("networkPoolIds",
-				fmt.Sprintf("no network pool %q on cluster %s that this organization may use", pid, g.ClusterID))
-		}
 	}
 
 	r := g.Resources
@@ -178,6 +140,59 @@ func CreateGrant(ctx context.Context, q *store.Queries, orgID string, isDefault 
 	}
 	g.SharedPoolIDs, g.AllowedStorageClasses = nonNil(g.SharedPoolIDs), nonNil(g.AllowedStorageClasses)
 	return Grant{ID: row.ID, OrgID: orgID, IsDefault: isDefault, GrantSpec: g}, nil
+}
+
+// CheckGrant validates g for orgID and returns its cluster, share-locked so it
+// cannot change state or go away while the grant is written. Every pool must
+// be on that cluster, and a network pool shared or orgID's own.
+func CheckGrant(ctx context.Context, q *store.Queries, orgID string, g GrantSpec) (store.Cluster, error) {
+	return checkGrant(ctx, q, orgID, g, false)
+}
+
+// checkGrant is CheckGrant; ready also requires the cluster to be Ready,
+// checked before the pools (a cluster in maintenance is the first answer).
+func checkGrant(ctx context.Context, q *store.Queries, orgID string, g GrantSpec, ready bool) (store.Cluster, error) {
+	if err := g.check(); err != nil {
+		return store.Cluster{}, err
+	}
+	cluster, err := q.ShareLockCluster(ctx, g.ClusterID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return cluster, apperr.Invalid("clusterId", fmt.Sprintf("no cluster %q", g.ClusterID))
+	}
+	if err != nil {
+		return cluster, err
+	}
+	if ready && cluster.Status != ClusterReady {
+		return cluster, ErrClusterNotReady
+	}
+	shared, err := q.GetSharedPools(ctx, g.SharedPoolIDs)
+	if err != nil {
+		return cluster, err
+	}
+	sharedCluster := map[string]string{}
+	for _, p := range shared {
+		sharedCluster[p.ID] = p.ClusterID
+	}
+	for _, pid := range g.SharedPoolIDs {
+		if c, ok := sharedCluster[pid]; !ok || c != g.ClusterID {
+			return cluster, apperr.Invalid("sharedPoolIds", fmt.Sprintf("no shared pool %q on cluster %s", pid, g.ClusterID))
+		}
+	}
+	network, err := q.GetNetworkPools(ctx, g.NetworkPoolIDs)
+	if err != nil {
+		return cluster, err
+	}
+	usable := map[string]bool{}
+	for _, p := range network {
+		usable[p.ID] = p.ClusterID == g.ClusterID && (p.OrgID == nil || *p.OrgID == orgID)
+	}
+	for _, pid := range g.NetworkPoolIDs {
+		if !usable[pid] {
+			return cluster, apperr.Invalid("networkPoolIds",
+				fmt.Sprintf("no network pool %q on cluster %s that this organization may use", pid, g.ClusterID))
+		}
+	}
+	return cluster, nil
 }
 
 func nonNil(s []string) []string {
@@ -216,19 +231,54 @@ func Grants(ctx context.Context, q *store.Queries, orgID string) ([]Grant, error
 	}
 	out := make([]Grant, 0, len(rows))
 	for _, r := range rows {
-		g := r.OrganizationClusterGrant
-		out = append(out, Grant{ID: g.ID, OrgID: g.OrgID, IsDefault: g.IsDefault, GrantSpec: GrantSpec{
-			ClusterID: g.ClusterID, MaxWorkspaces: g.MaxWorkspaces, MaxNamespacesTotal: g.MaxNamespacesTotal,
-			Resources: Resources{
-				RequestsCPUMilli: g.RequestsCpuMilli, RequestsMemoryBytes: g.RequestsMemoryBytes,
-				LimitsCPUMilli: g.LimitsCpuMilli, LimitsMemoryBytes: g.LimitsMemoryBytes,
-				Pods: g.Pods, RequestsStorageBytes: g.RequestsStorageBytes,
-			},
-			SharedPoolIDs: nonNil(r.SharedPoolIds), NetworkPoolIDs: nonNil(r.NetworkPoolIds),
-			AllowedStorageClasses: nonNil(g.AllowedStorageClasses),
-		}})
+		out = append(out, FromRow(r.OrganizationClusterGrant, r.SharedPoolIds, r.NetworkPoolIds))
 	}
 	return out, nil
+}
+
+// FromRow is a stored grant with its pools.
+func FromRow(g store.OrganizationClusterGrant, sharedPools, networkPools []string) Grant {
+	return Grant{ID: g.ID, OrgID: g.OrgID, IsDefault: g.IsDefault, GrantSpec: GrantSpec{
+		ClusterID: g.ClusterID, MaxWorkspaces: g.MaxWorkspaces, MaxNamespacesTotal: g.MaxNamespacesTotal,
+		Resources: Resources{
+			RequestsCPUMilli: g.RequestsCpuMilli, RequestsMemoryBytes: g.RequestsMemoryBytes,
+			LimitsCPUMilli: g.LimitsCpuMilli, LimitsMemoryBytes: g.LimitsMemoryBytes,
+			Pods: g.Pods, RequestsStorageBytes: g.RequestsStorageBytes,
+		},
+		SharedPoolIDs: nonNil(sharedPools), NetworkPoolIDs: nonNil(networkPools),
+		AllowedStorageClasses: nonNil(g.AllowedStorageClasses),
+	}}
+}
+
+// UpdateGrant gives the grant cur the numbers and lists of g, checked like a
+// new grant except that its cluster need not be Ready (PRODUCT-PLAN §5.5).
+// The caller holds cur's lock.
+func UpdateGrant(ctx context.Context, q *store.Queries, cur store.OrganizationClusterGrant, g GrantSpec) (Grant, error) {
+	g.ClusterID = cur.ClusterID
+	if _, err := CheckGrant(ctx, q, cur.OrgID, g); err != nil {
+		return Grant{}, err
+	}
+	r := g.Resources
+	row, err := q.UpdateClusterGrant(ctx, store.UpdateClusterGrantParams{
+		ID: cur.ID, MaxWorkspaces: g.MaxWorkspaces, MaxNamespacesTotal: g.MaxNamespacesTotal,
+		RequestsCpuMilli: r.RequestsCPUMilli, RequestsMemoryBytes: r.RequestsMemoryBytes,
+		LimitsCpuMilli: r.LimitsCPUMilli, LimitsMemoryBytes: r.LimitsMemoryBytes,
+		Pods: r.Pods, RequestsStorageBytes: r.RequestsStorageBytes,
+		AllowedStorageClasses: nonNil(g.AllowedStorageClasses),
+	})
+	if err != nil {
+		return Grant{}, err
+	}
+	if err := q.ClearGrantPools(ctx, cur.ID); err != nil {
+		return Grant{}, err
+	}
+	if err := q.AddGrantSharedPools(ctx, store.AddGrantSharedPoolsParams{GrantID: cur.ID, PoolIds: nonNil(g.SharedPoolIDs)}); err != nil {
+		return Grant{}, err
+	}
+	if err := q.AddGrantNetworkPools(ctx, store.AddGrantNetworkPoolsParams{GrantID: cur.ID, PoolIds: g.NetworkPoolIDs}); err != nil {
+		return Grant{}, err
+	}
+	return FromRow(row, g.SharedPoolIDs, g.NetworkPoolIDs), nil
 }
 
 // Allocation is what an organization's Workspaces hold of one grant, in the

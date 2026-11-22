@@ -1,0 +1,13 @@
+{
+  "responses": {
+    "204": null,
+    "409": {
+      "code": "CONFLICT",
+      "message": "the organization holds 1 dedicated node(s) on this cluster: revoke them first",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K",
+      "details": {
+        "dedicatedNodes": 1
+      }
+    }
+  }
+}

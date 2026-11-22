@@ -152,3 +152,37 @@ func (s *Service) find(ctx context.Context, userID string, platformAdmin bool, o
 	}
 	return row, err
 }
+
+// Page is one page of AdminList. NextCursor is empty on the last page.
+type Page struct {
+	Items      []store.Operation
+	NextCursor string
+}
+
+// AdminList returns the operations of every organization and of clusters,
+// newest first; state "" means any (PRODUCT-PLAN §16.5, Platform Admin).
+func (s *Service) AdminList(ctx context.Context, state, cursor string, pageSize int) (Page, error) {
+	if pageSize == 0 {
+		pageSize = 50
+	}
+	if pageSize < 1 || pageSize > 200 {
+		return Page{}, apperr.Invalid("limit", "must be between 1 and 200")
+	}
+	arg := store.ListOperationsForAdminParams{PageSize: int32(pageSize + 1)}
+	if state != "" {
+		arg.State = &state
+	}
+	if cursor != "" {
+		arg.Cursor = &cursor
+	}
+	rows, err := s.q.ListOperationsForAdmin(ctx, arg)
+	if err != nil {
+		return Page{}, err
+	}
+	p := Page{Items: rows}
+	if len(rows) > pageSize {
+		p.Items = rows[:pageSize]
+		p.NextCursor = p.Items[pageSize-1].ID
+	}
+	return p, nil
+}

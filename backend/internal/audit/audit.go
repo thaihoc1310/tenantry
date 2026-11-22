@@ -22,6 +22,12 @@ const (
 	EntitlementUpdate   = "organization_entitlement.update"
 	UserDisable         = "user.disable"
 	UserEnable          = "user.enable"
+	ClusterRegister     = "cluster.register"
+	ClusterUpdate       = "cluster.update"
+	ClusterGrantCreate  = "cluster_grant.create"
+	ClusterGrantUpdate  = "cluster_grant.update"
+	ClusterGrantDelete  = "cluster_grant.delete"
+	PolicyUpdate        = "onboarding_policy.update"
 	OperationRetry      = "operation.retry"
 
 	InvitationCreate = "invitation.create"

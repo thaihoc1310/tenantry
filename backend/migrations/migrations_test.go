@@ -120,8 +120,6 @@ func TestConstraints(t *testing.T) {
 		{"control-plane node in a pool", `UPDATE cluster_nodes SET shared_pool_id = 'pool-a' WHERE node_name = 'cp1'`, check},
 		{"node kind outside enum", `INSERT INTO cluster_nodes (cluster_id, node_name, kind) VALUES ('cluster-a', 'x', 'Edge')`, check},
 		{"node dedicated twice", `INSERT INTO dedicated_node_grants (id, org_id, cluster_id, node_name) VALUES ('dng-x', 'org-acme', 'cluster-a', 'wk2')`, unique},
-		{"dedicated node without a grant on its cluster", `INSERT INTO dedicated_node_grants (id, org_id, cluster_id, node_name)
-			VALUES ('dng-x', 'org-acme', 'cluster-b', 'wk9')`, foreignKey},
 		{"negative system reserve", `UPDATE shared_compute_pools SET system_reserve_cpu_milli = -1 WHERE id = 'pool-a'`, check},
 		{"user sync status outside enum", `UPDATE users SET sync_status = 'Done' WHERE id = 'usr-bob'`, check},
 	}

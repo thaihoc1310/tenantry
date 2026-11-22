@@ -1,0 +1,38 @@
+{
+  "responses": {
+    "200": {
+      "entitlement": {
+        "maxMembers": 20,
+        "maxGroups": 10,
+        "maxWorkspacesTotal": 8
+      },
+      "clusterGrant": {
+        "clusterId": "cluster-a",
+        "maxWorkspaces": 2,
+        "maxNamespacesTotal": 6,
+        "resources": {
+          "requestsCpu": "2",
+          "requestsMemory": "4Gi",
+          "limitsCpu": "4",
+          "limitsMemory": "8Gi",
+          "pods": 20,
+          "requestsStorage": "20Gi"
+        },
+        "sharedPoolIds": [
+          "shared-general"
+        ],
+        "networkPoolIds": [
+          "onboarding-pod-network"
+        ],
+        "allowedStorageClasses": [
+          "standard"
+        ]
+      }
+    },
+    "404": {
+      "code": "NOT_FOUND",
+      "message": "no onboarding policy is active",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K"
+    }
+  }
+}

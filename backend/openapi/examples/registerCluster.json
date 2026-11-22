@@ -1,0 +1,36 @@
+{
+  "request": {
+    "id": "cluster-b",
+    "displayName": "Cluster B",
+    "proxyEndpoint": "https://kube-b.tenantry.site",
+    "consoleUrl": "https://console-b.tenantry.site",
+    "appsDomain": "b.tenantry.site",
+    "reservedCidrs": [
+      "192.168.0.0/16",
+      "10.96.0.0/12"
+    ]
+  },
+  "responses": {
+    "201": {
+      "id": "cluster-b",
+      "displayName": "Cluster B",
+      "proxyEndpoint": "https://kube-b.tenantry.site",
+      "consoleUrl": "https://console-b.tenantry.site",
+      "appsDomain": "b.tenantry.site",
+      "reservedCidrs": [
+        "192.168.0.0/16",
+        "10.96.0.0/12"
+      ],
+      "status": "Registered",
+      "createdAt": "2026-11-22T10:00:00Z"
+    },
+    "409": {
+      "code": "CONFLICT",
+      "message": "a cluster with this id exists",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K",
+      "details": {
+        "field": "id"
+      }
+    }
+  }
+}

@@ -110,15 +110,19 @@ func TestAuthorizationMatrix(t *testing.T) {
 			// Refusals change nothing, so they share one organization; each
 			// caller that succeeds gets a fresh one, since success changes it.
 			shared := newAuthzFixture(t)
-			for i, want := range r.want {
-				f := shared
-				if want < 300 {
-					f = newAuthzFixture(t)
-				}
+			check := func(t *testing.T, f authzFixture, i, want int) {
 				rec := asAdmin(f.h, f.callers()[i], r.method, f.path(r.path), newKey(), r.body)
 				if rec.Code != want {
 					t.Errorf("%s: %d, want %d: %s", callerNames[i], rec.Code, want, rec.Body)
 				}
+			}
+			for i, want := range r.want {
+				if want >= 300 {
+					check(t, shared, i, want)
+					continue
+				}
+				// Its own subtest, so its database goes as soon as it is checked.
+				t.Run(callerNames[i], func(t *testing.T) { check(t, newAuthzFixture(t), i, want) })
 			}
 		})
 	}

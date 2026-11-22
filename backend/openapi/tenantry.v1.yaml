@@ -901,6 +901,234 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
+  /admin/organizations/{orgId}/cluster-grants/{clusterId}:
+    parameters:
+      - $ref: "#/components/parameters/adminOrgId"
+      - $ref: "#/components/parameters/clusterId"
+    put:
+      operationId: putClusterGrant
+      security: [{ session: [], csrf: [] }]
+      summary: Give an Active organization a grant on a cluster, or change it (Platform Admin)
+      description: |
+        `clusterId` in the body must be the path's. A new grant needs a Ready
+        cluster (409 `CLUSTER_NOT_READY`) and is the default when it is the
+        organization's only one. The grant lists at least one network pool;
+        every pool is on its cluster, a network pool shared or the
+        organization's own. Changing a grant sends nothing to the cluster and
+        never touches running Workspaces (PRODUCT-PLAN §5.5); the audit event
+        keeps the values before and after.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClusterGrantInput" }
+      responses:
+        "200":
+          description: Changed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClusterGrant" }
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClusterGrant" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: |
+            `CLUSTER_NOT_READY`: a new grant on a cluster that is not Ready.
+            `ORG_NOT_ACTIVE`: the organization is not Active.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    delete:
+      operationId: deleteClusterGrant
+      security: [{ session: [], csrf: [] }]
+      summary: Take an organization's grant on a cluster away (Platform Admin)
+      description: |
+        Refused (409 `CONFLICT`, `details.dedicatedNodes`) while the
+        organization holds dedicated nodes on the cluster. Deleting the
+        default grant makes the oldest grant left the default.
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: Dedicated nodes left (`CONFLICT`), or the organization is not Active (`ORG_NOT_ACTIVE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /admin/cluster-grants:
+    get:
+      operationId: listAdminClusterGrants
+      summary: Every grant of every organization, with what its Workspaces hold (Platform Admin)
+      parameters:
+        - name: clusterId
+          in: query
+          schema: { $ref: "#/components/schemas/PoolId" }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          description: Opaque; pass `nextCursor` from the previous page.
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminClusterGrantList" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /admin/clusters:
+    get:
+      operationId: listAdminClusters
+      summary: The cluster registry (Platform Admin)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminClusterList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: registerCluster
+      security: [{ session: [], csrf: [] }]
+      summary: Register a cluster; it stays Registered until an Admin marks it Ready (Platform Admin)
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKeyRequired"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClusterCreate" }
+      responses:
+        "201":
+          description: Registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminCluster" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409":
+          description: A cluster with this id exists (`CONFLICT`, `details.field` = `id`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /admin/clusters/{clusterId}:
+    parameters:
+      - $ref: "#/components/parameters/clusterId"
+    patch:
+      operationId: patchCluster
+      security: [{ session: [], csrf: [] }]
+      summary: Change a cluster's metadata or status (Platform Admin)
+      description: |
+        Status moves as architecture/04-state-machines.md §6 allows, set by
+        hand in the MVP: `Registered → Ready`, then among `Ready`,
+        `Maintenance` and `Unavailable`; never back to `Registered` (409
+        `CONFLICT`, `details.field` = `status`). `reservedCidrs` may not
+        overlap a network pool of the cluster (409 `CIDR_OVERLAP`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClusterPatch" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminCluster" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: A status change not allowed (`CONFLICT`), or reserved ranges overlapping a network pool (`CIDR_OVERLAP`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /admin/onboarding-policy:
+    get:
+      operationId: getOnboardingPolicy
+      summary: What approving a request proposes (Platform Admin)
+      description: 404 when no policy is active.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Approval" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      operationId: putOnboardingPolicy
+      security: [{ session: [], csrf: [] }]
+      summary: Replace the onboarding policy (Platform Admin)
+      description: |
+        `clusterGrant.clusterId` is the default cluster of new
+        organizations. What the policy proposes must suit any organization:
+        its network pools are shared ones. Grants already given are copies
+        and do not change (PRODUCT-PLAN §5.2.1).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Approval" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Approval" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /admin/operations:
+    get:
+      operationId: listAdminOperations
+      summary: Operations of every organization and of clusters, newest first (Platform Admin)
+      parameters:
+        - name: state
+          in: query
+          schema: { type: string, enum: [Pending, Running, Succeeded, Failed, Blocked] }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          description: Opaque; pass `nextCursor` from the previous page.
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationList" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
   /admin/organizations/{orgId}:approve:
     parameters:
       - $ref: "#/components/parameters/adminOrgId"
@@ -1015,6 +1243,12 @@ components:
       required: true
       description: Organization id (`org-<ulid>`). Not a slug, which a Rejected and a Pending request may share.
       schema: { type: string }
+
+    clusterId:
+      name: clusterId
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/PoolId" }
 
     groupId:
       name: groupId
@@ -1339,6 +1573,94 @@ components:
       properties:
         entitlement: { $ref: "#/components/schemas/Entitlement" }
         clusterGrant: { $ref: "#/components/schemas/ClusterGrantInput" }
+
+    AdminCluster:
+      type: object
+      required: [id, displayName, status, proxyEndpoint, consoleUrl, appsDomain, reservedCidrs, createdAt]
+      properties:
+        id: { type: string }
+        displayName: { type: string }
+        status: { type: string, enum: [Registered, Ready, Maintenance, Unavailable] }
+        proxyEndpoint: { type: string, description: "Capsule Proxy: the server of tenant kubeconfigs" }
+        consoleUrl: { type: string, description: Headlamp }
+        appsDomain: { type: string, description: "Routes are <name>-<workspace>.<appsDomain>" }
+        reservedCidrs:
+          type: array
+          description: "Ranges the cluster already uses (Pod, Service, node CIDRs): network pools may not overlap them."
+          items: { type: string }
+        lastHealthCheck: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+
+    AdminClusterList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AdminCluster" }
+
+    ClusterCreate:
+      type: object
+      required: [id, displayName, proxyEndpoint, consoleUrl, appsDomain]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/PoolId" }
+        displayName: { type: string, minLength: 1, maxLength: 80 }
+        proxyEndpoint: { type: string, maxLength: 2048 }
+        consoleUrl: { type: string, maxLength: 2048 }
+        appsDomain: { type: string, maxLength: 253 }
+        reservedCidrs:
+          type: array
+          maxItems: 20
+          items: { type: string, maxLength: 43 }
+
+    ClusterPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 80 }
+        status: { type: string, enum: [Registered, Ready, Maintenance, Unavailable] }
+        proxyEndpoint: { type: string, maxLength: 2048 }
+        consoleUrl: { type: string, maxLength: 2048 }
+        appsDomain: { type: string, maxLength: 253 }
+        reservedCidrs:
+          type: array
+          maxItems: 20
+          items: { type: string, maxLength: 43 }
+
+    OrganizationRef:
+      type: object
+      required: [id, slug, displayName]
+      properties:
+        id: { type: string }
+        slug: { type: string }
+        displayName: { type: string }
+
+    AdminClusterGrant:
+      type: object
+      required: [organization, clusterGrant, usage]
+      properties:
+        organization: { $ref: "#/components/schemas/OrganizationRef" }
+        clusterGrant: { $ref: "#/components/schemas/ClusterGrant" }
+        usage: { $ref: "#/components/schemas/GrantUsage" }
+
+    AdminClusterGrantList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AdminClusterGrant" }
+        nextCursor: { type: string }
+
+    OperationList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Operation" }
+        nextCursor: { type: string }
 
     AdminOrganizationCreate:
       type: object

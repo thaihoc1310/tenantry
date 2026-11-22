@@ -137,10 +137,12 @@ func CheckPoolCIDRs(cidrs []netip.Prefix, others map[string][]netip.Prefix, rese
 	return nil
 }
 
-func overlap(c, with netip.Prefix, where string) error {
+func overlap(c, with netip.Prefix, where string) error { return overlapWith("cidrs", c, with, where) }
+
+func overlapWith(field string, c, with netip.Prefix, where string) error {
 	return &apperr.Error{
 		Code:    apperr.CIDROverlap,
 		Message: fmt.Sprintf("%s overlaps %s of %s", c, with, where),
-		Details: map[string]any{"field": "cidrs", "cidr": c.String(), "conflictsWith": with.String(), "in": where},
+		Details: map[string]any{"field": field, "cidr": c.String(), "conflictsWith": with.String(), "in": where},
 	}
 }

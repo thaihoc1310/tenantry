@@ -1,0 +1,29 @@
+{
+  "request": {
+    "status": "Maintenance"
+  },
+  "responses": {
+    "200": {
+      "id": "cluster-a",
+      "displayName": "Cluster A",
+      "status": "Maintenance",
+      "proxyEndpoint": "https://kube-a.tenantry.site",
+      "consoleUrl": "https://console-a.tenantry.site",
+      "appsDomain": "mvp.tenantry.site",
+      "reservedCidrs": [
+        "192.168.0.0/16",
+        "10.96.0.0/12"
+      ],
+      "lastHealthCheck": "2026-11-22T10:00:00Z",
+      "createdAt": "2026-11-18T08:00:00Z"
+    },
+    "409": {
+      "code": "CONFLICT",
+      "message": "a Ready cluster cannot become Registered",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K",
+      "details": {
+        "field": "status"
+      }
+    }
+  }
+}
