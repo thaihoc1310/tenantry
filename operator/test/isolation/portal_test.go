@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"html"
 	"io"
 	"net/http"
@@ -95,9 +96,23 @@ func (p *portal) api(t *testing.T, method, path string, body, out any) int {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", p.csrf())
 	if method == http.MethodPost || method == http.MethodPut {
-		req.Header.Set("Idempotency-Key", randomString(16))
+		req.Header.Set("Idempotency-Key", uuid())
 	}
-	resp, err := p.http.Do(req)
+	// A slow answer or a dropped connection is tried again, twice.
+	var resp *http.Response
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(2 * time.Second)
+			if body != nil {
+				b, _ := json.Marshal(body)
+				req.Body = io.NopCloser(bytes.NewReader(b))
+			}
+		}
+		if resp, err = p.http.Do(req); err == nil {
+			break
+		}
+	}
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}
@@ -323,4 +338,13 @@ func (p *portal) operation(t *testing.T, id string) {
 		}
 		return op.State == "Succeeded", nil
 	})
+}
+
+// uuid is a random UUID (version 4), the form the API wants for Idempotency-Key.
+func uuid() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }

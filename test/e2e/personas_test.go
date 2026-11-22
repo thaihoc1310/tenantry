@@ -23,14 +23,16 @@ type cleanups struct {
 	steps []func()
 }
 
-func (c *cleanups) add(what string, f func()) {
+func (c *cleanups) add(what string, f func()) { c.addWithin(what, 6*time.Minute, f) }
+
+func (c *cleanups) addWithin(what string, limit time.Duration, f func()) {
 	c.steps = append(c.steps, func() {
 		done := make(chan struct{})
 		go func() { defer close(done); f() }()
 		select {
 		case <-done:
 			c.t.Logf("cleanup: %s", what)
-		case <-time.After(6 * time.Minute):
+		case <-time.After(limit):
 			c.t.Errorf("cleanup: %s timed out", what)
 		}
 	})
@@ -97,7 +99,15 @@ func TestPersonas(t *testing.T) {
 	slug := "optest" + alnum(5)
 	var org struct{ ID string }
 	alice.api(t, http.MethodPost, "/organizations", map[string]any{"slug": slug, "displayName": "Optest Acme " + slug, "description": "Persona e2e."}, &org, 201)
-	c.add("delete Organization "+slug, func() { alice.call(http.MethodDelete, "/organizations/"+org.ID, nil) })
+	// A deleted Workspace keeps its row while its CIDR is in quarantine (10
+	// minutes), and the Organization cannot go before it: try again.
+	c.addWithin("delete Organization "+slug, 21*time.Minute, func() {
+		for end := time.Now().Add(20 * time.Minute); time.Now().Before(end); time.Sleep(15 * time.Second) {
+			if code, _ := alice.call(http.MethodDelete, "/organizations/"+org.ID, nil); code == 204 || code == 404 {
+				return
+			}
+		}
+	})
 	var policy struct {
 		Entitlement  map[string]any `json:"entitlement"`
 		ClusterGrant map[string]any `json:"clusterGrant"`
