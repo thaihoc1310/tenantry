@@ -50,7 +50,16 @@ func TestGolden(t *testing.T) {
 	cordoned := solar()
 	cordoned.Spec.Cordoned = true
 	cordoned.Spec.NamespaceQuota = 0
+	// M9: a network; Water's /28 is smaller than a block.
+	solarNet := solar()
+	solarNet.Spec.Network = &v1.Network{AllocationRef: "netalloc-01jsol", CIDR: "10.240.64.0/24"}
+	waterNet := water.DeepCopy()
+	waterNet.Spec.Network = &v1.Network{AllocationRef: "netalloc-01jwat", CIDR: "10.240.65.16/28"}
 	cases := map[string]*unstructured.Unstructured{
+		"ippool":                IPPool(solarNet),
+		"ippool-dedicated":      IPPool(waterNet),
+		"tenant-network":        Tenant(solarNet, opts, false),
+		"replication-network":   Replication(solarNet),
 		"tenant":                Tenant(solar(), opts, false),
 		"tenant-revoked":        Tenant(solar(), opts, true),
 		"tenant-cordoned":       Tenant(cordoned, opts, false),

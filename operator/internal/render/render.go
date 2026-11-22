@@ -107,7 +107,7 @@ var conditionTaints = []string{
 // NamespaceAnnotations hold a Namespace to the Workspace's nodes: the node
 // selector, and the tolerations its Pods may carry. A Dedicated Workspace's
 // Pods tolerate their Organization's taint by default; nothing else can be
-// tolerated in either mode.
+// tolerated in either mode. With a network, the Calico pool too.
 func NamespaceAnnotations(ws *v1.PlatformWorkspace) map[string]string {
 	type toleration struct {
 		Key      string `json:"key"`
@@ -128,11 +128,18 @@ func NamespaceAnnotations(ws *v1.PlatformWorkspace) map[string]string {
 		defaultsJSON = []byte("[]")
 	}
 	whitelistJSON, _ := json.Marshal(whitelist)
-	return map[string]string{
+	a := map[string]string{
 		AnnotationNodeSelector:         nodeSelectorKey(ws) + "=" + nodeSelectorValue(ws),
 		AnnotationDefaultTolerations:   string(defaultsJSON),
 		AnnotationTolerationsWhitelist: string(whitelistJSON),
 	}
+	// Sub-reconciler network: Pods take their addresses from the
+	// Workspace's IPPool.
+	if ws.Spec.Network != nil {
+		poolJSON, _ := json.Marshal([]string{ws.Name})
+		a[AnnotationIPv4Pools] = string(poolJSON)
+	}
+	return a
 }
 
 // anyValue matches every value of a metadata key.
@@ -173,6 +180,13 @@ func Tenant(ws *v1.PlatformWorkspace, o Options, revoked bool) *unstructured.Uns
 		nsOptions["quota"] = int64(ws.Spec.NamespaceQuota)
 	}
 
+	// Calico pool annotations would pick another Workspace's addresses
+	// (architecture/05 §5): ipv4pools is a managed value once the Workspace
+	// has a network, refused before; ipv6pools always.
+	deniedPools := map[string]any{"cni.projectcalico.org/ipv6pools": anyValue}
+	if ws.Spec.Network == nil {
+		deniedPools[AnnotationIPv4Pools] = anyValue
+	}
 	rules := []any{
 		// Every Namespace of the Tenant, whoever creates it, carries these
 		// labels and annotations, and nobody else can change them (PRODUCT-PLAN
@@ -185,16 +199,11 @@ func Tenant(ws *v1.PlatformWorkspace, o Options, revoked bool) *unstructured.Uns
 				"annotations": managedValues(NamespaceAnnotations(ws)),
 			}},
 		}},
-		// Calico pool annotations would pick another Workspace's addresses
-		// (architecture/05 §5); M9 makes ipv4pools a managed value instead.
 		map[string]any{"enforce": map[string]any{
 			"action": "deny",
 			"metadata": []any{map[string]any{
 				"apiGroups": []any{"v1"}, "kinds": []any{"Namespace"},
-				"annotations": map[string]any{
-					"cni.projectcalico.org/ipv4pools": anyValue,
-					"cni.projectcalico.org/ipv6pools": anyValue,
-				},
+				"annotations": deniedPools,
 			}},
 		}},
 		map[string]any{"enforce": map[string]any{
@@ -294,8 +303,10 @@ var (
 
 // Replication is the GlobalTenantResource that copies the LimitRange into
 // every Namespace of the Tenant, kubectl-made ones included (sub-reconciler
-// policy). Capsule protects the copies from the tenant. Cluster-scoped like
-// the PlatformWorkspace that owns it, named like it.
+// policy), and with a network the baseline NetworkPolicies (sub-reconciler
+// network). Capsule protects the copies from the tenant and puts back
+// deleted ones every resyncPeriod (60s by default). Cluster-scoped like the
+// PlatformWorkspace that owns it, named like it.
 func Replication(ws *v1.PlatformWorkspace) *unstructured.Unstructured {
 	limit := map[string]any{"type": "Container", "defaultRequest": defaultRequest, "default": defaultLimit}
 	if ws.Spec.Compute.Mode == v1.ComputeDedicated {
@@ -306,15 +317,19 @@ func Replication(ws *v1.PlatformWorkspace) *unstructured.Unstructured {
 			"maxLimitRequestRatio": map[string]any{"cpu": "1", "memory": "1"},
 		}
 	}
+	items := []any{map[string]any{
+		"apiVersion": "v1", "kind": "LimitRange",
+		"metadata": map[string]any{"name": LimitRangeName},
+		"spec":     map[string]any{"limits": []any{limit}},
+	}}
+	if ws.Spec.Network != nil {
+		items = append(items, networkPolicies(ws)...)
+	}
 	r := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{
 		"scope":           "Namespace",
 		"pruningOnDelete": true,
 		"tenantSelector":  map[string]any{"matchLabels": map[string]any{v1.LabelWorkspaceID: ws.Spec.WorkspaceID}},
-		"resources": []any{map[string]any{"rawItems": []any{map[string]any{
-			"apiVersion": "v1", "kind": "LimitRange",
-			"metadata": map[string]any{"name": LimitRangeName},
-			"spec":     map[string]any{"limits": []any{limit}},
-		}}}},
+		"resources":       []any{map[string]any{"rawItems": items}},
 	}}}
 	r.SetGroupVersionKind(ReplicationGVK)
 	r.SetName(ws.Name)

@@ -1,0 +1,111 @@
+apiVersion: capsule.clastix.io/v1beta2
+kind: Tenant
+metadata:
+  labels:
+    tenantry.io/cluster-id: cluster-a
+    tenantry.io/compute-mode: shared
+    tenantry.io/compute-pool: shared-general
+    tenantry.io/managed: "true"
+    tenantry.io/organization-id: org-01jabc
+    tenantry.io/workspace-id: ws-01jsol
+  name: acme-solar
+spec:
+  additionalRoleBindings:
+  - clusterRoleName: tenantry:tenant-developer
+    subjects:
+    - apiGroup: rbac.authorization.k8s.io
+      kind: Group
+      name: oidc:org_01jabc:group_01jdev
+  - clusterRoleName: tenantry:tenant-viewer
+    subjects:
+    - apiGroup: rbac.authorization.k8s.io
+      kind: Group
+      name: oidc:org_01jabc:group_01jview
+  cordoned: false
+  forceTenantPrefix: true
+  namespaceOptions:
+    quota: 3
+  nodeSelector:
+    tenantry.io/compute-pool: shared-general
+  owners:
+  - kind: Group
+    name: oidc:org_01jabc:group_01jadmin
+  - kind: Group
+    name: oidc:org_01jabc:group_01jops
+  - kind: ServiceAccount
+    name: system:serviceaccount:tenantry-operator:tenantry-operator
+  rules:
+  - enforce:
+      action: allow
+      metadata:
+      - annotations:
+          cni.projectcalico.org/ipv4pools:
+            managed: '["acme-solar"]'
+          scheduler.alpha.kubernetes.io/defaultTolerations:
+            managed: '[]'
+          scheduler.alpha.kubernetes.io/node-selector:
+            managed: tenantry.io/compute-pool=shared-general
+          scheduler.alpha.kubernetes.io/tolerationsWhitelist:
+            managed: '[{"key":"node.kubernetes.io/not-ready","operator":"Exists"},{"key":"node.kubernetes.io/unreachable","operator":"Exists"},{"key":"node.kubernetes.io/disk-pressure","operator":"Exists"},{"key":"node.kubernetes.io/memory-pressure","operator":"Exists"},{"key":"node.kubernetes.io/pid-pressure","operator":"Exists"},{"key":"node.kubernetes.io/network-unavailable","operator":"Exists"},{"key":"node.kubernetes.io/unschedulable","operator":"Exists"}]'
+        apiGroups:
+        - v1
+        kinds:
+        - Namespace
+        labels:
+          pod-security.kubernetes.io/audit:
+            managed: restricted
+          pod-security.kubernetes.io/enforce:
+            managed: baseline
+          pod-security.kubernetes.io/warn:
+            managed: restricted
+          tenantry.io/cluster-id:
+            managed: cluster-a
+          tenantry.io/compute-mode:
+            managed: shared
+          tenantry.io/compute-pool:
+            managed: shared-general
+          tenantry.io/managed:
+            managed: "true"
+          tenantry.io/org:
+            managed: 01jabc
+          tenantry.io/organization-id:
+            managed: org-01jabc
+          tenantry.io/workspace-id:
+            managed: ws-01jsol
+  - enforce:
+      action: deny
+      metadata:
+      - annotations:
+          cni.projectcalico.org/ipv6pools:
+            values:
+            - exp: .*
+        apiGroups:
+        - v1
+        kinds:
+        - Namespace
+  - enforce:
+      action: allow
+      workloads:
+        registries:
+        - exp: ^(docker\.io|ghcr\.io)/.+
+        - exp: ^[^/]+$
+        - exp: ^[^./:]+/[^/]+$
+  - enforce:
+      action: deny
+      workloads:
+        qosClasses:
+        - BestEffort
+  - enforce:
+      action: deny
+      services:
+        types:
+        - NodePort
+        - LoadBalancer
+        - ExternalName
+  - quota:
+    - hard:
+        requests.cpu: "2"
+      name: workspace
+  storageClasses:
+    allowed:
+    - standard

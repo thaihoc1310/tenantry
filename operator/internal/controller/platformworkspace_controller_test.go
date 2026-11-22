@@ -100,7 +100,7 @@ func TestWorkspaceProvisioning(t *testing.T) {
 		t.Errorf("a Ready Workspace should not requeue: %+v", res)
 	}
 	ws = getWorkspace(t, "acme-solar")
-	for _, typ := range applicableConditions {
+	for _, typ := range baseConditions {
 		if c := condition(ws, typ); c.Status != metav1.ConditionTrue {
 			t.Errorf("%s: %+v", typ, c)
 		}
@@ -417,7 +417,7 @@ func TestPhase(t *testing.T) {
 		{v1.PhaseDegraded, progressing, v1.PhaseUpdating},
 		{v1.PhaseDegraded, allTrue, v1.PhaseReady},
 	} {
-		if got := phase(c.before, c.conds); got != c.want {
+		if got := phase(c.before, c.conds, baseConditions); got != c.want {
 			t.Errorf("phase(%q, %v) = %s, want %s", c.before, c.conds, got, c.want)
 		}
 	}

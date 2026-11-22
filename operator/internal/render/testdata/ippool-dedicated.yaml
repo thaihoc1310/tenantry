@@ -1,0 +1,20 @@
+apiVersion: projectcalico.org/v3
+kind: IPPool
+metadata:
+  labels:
+    tenantry.io/cluster-id: cluster-a
+    tenantry.io/compute-mode: dedicated
+    tenantry.io/managed: "true"
+    tenantry.io/organization-id: org-01jabc
+    tenantry.io/workspace-id: ws-01jwat
+  name: acme-water
+spec:
+  allowedUses:
+  - Workload
+  assignmentMode: Manual
+  blockSize: 28
+  cidr: 10.240.65.16/28
+  ipipMode: Never
+  natOutgoing: true
+  nodeSelector: workspaces.tenantry.io/ws-01jwat == 'true'
+  vxlanMode: CrossSubnet

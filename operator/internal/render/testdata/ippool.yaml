@@ -1,0 +1,21 @@
+apiVersion: projectcalico.org/v3
+kind: IPPool
+metadata:
+  labels:
+    tenantry.io/cluster-id: cluster-a
+    tenantry.io/compute-mode: shared
+    tenantry.io/compute-pool: shared-general
+    tenantry.io/managed: "true"
+    tenantry.io/organization-id: org-01jabc
+    tenantry.io/workspace-id: ws-01jsol
+  name: acme-solar
+spec:
+  allowedUses:
+  - Workload
+  assignmentMode: Manual
+  blockSize: 26
+  cidr: 10.240.64.0/24
+  ipipMode: Never
+  natOutgoing: true
+  nodeSelector: tenantry.io/compute-pool == 'shared-general'
+  vxlanMode: CrossSubnet

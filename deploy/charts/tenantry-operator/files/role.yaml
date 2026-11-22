@@ -96,14 +96,6 @@ rules:
   - update
   - watch
 - apiGroups:
-  - projectcalico.org
-  resources:
-  - workloadendpoints
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
   - tenantry.io
   resources:
   - platformnodegrants

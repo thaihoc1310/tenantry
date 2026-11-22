@@ -22,8 +22,7 @@ import (
 
 // finalize is the in-cluster part of a delete, in the order of
 // IMPLEMENTATION-PLAN §4.3. Every pass starts over from the top and skips
-// what is already done, so a restart in the middle is harmless. Steps 5
-// (IPPool, M9) and 6 (node membership label, M8) come with their milestones.
+// what is already done, so a restart in the middle is harmless.
 func (r *PlatformWorkspaceReconciler) finalize(ctx context.Context, ws *v1.PlatformWorkspace) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(ws, v1.WorkspaceFinalizer) {
 		return ctrl.Result{}, nil
@@ -127,6 +126,48 @@ func (r *PlatformWorkspaceReconciler) finalize(ctx context.Context, ws *v1.Platf
 			}
 		}
 		return progress("waiting for Tenant " + ws.Name + " to go away")
+	}
+
+	// 5. The IPPool, once Calico gives out no address of the CIDR: the
+	// Namespaces and their Pods are gone, so only a leak would hold one.
+	// Deleting the pool through the Calico API server releases its blocks;
+	// the CIDR is free for another Workspace once they are gone too.
+	if ws.Spec.Network != nil {
+		blocks, inUse, err := subreconciler.IPAMBlocks(ctx, r.Client, ws.Spec.Network.CIDR)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		pool := &unstructured.Unstructured{}
+		pool.SetGroupVersionKind(render.IPPoolGVK)
+		err = r.Get(ctx, client.ObjectKey{Name: ws.Name}, pool)
+		if err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, err
+		}
+		poolExists := err == nil
+		var waitingFor string
+		switch {
+		case len(inUse) > 0:
+			waitingFor = "Calico to free the addresses of " + ws.Spec.Network.CIDR + " still in use: " + strings.Join(inUse, ", ")
+		case poolExists:
+			if pool.GetDeletionTimestamp() == nil {
+				if err := r.Delete(ctx, pool); err != nil && !apierrors.IsNotFound(err) {
+					return ctrl.Result{}, err
+				}
+			}
+			waitingFor = "IPPool " + ws.Name + " to go away"
+		case len(blocks) > 0:
+			waitingFor = "Calico to release the blocks of " + ws.Spec.Network.CIDR + ": " + strings.Join(blocks, ", ")
+		}
+		if waitingFor != "" {
+			if time.Since(ws.DeletionTimestamp.Time) > r.BlockedAfter {
+				setCondition(ws, metav1.Condition{
+					Type: v1.ConditionDeleting, Status: metav1.ConditionFalse, Reason: v1.ReasonBlockedByFinalizer,
+					Message: "waiting for " + waitingFor,
+				})
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, client.IgnoreNotFound(r.patchStatus(ctx, before, ws))
+			}
+			return progress("waiting for " + waitingFor)
+		}
 	}
 
 	// 6. Dedicated: the node keeps the Organization's label and taint and
