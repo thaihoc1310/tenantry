@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Review one request (docs/design/mockups: AdminReview): approve it with a
 // grant filled in from the onboarding policy, or reject it with a reason.
-import { ElMessage, ElNotification } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ApiError } from '@/api/client'
@@ -13,6 +13,7 @@ import KeyValues from '@/components/KeyValues.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import TPanel from '@/components/TPanel.vue'
+import { showFailure } from '@/app/failure'
 import { errorText } from '@/i18n/errors'
 import GrantForm from './GrantForm.vue'
 import { emptyGrant, fieldOf, fromApproval, type GrantModel, toApproval } from './grant'
@@ -57,8 +58,7 @@ function explain(err: unknown) {
   }
   const field = fieldOf[err.field]
   if (field) errors.value = { [field]: `${err.message} (${err.code})` }
-  else if (err.code !== 'CLUSTER_NOT_READY')
-    ElNotification.error({ title: errorText[err.code].en, message: `${err.code} · request ${err.requestId}` })
+  else if (err.code !== 'CLUSTER_NOT_READY') showFailure(err)
 }
 
 async function doApprove() {
@@ -152,7 +152,7 @@ const by = computed(() => req.value?.owner.email ?? req.value?.owner.displayName
             :closable="false"
             show-icon
             :title="errorText.CLUSTER_NOT_READY.en"
-            :description="`Choose another cluster or wait until ${grant.clusterId} is Ready. (CLUSTER_NOT_READY · request ${failure.requestId})`"
+            :description="`${errorText.CLUSTER_NOT_READY.vi} Choose another cluster or wait until ${grant.clusterId} is Ready. (CLUSTER_NOT_READY · request ${failure.requestId})`"
           />
           <GrantForm v-model="grant" :errors="errors" :options="options" idp="rv" />
           <p class="t-explain">

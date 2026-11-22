@@ -2,7 +2,6 @@
 // Before an Organization (docs/design/mockups: Welcome): request one, wait
 // for the review, or read why it was rejected. "/" sends members of an
 // Active Organization to its Overview; "/request" is for asking another.
-import { ElNotification } from 'element-plus'
 import { computed, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ApiError } from '@/api/client'
@@ -13,6 +12,7 @@ import KeyValues from '@/components/KeyValues.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import TPanel from '@/components/TPanel.vue'
+import { showFailure } from '@/app/failure'
 import { errorText } from '@/i18n/errors'
 import { useCreateOrganization, useMe, useOrganizations } from '@/features/organizations/queries'
 
@@ -98,7 +98,7 @@ async function send() {
     else if (err.field in fieldErrors)
       fieldErrors[err.field as keyof typeof fieldErrors] = `${err.message} (${err.code})`
     else if (err.code === 'ORG_REQUEST_PENDING') orgs.refetch()
-    else ElNotification.error({ title: errorText[err.code].en, message: `${err.code} · request ${err.requestId}` })
+    else showFailure(err)
   }
 }
 

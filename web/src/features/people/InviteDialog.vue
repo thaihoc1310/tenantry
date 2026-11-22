@@ -5,7 +5,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { ApiError } from '@/api/client'
 import { showFailure } from '@/app/failure'
 import CopyField from '@/components/CopyField.vue'
-import { errorText } from '@/i18n/errors'
+import { errorText, refusalDetail } from '@/i18n/errors'
 import { type Group, type Invitation, type InvitationRole, useInvite } from './queries'
 
 const props = defineProps<{ orgSlug: string; groups: Group[] }>()
@@ -56,7 +56,7 @@ async function submit() {
         :closable="false"
         show-icon
         :title="errorText[refused.code].en"
-        :description="refused.message"
+        :description="refusalDetail(refused)"
         style="margin-bottom: 16px"
       />
       <el-form-item label="Email address" for="inv-email" :error="emailError">

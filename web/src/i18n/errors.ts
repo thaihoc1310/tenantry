@@ -153,3 +153,9 @@ export const errorText: Record<ErrorCode | 'NETWORK', Text> = {
     vi: 'Không kết nối được tới hệ thống. Kiểm tra mạng rồi thử lại.',
   },
 }
+
+// refusalDetail is what an alert says under the English title of a refusal:
+// the Vietnamese explanation, then the server's own words.
+export function refusalDetail(e: { code: ErrorCode | 'NETWORK'; message: string }): string {
+  return `${errorText[e.code].vi} ${e.message}`
+}

@@ -16,7 +16,7 @@ import KeyValues from '@/components/KeyValues.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import TPanel from '@/components/TPanel.vue'
-import { errorText } from '@/i18n/errors'
+import { errorText, refusalDetail } from '@/i18n/errors'
 import { logout, useMe } from '@/features/organizations/queries'
 import { useAcceptInvitation, useInvitationPreview } from './queries'
 
@@ -127,7 +127,7 @@ async function switchAccount() {
             :closable="false"
             show-icon
             :title="errorText[refused.code].en"
-            :description="refused.message"
+            :description="refusalDetail(refused)"
           />
           <KeyValues
             :items="[

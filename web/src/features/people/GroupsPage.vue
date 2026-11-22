@@ -13,7 +13,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import TPanel from '@/components/TPanel.vue'
 import { useOrganization, useUsage } from '@/features/organizations/queries'
-import { errorText } from '@/i18n/errors'
+import { errorText, refusalDetail } from '@/i18n/errors'
 import GroupMembersDialog from './GroupMembersDialog.vue'
 import { type Group, useCreateGroup, useDeleteGroup, useGroups, useMembers, useRenameGroup } from './queries'
 import { syncWords } from './sync'
@@ -200,7 +200,7 @@ async function deleteGroup(g: Group) {
             :closable="false"
             show-icon
             :title="errorText[refused.code].en"
-            :description="refused.message"
+            :description="refusalDetail(refused)"
             style="margin-bottom: 16px"
           />
           <el-form-item label="Name" for="grp-name" :error="nameError">

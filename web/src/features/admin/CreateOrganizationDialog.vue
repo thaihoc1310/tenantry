@@ -7,7 +7,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ApiError } from '@/api/client'
 import { showFailure } from '@/app/failure'
-import { errorText } from '@/i18n/errors'
+import { errorText, refusalDetail } from '@/i18n/errors'
 import GrantForm from './GrantForm.vue'
 import { emptyGrant, fieldOf, fromApproval, type GrantModel, toApproval } from './grant'
 import { useCreateOrganization, usePolicy, useUsers } from './queries'
@@ -124,7 +124,7 @@ async function submit() {
       :closable="false"
       show-icon
       :title="errorText[refused.code].en"
-      :description="refused.message"
+      :description="refusalDetail(refused)"
       style="margin-bottom: 12px"
     />
     <el-alert
