@@ -14,6 +14,8 @@ const (
 	Operation    = "op"
 	User         = "usr"
 	Group        = "grp"
+	Invitation   = "inv"
+	Transfer     = "transfer"
 	ClusterGrant = "grant"
 )
 

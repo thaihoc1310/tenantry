@@ -10,10 +10,7 @@ import (
 // What an organization was granted and what it uses (PRODUCT-PLAN §5.6).
 // Only its OrgOwner and OrgAdmins may read them (§9.2).
 
-var (
-	ErrNotQuotaReader = apperr.New(apperr.Forbidden, "requires OrgOwner or OrgAdmin")
-	ErrNotActive      = apperr.New(apperr.OrgNotActive, "the organization is not approved yet, so it has no entitlement")
-)
+var ErrNotActive = apperr.New(apperr.OrgNotActive, "the organization is not approved yet")
 
 // Quota is an organization's entitlement and its cluster grants.
 type Quota struct {
@@ -31,17 +28,28 @@ type Usage struct {
 	Allocations []reservation.Allocation
 }
 
-// Quota checks, in this order: membership (404), role (403), Active (409).
-func (s *Service) Quota(ctx context.Context, userID, idOrSlug string) (Quota, error) {
+// manage resolves idOrSlug for an OrgOwner or OrgAdmin of an Active
+// organization, checking in this order: membership (404), role (403),
+// Active (409 ORG_NOT_ACTIVE) (PRODUCT-PLAN §9.2).
+func (s *Service) manage(ctx context.Context, userID, idOrSlug string) (Org, error) {
 	o, err := s.Get(ctx, userID, idOrSlug)
 	if err != nil {
-		return Quota{}, err
+		return Org{}, err
 	}
 	if o.Role != RoleOwner && o.Role != RoleAdmin {
-		return Quota{}, ErrNotQuotaReader
+		return Org{}, ErrForbidden
 	}
 	if o.Status != StatusActive {
-		return Quota{}, ErrNotActive
+		return Org{}, ErrNotActive
+	}
+	return o, nil
+}
+
+// Quota is read by the OrgOwner and OrgAdmins of an Active organization.
+func (s *Service) Quota(ctx context.Context, userID, idOrSlug string) (Quota, error) {
+	o, err := s.manage(ctx, userID, idOrSlug)
+	if err != nil {
+		return Quota{}, err
 	}
 	e, err := s.q.GetEntitlement(ctx, o.ID)
 	if err != nil {

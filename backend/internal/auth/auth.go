@@ -104,6 +104,10 @@ func New(db *pgxpool.Pool, cfg config.Auth) (*Service, error) {
 	}, nil
 }
 
+// PublicURL is the portal origin browsers use (TENANTRY_PUBLIC_URL), for
+// links the API hands out, such as invitation links.
+func (s *Service) PublicURL() string { return s.cfg.PublicURL }
+
 // --- login ---
 
 // loginState is everything the callback must check, carried by the browser

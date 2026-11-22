@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
@@ -26,8 +27,9 @@ import (
 )
 
 type server struct {
-	orgs *org.Service
-	ops  *operation.Service
+	orgs      *org.Service
+	ops       *operation.Service
+	publicURL string // the portal origin, for links handed out (invitations)
 }
 
 // Register mounts every /api/v1 operation and the browser login endpoints
@@ -37,7 +39,7 @@ func Register(r chi.Router, db *pgxpool.Pool, a *auth.Service, trustedProxies []
 	badRequest := func(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, apperr.New(apperr.Validation, err.Error()))
 	}
-	api := oapi.NewStrictHandlerWithOptions(server{orgs: org.NewService(db), ops: operation.NewService(db)}, nil, oapi.StrictHTTPServerOptions{
+	api := oapi.NewStrictHandlerWithOptions(server{orgs: org.NewService(db), ops: operation.NewService(db), publicURL: publicURL(a)}, nil, oapi.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: badRequest,
 		// Handlers return errors as-is; writeError turns them into responses.
 		ResponseErrorHandlerFunc: writeError,
@@ -70,6 +72,17 @@ func Register(r chi.Router, db *pgxpool.Pool, a *auth.Service, trustedProxies []
 	r.Get("/auth/callback", limitLogins(newLimiter(loginsPerMinute), trustedProxies, callback(a)))
 	r.Post("/auth/logout", logout(a))
 }
+
+// publicURL tolerates a nil Service: routes without the API (health checks) are built without one.
+func publicURL(a *auth.Service) string {
+	if a == nil {
+		return ""
+	}
+	return a.PublicURL()
+}
+
+// timeNow is time.Now; one place to read the clock in handlers.
+var timeNow = time.Now
 
 // validate checks each request against the embedded OpenAPI document
 // (maxLength, unknown fields, ...): the strict server only decodes JSON.

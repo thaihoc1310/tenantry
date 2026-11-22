@@ -1,0 +1,10 @@
+{
+  "responses": {
+    "204": null,
+    "409": {
+      "code": "CONFLICT",
+      "message": "the invitation was already accepted or has expired",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K"
+    }
+  }
+}

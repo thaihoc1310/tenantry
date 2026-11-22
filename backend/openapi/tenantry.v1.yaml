@@ -189,6 +189,150 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/OrgNotActive" }
 
+  /organizations/{orgId}/invitations:
+    parameters:
+      - $ref: "#/components/parameters/orgId"
+    get:
+      operationId: listInvitations
+      summary: Open invitations of the organization, newest first (OrgOwner or OrgAdmin)
+      description: |
+        Invitations not yet accepted or revoked; one whose link expired shows
+        with `state: Expired` until it is replaced or revoked. Links are never
+        listed: they exist only in the response that created them.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          description: Opaque; pass `nextCursor` from the previous page.
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvitationList" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/OrgNotActive" }
+    post:
+      operationId: createInvitation
+      security: [{ session: [], csrf: [] }]
+      summary: Invite someone by email (OrgOwner or OrgAdmin)
+      description: |
+        Creates a one-time link that works for 7 days (PRODUCT-PLAN §9.1),
+        returned in `link` of this response only: send it by hand. Inviting
+        an email again revokes its open invitation. A repeat of the request
+        with the same `Idempotency-Key` returns the invitation without the
+        link: revoke it and create a new one to get another link.
+        `maxMembers` is checked now and again when the link is accepted.
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKeyRequired"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InvitationCreate" }
+      responses:
+        "201":
+          description: Created; `link` is present here only
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invitation" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: |
+            `ORG_NOT_ACTIVE`: the organization is not approved yet.
+            `ENTITLEMENT_EXCEEDED`: no room for another member (`details.limit` = `maxMembers`).
+            `CONFLICT`: someone with this email is already a member.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /invitations/{invitation}:
+    parameters:
+      - name: invitation
+        in: path
+        required: true
+        description: The token from the link for `GET`; the invitation id (`inv-…`) for `DELETE`.
+        schema: { type: string, maxLength: 64 }
+    get:
+      operationId: previewInvitation
+      summary: What an invitation link offers, before accepting it (any logged-in person)
+      description: |
+        The token is the capability: no membership is needed. The invited
+        email is shown in full only to its owner, partly hidden otherwise.
+        A link that expired, was used or was revoked gives 404 `INVITATION_INVALID`.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvitationPreview" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: revokeInvitation
+      security: [{ session: [], csrf: [] }]
+      summary: Revoke an open invitation (OrgOwner or OrgAdmin of its organization)
+      description: Its link stops working. Revoking it again changes nothing.
+      responses:
+        "204": { description: Revoked }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: The invitation was already accepted or has expired (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /invitations/{token}:accept:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        description: The token from the invitation link.
+        schema: { type: string, maxLength: 64 }
+    post:
+      operationId: acceptInvitation
+      security: [{ session: [], csrf: [] }]
+      summary: Join the organization of an invitation
+      description: |
+        Only with the verified email the invitation was sent to; another
+        account gets 403 `INVITATION_EMAIL_MISMATCH` and the link keeps
+        working for the right one. The link works once: a second accept,
+        even at the same moment, gets 404 `INVITATION_INVALID`.
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKey"
+      responses:
+        "200":
+          description: Joined; the organization as the new member sees it
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Organization" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: |
+            `ENTITLEMENT_EXCEEDED`: the organization has no room for another member.
+            `CONFLICT`: the caller is already a member.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
   /operations/{operationId}:
     parameters:
       - $ref: "#/components/parameters/operationId"
@@ -763,3 +907,66 @@ components:
         clusterGrants:
           type: array
           items: { $ref: "#/components/schemas/GrantUsage" }
+
+    InvitationRole:
+      type: string
+      description: Never OrgOwner; ownership is transferred.
+      enum: [OrgAdmin, OrgMember]
+
+    InvitationCreate:
+      type: object
+      required: [email, role]
+      additionalProperties: false
+      properties:
+        email: { type: string, minLength: 3, maxLength: 254, description: Compared lowercase }
+        role: { $ref: "#/components/schemas/InvitationRole" }
+        groupIds:
+          type: array
+          description: Groups of the organization the person joins on accepting.
+          maxItems: 20
+          uniqueItems: true
+          items: { type: string, maxLength: 64 }
+
+    Invitation:
+      type: object
+      required: [id, orgId, email, role, groupIds, invitedBy, state, expiresAt, createdAt]
+      properties:
+        id: { type: string }
+        orgId: { type: string }
+        email: { type: string }
+        role: { $ref: "#/components/schemas/InvitationRole" }
+        groupIds: { type: array, items: { type: string } }
+        invitedBy: { $ref: "#/components/schemas/UserSummary" }
+        state:
+          type: string
+          description: Expired once the link stopped working (7 days).
+          enum: [Pending, Expired]
+        expiresAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        link:
+          type: string
+          description: The one-time link; only in the response that created the invitation, never stored.
+
+    InvitationList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Invitation" }
+        nextCursor: { type: string, description: Absent on the last page }
+
+    InvitationPreview:
+      type: object
+      required: [orgId, orgName, orgSlug, role, email, emailMatches, invitedBy, groupNames, expiresAt, alreadyMember]
+      properties:
+        orgId: { type: string }
+        orgName: { type: string }
+        orgSlug: { type: string }
+        role: { $ref: "#/components/schemas/InvitationRole" }
+        email: { type: string, description: The invited address; partly hidden unless it is the caller's own }
+        emailMatches: { type: boolean, description: Whether the caller's verified email is the invited one }
+        invitedBy: { type: string, description: Display name of who invited }
+        groupNames: { type: array, items: { type: string } }
+        expiresAt: { type: string, format: date-time }
+        alreadyMember: { type: boolean }

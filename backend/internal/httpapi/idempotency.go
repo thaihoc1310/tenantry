@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"io"
 	"maps"
@@ -49,9 +50,14 @@ func idempotent(db *pgxpool.Pool) oapi.MiddlewareFunc {
 				return
 			}
 			r.Body = io.NopCloser(bytes.NewReader(body))
-			sum := sha256.Sum256(body)
+			// The raw path goes into the hash, never into a column: it may
+			// carry a secret (POST /invitations/{token}:accept). The column
+			// keeps the route pattern, for people reading the table.
+			h := sha256.New()
+			_, _ = io.WriteString(h, r.Method+" "+r.URL.Path+"\n")
+			_, _ = h.Write(body)
 			claim := store.ClaimIdempotencyKeyParams{
-				UserID: userID(r.Context()), Key: key, Method: r.Method, Path: r.URL.Path, RequestHash: sum[:],
+				UserID: userID(r.Context()), Key: key, Method: r.Method, Path: routePattern(r), RequestHash: h.Sum(nil),
 			}
 			if err := runOnce(w, r, db, claim, next); err != nil {
 				writeError(w, r, err)
@@ -85,7 +91,8 @@ func runOnce(w http.ResponseWriter, r *http.Request, db *pgxpool.Pool, claim sto
 	}
 
 	resp := &bufferedResponse{header: http.Header{}}
-	next.ServeHTTP(resp, r.WithContext(store.WithTx(ctx, tx)))
+	stored := &storedBody{}
+	next.ServeHTTP(resp, r.WithContext(context.WithValue(store.WithTx(ctx, tx), storedBodyKey{}, stored)))
 	if resp.status == 0 {
 		resp.status = http.StatusOK // the handler wrote nothing
 	}
@@ -102,7 +109,10 @@ func runOnce(w http.ResponseWriter, r *http.Request, db *pgxpool.Pool, claim sto
 	if loc := resp.header.Get("Location"); loc != "" {
 		done.ResponseLocation = &loc
 	}
-	if resp.body.Len() > 0 {
+	switch {
+	case stored.body != nil:
+		done.ResponseBody = stored.body // the handler left a secret out
+	case resp.body.Len() > 0:
 		done.ResponseBody = resp.body.Bytes()
 	}
 	if err := q.CompleteIdempotencyKey(ctx, done); err != nil {
@@ -112,6 +122,28 @@ func runOnce(w http.ResponseWriter, r *http.Request, db *pgxpool.Pool, claim sto
 		return err
 	}
 	resp.flush(w)
+	return nil
+}
+
+type storedBodyKey struct{}
+
+// storedBody is what a handler asks to store instead of the response it sends.
+type storedBody struct{ body []byte }
+
+// storeForReplay makes a repeat of this request get v instead of the response
+// sent now. For a response carrying a one-time secret (an invitation link):
+// the secret is sent once and never stored (02-data-model §2). A no-op
+// without an Idempotency-Key.
+func storeForReplay(ctx context.Context, v any) error {
+	s, ok := ctx.Value(storedBodyKey{}).(*storedBody)
+	if !ok {
+		return nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	s.body = b
 	return nil
 }
 

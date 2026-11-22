@@ -143,6 +143,98 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{orgId}/invitations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Open invitations of the organization, newest first (OrgOwner or OrgAdmin)
+         * @description Invitations not yet accepted or revoked; one whose link expired shows
+         *     with `state: Expired` until it is replaced or revoked. Links are never
+         *     listed: they exist only in the response that created them.
+         */
+        get: operations["listInvitations"];
+        put?: never;
+        /**
+         * Invite someone by email (OrgOwner or OrgAdmin)
+         * @description Creates a one-time link that works for 7 days (PRODUCT-PLAN §9.1),
+         *     returned in `link` of this response only: send it by hand. Inviting
+         *     an email again revokes its open invitation. A repeat of the request
+         *     with the same `Idempotency-Key` returns the invitation without the
+         *     link: revoke it and create a new one to get another link.
+         *     `maxMembers` is checked now and again when the link is accepted.
+         */
+        post: operations["createInvitation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/invitations/{invitation}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The token from the link for `GET`; the invitation id (`inv-…`) for `DELETE`. */
+                invitation: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * What an invitation link offers, before accepting it (any logged-in person)
+         * @description The token is the capability: no membership is needed. The invited
+         *     email is shown in full only to its owner, partly hidden otherwise.
+         *     A link that expired, was used or was revoked gives 404 `INVITATION_INVALID`.
+         */
+        get: operations["previewInvitation"];
+        put?: never;
+        post?: never;
+        /**
+         * Revoke an open invitation (OrgOwner or OrgAdmin of its organization)
+         * @description Its link stops working. Revoking it again changes nothing.
+         */
+        delete: operations["revokeInvitation"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/invitations/{token}:accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The token from the invitation link. */
+                token: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Join the organization of an invitation
+         * @description Only with the verified email the invitation was sent to; another
+         *     account gets 403 `INVITATION_EMAIL_MISMATCH` and the link keeps
+         *     working for the right one. The link works once: a second accept,
+         *     even at the same moment, gets 404 `INVITATION_INVALID`.
+         */
+        post: operations["acceptInvitation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/operations/{operationId}": {
         parameters: {
             query?: never;
@@ -484,6 +576,58 @@ export interface components {
             };
             clusterGrants: components["schemas"]["GrantUsage"][];
         };
+        /**
+         * @description Never OrgOwner; ownership is transferred.
+         * @enum {string}
+         */
+        InvitationRole: "OrgAdmin" | "OrgMember";
+        InvitationCreate: {
+            /** @description Compared lowercase */
+            email: string;
+            role: components["schemas"]["InvitationRole"];
+            /** @description Groups of the organization the person joins on accepting. */
+            groupIds?: string[];
+        };
+        Invitation: {
+            id: string;
+            orgId: string;
+            email: string;
+            role: components["schemas"]["InvitationRole"];
+            groupIds: string[];
+            invitedBy: components["schemas"]["UserSummary"];
+            /**
+             * @description Expired once the link stopped working (7 days).
+             * @enum {string}
+             */
+            state: "Pending" | "Expired";
+            /** Format: date-time */
+            expiresAt: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** @description The one-time link; only in the response that created the invitation, never stored. */
+            link?: string;
+        };
+        InvitationList: {
+            items: components["schemas"]["Invitation"][];
+            /** @description Absent on the last page */
+            nextCursor?: string;
+        };
+        InvitationPreview: {
+            orgId: string;
+            orgName: string;
+            orgSlug: string;
+            role: components["schemas"]["InvitationRole"];
+            /** @description The invited address; partly hidden unless it is the caller's own */
+            email: string;
+            /** @description Whether the caller's verified email is the invited one */
+            emailMatches: boolean;
+            /** @description Display name of who invited */
+            invitedBy: string;
+            groupNames: string[];
+            /** Format: date-time */
+            expiresAt: string;
+            alreadyMember: boolean;
+        };
     };
     responses: {
         /** @description Error */
@@ -786,6 +930,202 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["OrgNotActive"];
+        };
+    };
+    listInvitations: {
+        parameters: {
+            query?: {
+                limit?: number;
+                /** @description Opaque; pass `nextCursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvitationList"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["OrgNotActive"];
+        };
+    };
+    createInvitation: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description As `Idempotency-Key`, and required here (IMPLEMENTATION-PLAN §3.4). */
+                "Idempotency-Key": components["parameters"]["idempotencyKeyRequired"];
+            };
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InvitationCreate"];
+            };
+        };
+        responses: {
+            /** @description Created; `link` is present here only */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Invitation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /**
+             * @description `ORG_NOT_ACTIVE`: the organization is not approved yet.
+             *     `ENTITLEMENT_EXCEEDED`: no room for another member (`details.limit` = `maxMembers`).
+             *     `CONFLICT`: someone with this email is already a member.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            422: components["responses"]["IdempotencyKeyReused"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    previewInvitation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The token from the link for `GET`; the invitation id (`inv-…`) for `DELETE`. */
+                invitation: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvitationPreview"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    revokeInvitation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The token from the link for `GET`; the invitation id (`inv-…`) for `DELETE`. */
+                invitation: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description The invitation was already accepted or has expired (`CONFLICT`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    acceptInvitation: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description A UUID the client generates once per intended change and sends again
+                 *     on every retry of it (IMPLEMENTATION-PLAN §3.4). A repeat of a request
+                 *     that succeeded gets the stored response, marked `Idempotent-Replayed:
+                 *     true`, and changes nothing. A request that failed stores nothing, so
+                 *     it can be corrected and sent again under the same key. Keys are per
+                 *     user and kept 24 hours.
+                 */
+                "Idempotency-Key"?: components["parameters"]["idempotencyKey"];
+            };
+            path: {
+                /** @description The token from the invitation link. */
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Joined; the organization as the new member sees it */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Organization"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /**
+             * @description `ENTITLEMENT_EXCEEDED`: the organization has no room for another member.
+             *     `CONFLICT`: the caller is already a member.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            422: components["responses"]["IdempotencyKeyReused"];
+            429: components["responses"]["RateLimited"];
         };
     };
     getOperation: {

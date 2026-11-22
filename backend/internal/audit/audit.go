@@ -4,6 +4,7 @@
 package audit
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 
@@ -19,11 +20,33 @@ const (
 	OrganizationApprove = "organization.approve"
 	OrganizationReject  = "organization.reject"
 	OperationRetry      = "operation.retry"
+
+	InvitationCreate = "invitation.create"
+	InvitationRevoke = "invitation.revoke"
+	InvitationAccept = "invitation.accept"
+
+	MemberRoleChange = "organization_member.role_change"
+	MemberRemove     = "organization_member.remove"
+	MemberLeave      = "organization_member.leave"
+
+	TransferPropose = "ownership_transfer.propose"
+	TransferAccept  = "ownership_transfer.accept"
+	TransferCancel  = "ownership_transfer.cancel"
+
+	GroupCreate       = "group.create"
+	GroupUpdate       = "group.update"
+	GroupDelete       = "group.delete"
+	GroupMemberAdd    = "group_member.add"
+	GroupMemberRemove = "group_member.remove"
 )
 
-// Succeeded is the only result for now: every event is written by the
-// change it records. Refused attempts worth keeping get their own result.
-const Succeeded = "Succeeded"
+// Results. An event written by the change it records Succeeded. A refused
+// attempt worth keeping (an invitation accepted from the wrong account) is
+// Refused, written in a transaction of its own after the refused one rolled back.
+const (
+	Succeeded = "Succeeded"
+	Refused   = "Refused"
+)
 
 type Event struct {
 	Actor      string // user id; empty when the platform acted on its own
@@ -32,6 +55,7 @@ type Event struct {
 	TargetType string // e.g. Organization
 	TargetID   string
 	Detail     map[string]any // e.g. {"before": {...}, "after": {...}}; never a token or a secret
+	Result     string         // empty means Succeeded
 }
 
 func Record(ctx context.Context, q *store.Queries, e Event) error {
@@ -48,7 +72,7 @@ func Record(ctx context.Context, q *store.Queries, e Event) error {
 		Action:      e.Action,
 		TargetType:  e.TargetType,
 		TargetID:    e.TargetID,
-		Result:      Succeeded,
+		Result:      cmp.Or(e.Result, Succeeded),
 		Detail:      detail,
 	})
 }

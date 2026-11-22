@@ -94,6 +94,42 @@ func (e ErrorCode) Valid() bool {
 	}
 }
 
+// Defines values for InvitationState.
+const (
+	InvitationStateExpired InvitationState = "Expired"
+	InvitationStatePending InvitationState = "Pending"
+)
+
+// Valid indicates whether the value is a known member of the InvitationState enum.
+func (e InvitationState) Valid() bool {
+	switch e {
+	case InvitationStateExpired:
+		return true
+	case InvitationStatePending:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InvitationRole.
+const (
+	InvitationRoleOrgAdmin  InvitationRole = "OrgAdmin"
+	InvitationRoleOrgMember InvitationRole = "OrgMember"
+)
+
+// Valid indicates whether the value is a known member of the InvitationRole enum.
+func (e InvitationRole) Valid() bool {
+	switch e {
+	case InvitationRoleOrgAdmin:
+		return true
+	case InvitationRoleOrgMember:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OperationState.
 const (
 	OperationStateBlocked   OperationState = "Blocked"
@@ -123,19 +159,19 @@ func (e OperationState) Valid() bool {
 
 // Defines values for OrgRole.
 const (
-	OrgAdmin  OrgRole = "OrgAdmin"
-	OrgMember OrgRole = "OrgMember"
-	OrgOwner  OrgRole = "OrgOwner"
+	OrgRoleOrgAdmin  OrgRole = "OrgAdmin"
+	OrgRoleOrgMember OrgRole = "OrgMember"
+	OrgRoleOrgOwner  OrgRole = "OrgOwner"
 )
 
 // Valid indicates whether the value is a known member of the OrgRole enum.
 func (e OrgRole) Valid() bool {
 	switch e {
-	case OrgAdmin:
+	case OrgRoleOrgAdmin:
 		return true
-	case OrgMember:
+	case OrgRoleOrgMember:
 		return true
-	case OrgOwner:
+	case OrgRoleOrgOwner:
 		return true
 	default:
 		return false
@@ -358,6 +394,74 @@ type GrantUsage struct {
 	Workspaces      AllocatedCount    `json:"workspaces"`
 }
 
+// Invitation defines model for Invitation.
+type Invitation struct {
+	CreatedAt time.Time   `json:"createdAt"`
+	Email     string      `json:"email"`
+	ExpiresAt time.Time   `json:"expiresAt"`
+	GroupIds  []string    `json:"groupIds"`
+	Id        string      `json:"id"`
+	InvitedBy UserSummary `json:"invitedBy"`
+
+	// Link The one-time link; only in the response that created the invitation, never stored.
+	Link  *string `json:"link,omitempty"`
+	OrgId string  `json:"orgId"`
+
+	// Role Never OrgOwner; ownership is transferred.
+	Role InvitationRole `json:"role"`
+
+	// State Expired once the link stopped working (7 days).
+	State InvitationState `json:"state"`
+}
+
+// InvitationState Expired once the link stopped working (7 days).
+type InvitationState string
+
+// InvitationCreate defines model for InvitationCreate.
+type InvitationCreate struct {
+	// Email Compared lowercase
+	Email string `json:"email"`
+
+	// GroupIds Groups of the organization the person joins on accepting.
+	GroupIds *[]string `json:"groupIds,omitempty"`
+
+	// Role Never OrgOwner; ownership is transferred.
+	Role InvitationRole `json:"role"`
+}
+
+// InvitationList defines model for InvitationList.
+type InvitationList struct {
+	Items []Invitation `json:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"nextCursor,omitempty"`
+}
+
+// InvitationPreview defines model for InvitationPreview.
+type InvitationPreview struct {
+	AlreadyMember bool `json:"alreadyMember"`
+
+	// Email The invited address; partly hidden unless it is the caller's own
+	Email string `json:"email"`
+
+	// EmailMatches Whether the caller's verified email is the invited one
+	EmailMatches bool      `json:"emailMatches"`
+	ExpiresAt    time.Time `json:"expiresAt"`
+	GroupNames   []string  `json:"groupNames"`
+
+	// InvitedBy Display name of who invited
+	InvitedBy string `json:"invitedBy"`
+	OrgId     string `json:"orgId"`
+	OrgName   string `json:"orgName"`
+	OrgSlug   string `json:"orgSlug"`
+
+	// Role Never OrgOwner; ownership is transferred.
+	Role InvitationRole `json:"role"`
+}
+
+// InvitationRole Never OrgOwner; ownership is transferred.
+type InvitationRole string
+
 // Me defines model for Me.
 type Me struct {
 	DisplayName string `json:"displayName"`
@@ -555,6 +659,17 @@ type RejectOrganizationParams struct {
 	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 }
 
+// AcceptInvitationParams defines parameters for AcceptInvitation.
+type AcceptInvitationParams struct {
+	// IdempotencyKey A UUID the client generates once per intended change and sends again
+	// on every retry of it (IMPLEMENTATION-PLAN §3.4). A repeat of a request
+	// that succeeded gets the stored response, marked `Idempotent-Replayed:
+	// true`, and changes nothing. A request that failed stores nothing, so
+	// it can be corrected and sent again under the same key. Keys are per
+	// user and kept 24 hours.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
+}
+
 // RetryOperationParams defines parameters for RetryOperation.
 type RetryOperationParams struct {
 	// IdempotencyKey A UUID the client generates once per intended change and sends again
@@ -585,6 +700,20 @@ type CreateOrganizationParams struct {
 	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 }
 
+// ListInvitationsParams defines parameters for ListInvitations.
+type ListInvitationsParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque; pass `nextCursor` from the previous page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// CreateInvitationParams defines parameters for CreateInvitation.
+type CreateInvitationParams struct {
+	// IdempotencyKey As `Idempotency-Key`, and required here (IMPLEMENTATION-PLAN §3.4).
+	IdempotencyKey IdempotencyKeyRequired `json:"Idempotency-Key"`
+}
+
 // ApproveOrganizationJSONRequestBody defines body for ApproveOrganization for application/json ContentType.
 type ApproveOrganizationJSONRequestBody = Approval
 
@@ -597,6 +726,9 @@ type CreateOrganizationJSONRequestBody = OrganizationCreate
 // PatchOrganizationJSONRequestBody defines body for PatchOrganization for application/json ContentType.
 type PatchOrganizationJSONRequestBody = OrganizationPatch
 
+// CreateInvitationJSONRequestBody defines body for CreateInvitation for application/json ContentType.
+type CreateInvitationJSONRequestBody = InvitationCreate
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// AdminListOrganizations Every organization with its owner, oldest first (Platform Admin)
@@ -608,6 +740,15 @@ type ServerInterface interface {
 	// RejectOrganization Reject an organization request with a reason the requester sees (Platform Admin)
 	// (POST /admin/organizations/{orgId}:reject)
 	RejectOrganization(w http.ResponseWriter, r *http.Request, orgId AdminOrgId, params RejectOrganizationParams)
+	// RevokeInvitation Revoke an open invitation (OrgOwner or OrgAdmin of its organization)
+	// (DELETE /invitations/{invitation})
+	RevokeInvitation(w http.ResponseWriter, r *http.Request, invitation string)
+	// PreviewInvitation What an invitation link offers, before accepting it (any logged-in person)
+	// (GET /invitations/{invitation})
+	PreviewInvitation(w http.ResponseWriter, r *http.Request, invitation string)
+	// AcceptInvitation Join the organization of an invitation
+	// (POST /invitations/{token}:accept)
+	AcceptInvitation(w http.ResponseWriter, r *http.Request, token string, params AcceptInvitationParams)
 	// GetMe The signed-in user
 	// (GET /me)
 	GetMe(w http.ResponseWriter, r *http.Request)
@@ -632,6 +773,12 @@ type ServerInterface interface {
 	// GetEntitlement What the organization was granted (OrgOwner or OrgAdmin)
 	// (GET /organizations/{orgId}/entitlement)
 	GetEntitlement(w http.ResponseWriter, r *http.Request, orgId OrgId)
+	// ListInvitations Open invitations of the organization, newest first (OrgOwner or OrgAdmin)
+	// (GET /organizations/{orgId}/invitations)
+	ListInvitations(w http.ResponseWriter, r *http.Request, orgId OrgId, params ListInvitationsParams)
+	// CreateInvitation Invite someone by email (OrgOwner or OrgAdmin)
+	// (POST /organizations/{orgId}/invitations)
+	CreateInvitation(w http.ResponseWriter, r *http.Request, orgId OrgId, params CreateInvitationParams)
 	// GetUsage What the organization uses, next to its limits (OrgOwner or OrgAdmin)
 	// (GET /organizations/{orgId}/usage)
 	GetUsage(w http.ResponseWriter, r *http.Request, orgId OrgId)
@@ -656,6 +803,24 @@ func (_ Unimplemented) ApproveOrganization(w http.ResponseWriter, r *http.Reques
 // RejectOrganization Reject an organization request with a reason the requester sees (Platform Admin)
 // (POST /admin/organizations/{orgId}:reject)
 func (_ Unimplemented) RejectOrganization(w http.ResponseWriter, r *http.Request, orgId AdminOrgId, params RejectOrganizationParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RevokeInvitation Revoke an open invitation (OrgOwner or OrgAdmin of its organization)
+// (DELETE /invitations/{invitation})
+func (_ Unimplemented) RevokeInvitation(w http.ResponseWriter, r *http.Request, invitation string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PreviewInvitation What an invitation link offers, before accepting it (any logged-in person)
+// (GET /invitations/{invitation})
+func (_ Unimplemented) PreviewInvitation(w http.ResponseWriter, r *http.Request, invitation string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// AcceptInvitation Join the organization of an invitation
+// (POST /invitations/{token}:accept)
+func (_ Unimplemented) AcceptInvitation(w http.ResponseWriter, r *http.Request, token string, params AcceptInvitationParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -704,6 +869,18 @@ func (_ Unimplemented) PatchOrganization(w http.ResponseWriter, r *http.Request,
 // GetEntitlement What the organization was granted (OrgOwner or OrgAdmin)
 // (GET /organizations/{orgId}/entitlement)
 func (_ Unimplemented) GetEntitlement(w http.ResponseWriter, r *http.Request, orgId OrgId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListInvitations Open invitations of the organization, newest first (OrgOwner or OrgAdmin)
+// (GET /organizations/{orgId}/invitations)
+func (_ Unimplemented) ListInvitations(w http.ResponseWriter, r *http.Request, orgId OrgId, params ListInvitationsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateInvitation Invite someone by email (OrgOwner or OrgAdmin)
+// (POST /organizations/{orgId}/invitations)
+func (_ Unimplemented) CreateInvitation(w http.ResponseWriter, r *http.Request, orgId OrgId, params CreateInvitationParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -876,6 +1053,108 @@ func (siw *ServerInterfaceWrapper) RejectOrganization(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RejectOrganization(w, r, orgId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeInvitation operation middleware
+func (siw *ServerInterfaceWrapper) RevokeInvitation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "invitation" -------------
+	var invitation string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "invitation", chi.URLParam(r, "invitation"), &invitation, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "invitation", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeInvitation(w, r, invitation)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PreviewInvitation operation middleware
+func (siw *ServerInterfaceWrapper) PreviewInvitation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "invitation" -------------
+	var invitation string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "invitation", chi.URLParam(r, "invitation"), &invitation, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "invitation", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreviewInvitation(w, r, invitation)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcceptInvitation operation middleware
+func (siw *ServerInterfaceWrapper) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "token" -------------
+	var token string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "token", chi.URLParam(r, "token"), &token, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "token", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params AcceptInvitationParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = &IdempotencyKey
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcceptInvitation(w, r, token, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1140,6 +1419,115 @@ func (siw *ServerInterfaceWrapper) GetEntitlement(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// ListInvitations operation middleware
+func (siw *ServerInterfaceWrapper) ListInvitations(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "orgId" -------------
+	var orgId OrgId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "orgId", chi.URLParam(r, "orgId"), &orgId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "orgId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListInvitationsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListInvitations(w, r, orgId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateInvitation operation middleware
+func (siw *ServerInterfaceWrapper) CreateInvitation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "orgId" -------------
+	var orgId OrgId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "orgId", chi.URLParam(r, "orgId"), &orgId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "orgId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateInvitationParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKeyRequired
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("Header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateInvitation(w, r, orgId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetUsage operation middleware
 func (siw *ServerInterfaceWrapper) GetUsage(w http.ResponseWriter, r *http.Request) {
 
@@ -1299,6 +1687,21 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/organizations/{orgId}/usage", wrapper.GetUsage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/organizations/{orgId}/invitations", wrapper.ListInvitations)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/organizations/{orgId}/invitations", wrapper.CreateInvitation)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/invitations/{invitation}", wrapper.RevokeInvitation)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/invitations/{invitation}", wrapper.PreviewInvitation)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/invitations/{token}:accept", wrapper.AcceptInvitation)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/operations/{operationId}", wrapper.GetOperation)
@@ -1636,6 +2039,253 @@ func (response RejectOrganization422JSONResponse) VisitRejectOrganizationRespons
 type RejectOrganization429JSONResponse struct{ RateLimitedJSONResponse }
 
 func (response RejectOrganization429JSONResponse) VisitRejectOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokeInvitationRequestObject struct {
+	Invitation string `json:"invitation"`
+}
+
+type RevokeInvitationResponseObject interface {
+	VisitRevokeInvitationResponse(w http.ResponseWriter) error
+}
+
+type RevokeInvitation204Response struct {
+}
+
+func (response RevokeInvitation204Response) VisitRevokeInvitationResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type RevokeInvitation401JSONResponse struct{ ErrorJSONResponse }
+
+func (response RevokeInvitation401JSONResponse) VisitRevokeInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokeInvitation403JSONResponse ErrorResponse
+
+func (response RevokeInvitation403JSONResponse) VisitRevokeInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokeInvitation404JSONResponse ErrorResponse
+
+func (response RevokeInvitation404JSONResponse) VisitRevokeInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokeInvitation409JSONResponse ErrorResponse
+
+func (response RevokeInvitation409JSONResponse) VisitRevokeInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokeInvitation429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response RevokeInvitation429JSONResponse) VisitRevokeInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PreviewInvitationRequestObject struct {
+	Invitation string `json:"invitation"`
+}
+
+type PreviewInvitationResponseObject interface {
+	VisitPreviewInvitationResponse(w http.ResponseWriter) error
+}
+
+type PreviewInvitation200JSONResponse InvitationPreview
+
+func (response PreviewInvitation200JSONResponse) VisitPreviewInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PreviewInvitation401JSONResponse struct{ ErrorJSONResponse }
+
+func (response PreviewInvitation401JSONResponse) VisitPreviewInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PreviewInvitation404JSONResponse ErrorResponse
+
+func (response PreviewInvitation404JSONResponse) VisitPreviewInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcceptInvitationRequestObject struct {
+	Token  string `json:"token"`
+	Params AcceptInvitationParams
+}
+
+type AcceptInvitationResponseObject interface {
+	VisitAcceptInvitationResponse(w http.ResponseWriter) error
+}
+
+type AcceptInvitation200JSONResponse Organization
+
+func (response AcceptInvitation200JSONResponse) VisitAcceptInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcceptInvitation401JSONResponse struct{ ErrorJSONResponse }
+
+func (response AcceptInvitation401JSONResponse) VisitAcceptInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcceptInvitation403JSONResponse ErrorResponse
+
+func (response AcceptInvitation403JSONResponse) VisitAcceptInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcceptInvitation404JSONResponse ErrorResponse
+
+func (response AcceptInvitation404JSONResponse) VisitAcceptInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcceptInvitation409JSONResponse ErrorResponse
+
+func (response AcceptInvitation409JSONResponse) VisitAcceptInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcceptInvitation422JSONResponse struct {
+	IdempotencyKeyReusedJSONResponse
+}
+
+func (response AcceptInvitation422JSONResponse) VisitAcceptInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcceptInvitation429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response AcceptInvitation429JSONResponse) VisitAcceptInvitationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -2247,6 +2897,224 @@ func (response GetEntitlement409JSONResponse) VisitGetEntitlementResponse(w http
 	return err
 }
 
+type ListInvitationsRequestObject struct {
+	OrgId  OrgId `json:"orgId"`
+	Params ListInvitationsParams
+}
+
+type ListInvitationsResponseObject interface {
+	VisitListInvitationsResponse(w http.ResponseWriter) error
+}
+
+type ListInvitations200JSONResponse InvitationList
+
+func (response ListInvitations200JSONResponse) VisitListInvitationsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListInvitations400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListInvitations400JSONResponse) VisitListInvitationsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListInvitations401JSONResponse ErrorResponse
+
+func (response ListInvitations401JSONResponse) VisitListInvitationsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListInvitations403JSONResponse ErrorResponse
+
+func (response ListInvitations403JSONResponse) VisitListInvitationsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListInvitations404JSONResponse ErrorResponse
+
+func (response ListInvitations404JSONResponse) VisitListInvitationsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListInvitations409JSONResponse struct{ OrgNotActiveJSONResponse }
+
+func (response ListInvitations409JSONResponse) VisitListInvitationsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvitationRequestObject struct {
+	OrgId  OrgId `json:"orgId"`
+	Params CreateInvitationParams
+	Body   *CreateInvitationJSONRequestBody
+}
+
+type CreateInvitationResponseObject interface {
+	VisitCreateInvitationResponse(w http.ResponseWriter) error
+}
+
+type CreateInvitation201JSONResponse Invitation
+
+func (response CreateInvitation201JSONResponse) VisitCreateInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvitation400JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateInvitation400JSONResponse) VisitCreateInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvitation401JSONResponse ErrorResponse
+
+func (response CreateInvitation401JSONResponse) VisitCreateInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvitation403JSONResponse ErrorResponse
+
+func (response CreateInvitation403JSONResponse) VisitCreateInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvitation404JSONResponse ErrorResponse
+
+func (response CreateInvitation404JSONResponse) VisitCreateInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvitation409JSONResponse ErrorResponse
+
+func (response CreateInvitation409JSONResponse) VisitCreateInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvitation422JSONResponse struct {
+	IdempotencyKeyReusedJSONResponse
+}
+
+func (response CreateInvitation422JSONResponse) VisitCreateInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvitation429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response CreateInvitation429JSONResponse) VisitCreateInvitationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetUsageRequestObject struct {
 	OrgId OrgId `json:"orgId"`
 }
@@ -2336,6 +3204,15 @@ type StrictServerInterface interface {
 	// RejectOrganization Reject an organization request with a reason the requester sees (Platform Admin)
 	// (POST /admin/organizations/{orgId}:reject)
 	RejectOrganization(ctx context.Context, request RejectOrganizationRequestObject) (RejectOrganizationResponseObject, error)
+	// RevokeInvitation Revoke an open invitation (OrgOwner or OrgAdmin of its organization)
+	// (DELETE /invitations/{invitation})
+	RevokeInvitation(ctx context.Context, request RevokeInvitationRequestObject) (RevokeInvitationResponseObject, error)
+	// PreviewInvitation What an invitation link offers, before accepting it (any logged-in person)
+	// (GET /invitations/{invitation})
+	PreviewInvitation(ctx context.Context, request PreviewInvitationRequestObject) (PreviewInvitationResponseObject, error)
+	// AcceptInvitation Join the organization of an invitation
+	// (POST /invitations/{token}:accept)
+	AcceptInvitation(ctx context.Context, request AcceptInvitationRequestObject) (AcceptInvitationResponseObject, error)
 	// GetMe The signed-in user
 	// (GET /me)
 	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
@@ -2360,6 +3237,12 @@ type StrictServerInterface interface {
 	// GetEntitlement What the organization was granted (OrgOwner or OrgAdmin)
 	// (GET /organizations/{orgId}/entitlement)
 	GetEntitlement(ctx context.Context, request GetEntitlementRequestObject) (GetEntitlementResponseObject, error)
+	// ListInvitations Open invitations of the organization, newest first (OrgOwner or OrgAdmin)
+	// (GET /organizations/{orgId}/invitations)
+	ListInvitations(ctx context.Context, request ListInvitationsRequestObject) (ListInvitationsResponseObject, error)
+	// CreateInvitation Invite someone by email (OrgOwner or OrgAdmin)
+	// (POST /organizations/{orgId}/invitations)
+	CreateInvitation(ctx context.Context, request CreateInvitationRequestObject) (CreateInvitationResponseObject, error)
 	// GetUsage What the organization uses, next to its limits (OrgOwner or OrgAdmin)
 	// (GET /organizations/{orgId}/usage)
 	GetUsage(ctx context.Context, request GetUsageRequestObject) (GetUsageResponseObject, error)
@@ -2491,6 +3374,85 @@ func (sh *strictHandler) RejectOrganization(w http.ResponseWriter, r *http.Reque
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RejectOrganizationResponseObject); ok {
 		if err := validResponse.VisitRejectOrganizationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RevokeInvitation operation middleware
+func (sh *strictHandler) RevokeInvitation(w http.ResponseWriter, r *http.Request, invitation string) {
+	var request RevokeInvitationRequestObject
+
+	request.Invitation = invitation
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RevokeInvitation(ctx, request.(RevokeInvitationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RevokeInvitation")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RevokeInvitationResponseObject); ok {
+		if err := validResponse.VisitRevokeInvitationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PreviewInvitation operation middleware
+func (sh *strictHandler) PreviewInvitation(w http.ResponseWriter, r *http.Request, invitation string) {
+	var request PreviewInvitationRequestObject
+
+	request.Invitation = invitation
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PreviewInvitation(ctx, request.(PreviewInvitationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PreviewInvitation")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PreviewInvitationResponseObject); ok {
+		if err := validResponse.VisitPreviewInvitationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AcceptInvitation operation middleware
+func (sh *strictHandler) AcceptInvitation(w http.ResponseWriter, r *http.Request, token string, params AcceptInvitationParams) {
+	var request AcceptInvitationRequestObject
+
+	request.Token = token
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AcceptInvitation(ctx, request.(AcceptInvitationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AcceptInvitation")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AcceptInvitationResponseObject); ok {
+		if err := validResponse.VisitAcceptInvitationResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -2719,6 +3681,67 @@ func (sh *strictHandler) GetEntitlement(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
+// ListInvitations operation middleware
+func (sh *strictHandler) ListInvitations(w http.ResponseWriter, r *http.Request, orgId OrgId, params ListInvitationsParams) {
+	var request ListInvitationsRequestObject
+
+	request.OrgId = orgId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListInvitations(ctx, request.(ListInvitationsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListInvitations")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListInvitationsResponseObject); ok {
+		if err := validResponse.VisitListInvitationsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateInvitation operation middleware
+func (sh *strictHandler) CreateInvitation(w http.ResponseWriter, r *http.Request, orgId OrgId, params CreateInvitationParams) {
+	var request CreateInvitationRequestObject
+
+	request.OrgId = orgId
+	request.Params = params
+
+	var body CreateInvitationJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateInvitation(ctx, request.(CreateInvitationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateInvitation")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateInvitationResponseObject); ok {
+		if err := validResponse.VisitCreateInvitationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetUsage operation middleware
 func (sh *strictHandler) GetUsage(w http.ResponseWriter, r *http.Request, orgId OrgId) {
 	var request GetUsageRequestObject
@@ -2750,102 +3773,123 @@ func (sh *strictHandler) GetUsage(w http.ResponseWriter, r *http.Request, orgId 
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"c+4ckZgePR7rb/8nAAD//w==",
+	"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",
+	"TGXknXgHNGEHD4fm3v8NAAD//w==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

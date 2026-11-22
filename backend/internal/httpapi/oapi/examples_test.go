@@ -73,7 +73,14 @@ func TestExamplesFitTheSpec(t *testing.T) {
 					t.Errorf("response %s is not documented", status)
 					continue
 				}
-				check(t, "response "+status, resp.Value.Content.Get("application/json"), body)
+				if len(resp.Value.Content) == 0 {
+					// A response without a body (204): its example is null.
+					if body != nil {
+						t.Errorf("response %s has no body, its example must be null", status)
+					}
+				} else {
+					check(t, "response "+status, resp.Value.Content.Get("application/json"), body)
+				}
 				if status[0] == '2' {
 					covered[name] = true
 				}
