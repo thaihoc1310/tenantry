@@ -14,6 +14,7 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/thaihoc1310/tenantry/operator v0.0.0-00010101000000-000000000000
 	golang.org/x/oauth2 v0.38.0
+	golang.org/x/sync v0.22.0
 	golang.org/x/time v0.15.0
 	k8s.io/apimachinery v0.36.6
 	k8s.io/client-go v0.36.6
@@ -102,7 +103,6 @@ require (
 	golang.org/x/exp v0.0.0-20260824195058-e88cd73687aa // indirect
 	golang.org/x/mod v0.39.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.41.0 // indirect

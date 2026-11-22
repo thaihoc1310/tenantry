@@ -89,14 +89,14 @@ func run(args []string) error {
 		}
 	}
 
-	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
-	if err == nil {
-		err = pool.Ping(context.Background())
-	}
+	// Each loop holds at most one transaction at a time; 6 leaves headroom
+	// for the metrics reads and the syncer's own reads.
+	pool, err := cfg.Pool(context.Background(), 6)
 	if err != nil {
-		return fmt.Errorf("database unreachable: %w", err)
+		return err
 	}
 	defer pool.Close()
+	metrics.RegisterPool(pool)
 
 	// SIGTERM lets each loop finish what it has in hand, then exit.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)

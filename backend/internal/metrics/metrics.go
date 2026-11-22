@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -113,4 +114,23 @@ func Serve(ctx context.Context, addr string, log *slog.Logger) {
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("metrics server stopped", "err", err)
 	}
+}
+
+// RegisterPool adds what the process's PostgreSQL pool is doing: a pool
+// drained by requests waiting on something slow shows as acquired = max and
+// a growing wait.
+func RegisterPool(pool *pgxpool.Pool) {
+	stat := func(f func(*pgxpool.Stat) float64) func() float64 { return func() float64 { return f(pool.Stat()) } }
+	Registry.MustRegister(
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "tenantry_db_pool_acquired_connections", Help: "Connections of the pool in use."},
+			stat(func(s *pgxpool.Stat) float64 { return float64(s.AcquiredConns()) })),
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "tenantry_db_pool_idle_connections", Help: "Connections of the pool open and free."},
+			stat(func(s *pgxpool.Stat) float64 { return float64(s.IdleConns()) })),
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "tenantry_db_pool_max_connections", Help: "The most connections the pool may hold."},
+			stat(func(s *pgxpool.Stat) float64 { return float64(s.MaxConns()) })),
+		prometheus.NewCounterFunc(prometheus.CounterOpts{Name: "tenantry_db_pool_waits_total", Help: "Acquires that had to wait for a connection."},
+			stat(func(s *pgxpool.Stat) float64 { return float64(s.EmptyAcquireCount()) })),
+		prometheus.NewCounterFunc(prometheus.CounterOpts{Name: "tenantry_db_pool_wait_seconds_total", Help: "Time spent waiting for a connection."},
+			stat(func(s *pgxpool.Stat) float64 { return s.EmptyAcquireWaitTime().Seconds() })),
+	)
 }

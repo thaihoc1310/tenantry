@@ -51,6 +51,7 @@ func TestGaugesReadTheDatabase(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	gauges.Provisioning(pool, "cluster-a", log)
 	gauges.GroupSync(pool, log)
+	metrics.RegisterPool(pool)
 
 	families, err := metrics.Registry.Gather()
 	if err != nil {

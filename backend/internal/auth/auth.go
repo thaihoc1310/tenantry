@@ -29,6 +29,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/oauth2"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/apperr"
 	"github.com/thaihoc1310/tenantry/backend/internal/audit"
@@ -77,6 +78,8 @@ type Service struct {
 
 	mu  sync.Mutex
 	idp *provider // nil until discovery succeeds
+
+	renewals singleflight.Group // one refresh at a time per session, in this process
 }
 
 // provider is what discovery yields: the OAuth2 endpoints and the verifiers
@@ -337,71 +340,94 @@ func (s *Service) Session(ctx context.Context, token string) (Principal, error) 
 }
 
 // refresh renews the session's expired access token and returns the realm
-// roles it carries. The session row stays locked meanwhile: concurrent
-// requests of the session wait, then find it renewed and skip Keycloak.
+// roles it carries. Concurrent requests of the session in this process share
+// one renewal (singleflight); no database connection is held while Keycloak
+// answers, so a slow Keycloak cannot drain the pool: the row is read, the
+// token refreshed, and the row updated only if it still holds the refresh
+// token the renewal started from (another replica may have renewed it).
 //
 // Keycloak refusing the refresh token (invalid_grant: SSO session idle or
-// over, logged out, account disabled) ends the session. Keycloak being
-// unreachable does not: the request fails and the next one tries again.
-// Carrying on with the old roles instead would break the promise that a
-// removed platform-admin role stops working within one access token lifetime.
+// over, logged out, account disabled) ends the session, unless another
+// renewal got there first. Keycloak being unreachable does not: the request
+// fails and the next one tries again. Carrying on with the old roles instead
+// would break the promise that a removed platform-admin role stops working
+// within one access token lifetime.
 func (s *Service) refresh(ctx context.Context, idHash []byte) ([]string, error) {
-	var roles []string
-	ended := false
-	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		q := s.q.WithTx(tx)
-		sess, err := q.LockSession(ctx, idHash)
-		if errors.Is(err, pgx.ErrNoRows) {
-			ended = true // logged out or expired while waiting for the lock
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if s.now().Before(sess.AccessExpiresAt) {
-			roles = sess.RealmRoles // renewed by the request we waited for
-			return nil
-		}
-		refreshToken, err := s.open(sess.RefreshTokenEnc, idHash)
-		if err != nil {
-			// Sealed with an older session key: rotating the key logs everyone out.
-			ended = true
-			return q.DeleteSession(ctx, idHash)
-		}
-
-		p, err := s.provider(ctx)
-		if err != nil {
-			return err
-		}
-		cctx := s.clientContext(ctx)
-		tok, err := p.oauth.TokenSource(cctx, &oauth2.Token{RefreshToken: string(refreshToken)}).Token()
-		var refused *oauth2.RetrieveError
-		if errors.As(err, &refused) && refused.ErrorCode == "invalid_grant" {
-			ended = true
-			return q.DeleteSession(ctx, idHash)
-		}
-		if err != nil {
-			return fmt.Errorf("refresh session: %w", err)
-		}
-		var accessExpiry time.Time
-		if roles, accessExpiry, err = s.readAccessToken(cctx, p, tok.AccessToken); err != nil {
-			return err
-		}
-		return q.RenewSession(ctx, store.RenewSessionParams{
-			IDHash:          idHash,
-			RealmRoles:      roles,
-			RefreshTokenEnc: s.seal([]byte(tok.RefreshToken), idHash),
-			AccessExpiresAt: accessExpiry,
-			ExpiresAt:       s.sessionExpiry(tok, sess.CreatedAt),
-		})
+	v, err, _ := s.renewals.Do(string(idHash), func() (any, error) {
+		// One caller giving up must not fail the others waiting on it.
+		return s.renew(context.WithoutCancel(ctx), idHash)
 	})
 	if err != nil {
 		return nil, err
 	}
-	if ended {
-		return nil, ErrNoSession
+	return v.([]string), nil
+}
+
+func (s *Service) renew(ctx context.Context, idHash []byte) ([]string, error) {
+	sess, err := s.q.SessionRow(ctx, idHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNoSession // logged out or expired meanwhile
+	}
+	if err != nil {
+		return nil, err
+	}
+	if s.now().Before(sess.AccessExpiresAt) {
+		return sess.RealmRoles, nil // renewed meanwhile
+	}
+	refreshToken, err := s.open(sess.RefreshTokenEnc, idHash)
+	if err != nil {
+		// Sealed with an older session key: rotating the key logs everyone out.
+		return nil, s.endSession(ctx, idHash)
+	}
+	p, err := s.provider(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cctx := s.clientContext(ctx)
+	tok, err := p.oauth.TokenSource(cctx, &oauth2.Token{RefreshToken: string(refreshToken)}).Token()
+	var refused *oauth2.RetrieveError
+	if errors.As(err, &refused) && refused.ErrorCode == "invalid_grant" {
+		if now, err := s.q.SessionRow(ctx, idHash); err == nil && s.now().Before(now.AccessExpiresAt) {
+			return now.RealmRoles, nil // another replica renewed it with a newer refresh token
+		}
+		return nil, s.endSession(ctx, idHash)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("refresh session: %w", err)
+	}
+	roles, accessExpiry, err := s.readAccessToken(cctx, p, tok.AccessToken)
+	if err != nil {
+		return nil, err
+	}
+	n, err := s.q.RenewSession(ctx, store.RenewSessionParams{
+		IDHash:                  idHash,
+		RealmRoles:              roles,
+		RefreshTokenEnc:         s.seal([]byte(tok.RefreshToken), idHash),
+		AccessExpiresAt:         accessExpiry,
+		ExpiresAt:               s.sessionExpiry(tok, sess.CreatedAt),
+		PreviousRefreshTokenEnc: sess.RefreshTokenEnc,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		// Renewed elsewhere meanwhile (the roles just read are current), or
+		// logged out: then the session is over.
+		if _, err := s.q.SessionRow(ctx, idHash); errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNoSession
+		} else if err != nil {
+			return nil, err
+		}
 	}
 	return roles, nil
+}
+
+// endSession deletes the session row and answers ErrNoSession.
+func (s *Service) endSession(ctx context.Context, idHash []byte) error {
+	if err := s.q.DeleteSession(ctx, idHash); err != nil {
+		return err
+	}
+	return ErrNoSession
 }
 
 // Logout ends the session and the Keycloak SSO session behind it, so

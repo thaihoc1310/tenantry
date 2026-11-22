@@ -40,16 +40,14 @@ func run() error {
 	log := cfg.Logger()
 	slog.SetDefault(log)
 
-	// pgxpool connects lazily; Ping makes a wrong DATABASE_URL fail at start
-	// instead of on the first request.
-	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
-	if err == nil {
-		err = pool.Ping(context.Background())
-	}
+	// Pinged at start, so a wrong DATABASE_URL fails at once. 20 of PostgreSQL's 100: room for two API replicas, the workers,
+	// migrations and an operator's psql.
+	pool, err := cfg.Pool(context.Background(), 20)
 	if err != nil {
-		return fmt.Errorf("database unreachable: %w", err)
+		return err
 	}
 	defer pool.Close()
+	metrics.RegisterPool(pool)
 
 	authn, err := auth.New(pool, authCfg)
 	if err != nil {

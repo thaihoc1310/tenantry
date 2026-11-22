@@ -52,6 +52,8 @@ type fakeKeycloak struct {
 	loggedOut     []string // refresh tokens the logout endpoint was called with
 	// Tamper with the next tokens.
 	wrongNonce, wrongAudience, noRefreshToken bool
+	// holdRefresh, when set, keeps every refresh waiting until it is closed.
+	holdRefresh chan struct{}
 }
 
 type grant struct {
@@ -194,6 +196,12 @@ func (f *fakeKeycloak) refresh(w http.ResponseWriter, r *http.Request) {
 	// Slow enough that concurrent requests of one session would all get
 	// here if the API did not serialize them.
 	time.Sleep(50 * time.Millisecond)
+	f.mu.Lock()
+	hold := f.holdRefresh
+	f.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	sso, ok := f.refreshTokens[r.FormValue("refresh_token")]

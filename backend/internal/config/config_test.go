@@ -13,7 +13,7 @@ import (
 
 func setEnv(t *testing.T, env map[string]string) {
 	t.Helper()
-	for _, k := range []string{"DATABASE_URL", "TENANTRY_ADDR", "TENANTRY_LOG_LEVEL", "TENANTRY_LOG_FORMAT", "TENANTRY_TRUSTED_PROXIES", "TENANTRY_METRICS_ADDR"} {
+	for _, k := range []string{"DATABASE_URL", "TENANTRY_ADDR", "TENANTRY_LOG_LEVEL", "TENANTRY_LOG_FORMAT", "TENANTRY_TRUSTED_PROXIES", "TENANTRY_METRICS_ADDR", "TENANTRY_DB_MAX_CONNS"} {
 		t.Setenv(k, env[k])
 	}
 }
@@ -157,5 +157,16 @@ func TestMetricsOff(t *testing.T) {
 	setEnv(t, map[string]string{"DATABASE_URL": "postgres://x", "TENANTRY_METRICS_ADDR": "off"})
 	if c, err := config.Load(); err != nil || c.MetricsAddr != "" {
 		t.Fatalf("off: %q %v", c.MetricsAddr, err)
+	}
+}
+
+func TestDBMaxConns(t *testing.T) {
+	setEnv(t, map[string]string{"DATABASE_URL": "postgres://x", "TENANTRY_DB_MAX_CONNS": "12"})
+	if c, err := config.Load(); err != nil || c.DBMaxConns != 12 {
+		t.Fatalf("12: %d %v", c.DBMaxConns, err)
+	}
+	setEnv(t, map[string]string{"DATABASE_URL": "postgres://x", "TENANTRY_DB_MAX_CONNS": "1"})
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "TENANTRY_DB_MAX_CONNS") {
+		t.Fatalf("1: %v", err)
 	}
 }

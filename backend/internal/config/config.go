@@ -3,6 +3,7 @@
 package config
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -11,8 +12,11 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Config struct {
@@ -21,8 +25,11 @@ type Config struct {
 	// TENANTRY_METRICS_ADDR: where /metrics is served, apart from the API so
 	// no Ingress reaches it; default :9090, "off" serves none.
 	MetricsAddr string
-	LogLevel    slog.Level // TENANTRY_LOG_LEVEL: debug, info (default), warn, error
-	LogFormat   string     // TENANTRY_LOG_FORMAT: json (default) or text
+	// TENANTRY_DB_MAX_CONNS: connections the process may hold to PostgreSQL;
+	// 0 (unset) lets the process choose (Pool).
+	DBMaxConns int32
+	LogLevel   slog.Level // TENANTRY_LOG_LEVEL: debug, info (default), warn, error
+	LogFormat  string     // TENANTRY_LOG_FORMAT: json (default) or text
 	// TENANTRY_TRUSTED_PROXIES: comma-separated CIDRs or addresses of the
 	// proxies in front of the API (Traefik), whose X-Forwarded-For names the
 	// client. Empty: the header is never believed.
@@ -42,6 +49,13 @@ func Load() (Config, error) {
 	}
 	if c.Addr == "" {
 		c.Addr = ":8080"
+	}
+	if v := os.Getenv("TENANTRY_DB_MAX_CONNS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 2 || n > 90 {
+			errs = append(errs, fmt.Errorf("TENANTRY_DB_MAX_CONNS=%q: want a number from 2 to 90", v))
+		}
+		c.DBMaxConns = int32(n)
 	}
 	switch c.MetricsAddr = os.Getenv("TENANTRY_METRICS_ADDR"); c.MetricsAddr {
 	case "":
@@ -228,4 +242,27 @@ func LoadProvisioning() (Provisioning, error) {
 		p.OperationTimeout = d
 	}
 	return p, errors.Join(errs...)
+}
+
+// Pool opens the process's PostgreSQL pool with an explicit size: the
+// TENANTRY_DB_MAX_CONNS, or fallback (pgxpool's own default follows the
+// node's CPUs, which says nothing about a Pod). It pings the database, so a
+// wrong DATABASE_URL fails at start.
+func (c Config) Pool(ctx context.Context, fallback int32) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(c.DatabaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("DATABASE_URL: %w", err)
+	}
+	cfg.MaxConns = fallback
+	if c.DBMaxConns > 0 {
+		cfg.MaxConns = c.DBMaxConns
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err == nil {
+		err = pool.Ping(ctx)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("database unreachable: %w", err)
+	}
+	return pool, nil
 }

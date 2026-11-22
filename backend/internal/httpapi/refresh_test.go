@@ -144,6 +144,47 @@ func TestRefreshOnce(t *testing.T) {
 	}
 }
 
+// A slow Keycloak holds no database connection: while one session's refresh
+// waits on it, with more of the session's requests queued behind, the rest
+// of the API answers. (Holding the session row's lock meanwhile, as before,
+// took a pooled connection per waiting request and stalled every caller.)
+func TestRefreshHoldsNoConnection(t *testing.T) {
+	kc := newFakeKeycloak(t)
+	h, db := newAPIWithIssuer(t, kc.srv.URL)
+	session, _ := loggedIn(t, kc, h, newcomer)
+	other, _ := loggedIn(t, kc, h, account{sub: "kc-2", email: "omar@example.com", name: "Omar", emailVerified: true})
+	expireAccess(t, db, session.Value)
+	hold := make(chan struct{})
+	kc.mu.Lock()
+	kc.holdRefresh = hold
+	kc.mu.Unlock()
+
+	var wg sync.WaitGroup
+	for range 3 * int(db.Config().MaxConns) {
+		wg.Go(func() {
+			if rec := send(h, bareRequest(http.MethodGet, "/api/v1/me", session.Value, "")); rec.Code != 200 {
+				t.Errorf("waiting request: %d %s", rec.Code, rec.Body)
+			}
+		})
+	}
+	time.Sleep(300 * time.Millisecond) // the refresh is held at Keycloak, the others behind it
+	done := make(chan int, 1)
+	go func() { code, _ := getMe(t, h, other.Value); done <- code }()
+	select {
+	case code := <-done:
+		if code != 200 {
+			t.Errorf("another session: %d", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("another session waited for a connection while Keycloak was slow")
+	}
+	close(hold)
+	wg.Wait()
+	if n, _, _ := kc.stats(); n != 1 {
+		t.Fatalf("%d refreshes for one session, want 1", n)
+	}
+}
+
 // When Keycloak refuses the refresh token, the SSO session is over and so
 // is the portal session.
 func TestRefreshRefused(t *testing.T) {
