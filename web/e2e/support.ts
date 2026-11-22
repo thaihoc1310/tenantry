@@ -1,6 +1,6 @@
 // What the end-to-end tests share: new accounts, Mailpit, logging in.
 import { execFileSync } from 'node:child_process'
-import { expect, type Browser, type Page } from '@playwright/test'
+import { expect, test, type Browser, type Page } from '@playwright/test'
 
 export const mailpit = process.env.E2E_MAILPIT ?? 'http://127.0.0.1:8025'
 
@@ -193,8 +193,16 @@ export async function workspaceOrganization(browser: Browser, prefix: string, ma
 
 // deleteWorkspace deletes a Workspace through the API and waits until the
 // cluster has nothing of it left: no PlatformWorkspace, Tenant or Namespace.
+// A Workspace busy with a change (409) is asked again until it takes it.
 export async function deleteWorkspace(page: Page, wsId: string, slug: string, k8sName: string) {
-  const r = await api(page, 'DELETE', `/workspaces/${wsId}?confirmName=${slug}`)
+  const r = await until(
+    `delete of ${k8sName} accepted`,
+    async () => {
+      const r = await api(page, 'DELETE', `/workspaces/${wsId}?confirmName=${slug}`)
+      return r.status === 409 && r.body.code === 'WORKSPACE_NOT_READY' ? undefined : r
+    },
+    10 * 60_000,
+  )
   if (r.status === 202) await succeeded(page, r.body.operation.id)
   else expect(r.status, JSON.stringify(r.body)).toBe(404) // gone already
   expect((await api(page, 'GET', `/workspaces/${wsId}`)).status).toBe(404)
@@ -212,4 +220,37 @@ export async function networkReady(ns: string) {
       ? true
       : undefined,
   )
+}
+
+// Cleanup that survives a failing or timed-out test (a finally block shares
+// the test's timeout, so a test stuck until its timeout never got to it). A
+// test registers what to undo as soon as it has made it; the test runs
+// cleanUp() at its end, and cleanupAfterAll() runs whatever is left after a
+// failure, in a hook with a timeout of its own. Each step must be safe to
+// run twice.
+const pending: [string, () => Promise<void>][] = []
+
+export function onCleanup(what: string, run: () => Promise<void>) {
+  pending.push([what, run])
+}
+
+// cleanUp runs the registered steps, last first, all of them even when one fails.
+export async function cleanUp() {
+  const failed: string[] = []
+  while (pending.length) {
+    const [what, run] = pending.pop()!
+    try {
+      await run()
+    } catch (e) {
+      failed.push(`${what}: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+  if (failed.length) throw new Error(`cleanup failed:\n${failed.join('\n')}`)
+}
+
+export function cleanupAfterAll() {
+  test.afterAll(async () => {
+    test.setTimeout(15 * 60_000)
+    await cleanUp()
+  })
 }

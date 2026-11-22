@@ -6,10 +6,13 @@
 import { expect, test } from '@playwright/test'
 import {
   api,
+  cleanUp,
+  cleanupAfterAll,
   deleteWorkspace,
   kubectl,
   kubectlIn,
   networkReady,
+  onCleanup,
   succeeded,
   until,
   workspaceOrganization,
@@ -42,6 +45,8 @@ const claim = (ns: string) =>
       resources: { requests: { storage: '100Mi' } },
     },
   })
+
+cleanupAfterAll()
 
 test('quota, resize, cordon and delete of a Workspace on the cluster', async ({ browser }) => {
   test.setTimeout(15 * 60_000)
@@ -90,62 +95,62 @@ test('quota, resize, cordon and delete of a Workspace on the cluster', async ({ 
   expect(res.status, JSON.stringify(res.body)).toBe(202)
   const wsId: string = res.body.workspace.id
   let volume = ''
-  try {
-    await succeeded(page, res.body.operation.id)
-    await networkReady(ns)
-
-    // 300m does not fit in a quota of 200m: Capsule says so.
-    const refused = apply(pod(ns, 'big', '300m'))
-    expect(refused.ok, refused.out).toBe(false)
-    expect(refused.out).toMatch(/exceed|quota/i)
-
-    // Resize to 1 CPU: the same Pod is admitted.
-    const r = await api(page, 'PATCH', `/workspaces/${wsId}`, {
-      resources: {
-        requestsCpu: '1',
-        requestsMemory: '1Gi',
-        limitsCpu: '1',
-        limitsMemory: '1Gi',
-        pods: 4,
-        requestsStorage: '1Gi',
-        namespaceQuota: 2,
-      },
-    })
-    expect(r.status, JSON.stringify(r.body)).toBe(202)
-    await succeeded(page, r.body.operation.id)
-    await until(
-      'the Pod admitted after the resize',
-      async () => (apply(pod(ns, 'big', '300m')).ok ? true : undefined),
-      60_000,
-    )
-
-    // The grant counts the larger share.
-    const usage = await api(page, 'GET', `/organizations/${slug}/usage`)
-    expect(usage.body.clusterGrants[0].requestsCpu.allocated).toBe('1')
-
-    // Cordoned: tenants change nothing; uncordon gives it back.
-    const c = await api(page, 'POST', `/workspaces/${wsId}:cordon`)
-    expect(c.status, JSON.stringify(c.body)).toBe(202)
-    await succeeded(page, c.body.operation.id)
-    expect((await api(page, 'GET', `/workspaces/${wsId}`)).body.state).toBe('Cordoned')
-    expect(apply(pod(ns, 'small', '50m')).ok).toBe(false)
-    const u = await api(page, 'POST', `/workspaces/${wsId}:uncordon`)
-    await succeeded(page, u.body.operation.id)
-
-    // A volume to lose with the Workspace.
-    const pvc = apply(claim(ns))
-    expect(pvc.ok, pvc.out).toBe(true)
-    volume = await until(
-      'the claim bound',
-      async () => kubectl('-n', ns, 'get', 'pvc', 'data', '-o', 'jsonpath={.spec.volumeName}').trim() || undefined,
-    )
-    await page.goto(`/orgs/${slug}/workspaces/solar?tab=resources`)
-    await expect(page.getByText('Quota of this Workspace')).toBeVisible()
-    if (process.env.E2E_SHOTS)
-      await page.screenshot({ path: `${process.env.E2E_SHOTS}/workspace-resources.png`, fullPage: true })
-  } finally {
+  onCleanup('Workspace solar', async () => {
     await deleteWorkspace(page, wsId, 'solar', k8sName)
-  }
+  })
+  await succeeded(page, res.body.operation.id)
+  await networkReady(ns)
+
+  // 300m does not fit in a quota of 200m: Capsule says so.
+  const refused = apply(pod(ns, 'big', '300m'))
+  expect(refused.ok, refused.out).toBe(false)
+  expect(refused.out).toMatch(/exceed|quota/i)
+
+  // Resize to 1 CPU: the same Pod is admitted.
+  const r = await api(page, 'PATCH', `/workspaces/${wsId}`, {
+    resources: {
+      requestsCpu: '1',
+      requestsMemory: '1Gi',
+      limitsCpu: '1',
+      limitsMemory: '1Gi',
+      pods: 4,
+      requestsStorage: '1Gi',
+      namespaceQuota: 2,
+    },
+  })
+  expect(r.status, JSON.stringify(r.body)).toBe(202)
+  await succeeded(page, r.body.operation.id)
+  await until(
+    'the Pod admitted after the resize',
+    async () => (apply(pod(ns, 'big', '300m')).ok ? true : undefined),
+    60_000,
+  )
+
+  // The grant counts the larger share.
+  const usage = await api(page, 'GET', `/organizations/${slug}/usage`)
+  expect(usage.body.clusterGrants[0].requestsCpu.allocated).toBe('1')
+
+  // Cordoned: tenants change nothing; uncordon gives it back.
+  const c = await api(page, 'POST', `/workspaces/${wsId}:cordon`)
+  expect(c.status, JSON.stringify(c.body)).toBe(202)
+  await succeeded(page, c.body.operation.id)
+  expect((await api(page, 'GET', `/workspaces/${wsId}`)).body.state).toBe('Cordoned')
+  expect(apply(pod(ns, 'small', '50m')).ok).toBe(false)
+  const u = await api(page, 'POST', `/workspaces/${wsId}:uncordon`)
+  await succeeded(page, u.body.operation.id)
+
+  // A volume to lose with the Workspace.
+  const pvc = apply(claim(ns))
+  expect(pvc.ok, pvc.out).toBe(true)
+  volume = await until(
+    'the claim bound',
+    async () => kubectl('-n', ns, 'get', 'pvc', 'data', '-o', 'jsonpath={.spec.volumeName}').trim() || undefined,
+  )
+  await page.goto(`/orgs/${slug}/workspaces/solar?tab=resources`)
+  await expect(page.getByText('Quota of this Workspace')).toBeVisible()
+  if (process.env.E2E_SHOTS)
+    await page.screenshot({ path: `${process.env.E2E_SHOTS}/workspace-resources.png`, fullPage: true })
+  await cleanUp()
   expect(kubectl('get', 'pvc', '-A', '--field-selector', `metadata.namespace=${ns}`, '-o', 'name')).toBe('')
   // Reclaim policy Delete: the volume goes too.
   if (volume)
