@@ -9,7 +9,7 @@ import (
 
 // applicableConditions are the conditions a Workspace needs True to be Ready
 // at this milestone (architecture/04 §1.2); later milestones add theirs.
-var applicableConditions = []string{v1.ConditionCapsuleTenantReady, v1.ConditionIdentityBindingsReady}
+var applicableConditions = []string{v1.ConditionCapsuleTenantReady, v1.ConditionPolicyReady, v1.ConditionIdentityBindingsReady}
 
 // phase derives status.phase from the conditions (architecture/04 §1.4).
 // before is the phase of the previous pass: once a Workspace has been Ready,

@@ -11,6 +11,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -25,7 +26,10 @@ func main() {
 	var metricsAddr, probeAddr, serviceAccount, registries, kubeContext string
 	// Outside the cluster (make run-operator): which kubeconfig context.
 	flag.StringVar(&kubeContext, "context", "", "kubeconfig context, when running outside the cluster")
-	var blockedAfter time.Duration
+	var blockedAfter, resync time.Duration
+	// Every object is reconciled again this often, so drift that no watch
+	// reports is restored too (IMPLEMENTATION-PLAN M7, decision 8).
+	flag.DurationVar(&resync, "resync", 5*time.Minute, "how often every object is reconciled again")
 	// Metrics stay off until M12 scrapes them (plain HTTP, inside the cluster).
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "address of the metrics endpoint, 0 to disable")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "address of /healthz and /readyz")
@@ -61,6 +65,7 @@ func main() {
 		Scheme:                 scheme,
 		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
+		Cache:                  cache.Options{SyncPeriod: &resync},
 	})
 	if err != nil {
 		log.Error(err, "creating the manager")

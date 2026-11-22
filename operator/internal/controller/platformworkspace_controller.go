@@ -29,6 +29,10 @@ import (
 // usually wake it earlier.
 const recheck = 5 * time.Second
 
+// labelQuotaTenant is the label Capsule puts on a GlobalResourceQuota it
+// made from a Tenant's quota rule, naming that Tenant.
+const labelQuotaTenant = "projectcapsule.dev/tenant"
+
 // PlatformWorkspaceReconciler runs the sub-reconcilers of a Workspace in
 // order and writes its status (IMPLEMENTATION-PLAN §4.1).
 type PlatformWorkspaceReconciler struct {
@@ -73,14 +77,22 @@ func (r *PlatformWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			results[0] = merge(tenantRes, nsRes)
 		}
 	}
-	// 3. rbac.
-	results = append(results, subreconciler.RBAC(tenant))
+	// 3. policy: the quota and Pod Security labels are in the Tenant; the
+	// LimitRange is replicated by Capsule.
+	policyRes, quota := subreconciler.Policy(ctx, r.Client, r.Scheme(), ws)
+	if policyRes.Condition.Reason == subreconciler.ReasonApplyFailed {
+		return ctrl.Result{}, r.fail(ctx, before, ws, policyRes.Condition)
+	}
+	// 4. rbac.
+	results = append(results, policyRes, subreconciler.RBAC(tenant))
 
 	existing, err := subreconciler.TenantNamespaces(ctx, r.Client, ws)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	ws.Status.Namespaces = observe.Namespaces(ws, existing)
+	usage, perNamespace := subreconciler.Usage(quota)
+	ws.Status.Usage = usage
+	ws.Status.Namespaces = observe.Namespaces(ws, existing, perNamespace)
 	if tenant != nil {
 		ws.Status.CapsuleTenantRef = tenant.GetName()
 	}
@@ -147,9 +159,23 @@ func (r *PlatformWorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	hasTenantLabel := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetLabels()[render.LabelCapsuleTenant] != ""
 	})
+	replication := &unstructured.Unstructured{}
+	replication.SetGroupVersionKind(render.ReplicationGVK)
+	// Capsule's GlobalResourceQuota names its Tenant in a label; its usage
+	// becomes status.usage.
+	quota := &unstructured.Unstructured{}
+	quota.SetGroupVersionKind(render.QuotaGVK)
+	byQuotaTenant := handler.EnqueueRequestsFromMapFunc(func(_ context.Context, o client.Object) []reconcile.Request {
+		if name := o.GetLabels()[labelQuotaTenant]; name != "" {
+			return []reconcile.Request{{NamespacedName: client.ObjectKey{Name: name}}}
+		}
+		return nil
+	})
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1.PlatformWorkspace{}).
 		Owns(tenant).
+		Owns(replication).
+		Watches(quota, byQuotaTenant).
 		Watches(&corev1.Namespace{}, byTenantLabel, builder.WithPredicates(hasTenantLabel)).
 		Named("platformworkspace").
 		Complete(r)

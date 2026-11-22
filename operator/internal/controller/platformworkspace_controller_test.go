@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -270,9 +271,19 @@ func TestWorkspaceFinalizer(t *testing.T) {
 		c.Reason != v1.ReasonBlockedByFinalizer || !strings.Contains(c.Message, "acme-green-frontend") {
 		t.Errorf("Deleting condition %+v", c)
 	}
-	// 4. Namespace gone → Tenant deleted (envtest has no garbage collector
-	// for its owner reference to matter) → 7. finalizer removed.
+	// 4. Namespace gone → replication deleted, then the Tenant (envtest has
+	// no garbage collector for owner references to matter) → 7. finalizer
+	// removed.
 	finishNamespaceDeletion(t, "acme-green-frontend")
+	reconcileOnce(t, r, "acme-green")
+	rep := &unstructured.Unstructured{}
+	rep.SetGroupVersionKind(render.ReplicationGVK)
+	if err := testClient.Get(ctx, client.ObjectKey{Name: "acme-green"}, rep); !apierrors.IsNotFound(err) {
+		t.Fatalf("GlobalTenantResource still there: %v", err)
+	}
+	if getTenant(t, "acme-green").GetDeletionTimestamp() != nil {
+		t.Error("Tenant deleted in the same pass as its replication")
+	}
 	reconcileOnce(t, r, "acme-green")
 	tenant = &unstructured.Unstructured{}
 	tenant.SetGroupVersionKind(render.TenantGVK)
@@ -282,6 +293,60 @@ func TestWorkspaceFinalizer(t *testing.T) {
 	reconcileOnce(t, r, "acme-green")
 	if err := testClient.Get(ctx, client.ObjectKey{Name: "acme-green"}, &v1.PlatformWorkspace{}); !apierrors.IsNotFound(err) {
 		t.Errorf("PlatformWorkspace still there: %v", err)
+	}
+}
+
+// The quota: PolicyReady waits until Capsule's GlobalResourceQuota carries
+// the Workspace's hard, and its usage becomes status.usage.
+func TestWorkspacePolicy(t *testing.T) {
+	needEnv(t)
+	ctx := context.Background()
+	r := newWorkspaceReconciler()
+	ws := newWorkspace("acme-sun")
+	ws.Spec.Resources = v1.ResourceList{"requests.cpu": resource.MustParse("2"), "pods": resource.MustParse("20")}
+	if err := testClient.Create(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	reconcileOnce(t, r, "acme-sun")
+	quota, _, _ := unstructured.NestedSlice(getTenant(t, "acme-sun").Object, "spec", "rules")
+	if q := quota[len(quota)-1].(map[string]any)["quota"]; q == nil {
+		t.Fatalf("no quota rule in %v", quota)
+	}
+	capsuleReconciles(t, "acme-sun")
+	reconcileOnce(t, r, "acme-sun")
+	if c := condition(getWorkspace(t, "acme-sun"), v1.ConditionPolicyReady); c.Reason != subreconciler.ReasonProgressing {
+		t.Errorf("before the GlobalResourceQuota: %+v", c)
+	}
+
+	// Capsule still has the old hard.
+	capsuleQuota(t, "acme-sun", map[string]any{"requests.cpu": "1", "pods": "20"},
+		map[string]map[string]any{"acme-sun-frontend": {"requests.cpu": "300m", "pods": "2"}})
+	reconcileOnce(t, r, "acme-sun")
+	if c := condition(getWorkspace(t, "acme-sun"), v1.ConditionPolicyReady); c.Reason != subreconciler.ReasonProgressing ||
+		!strings.Contains(c.Message, "requests.cpu=2") {
+		t.Errorf("with a stale hard: %+v", c)
+	}
+
+	q := &unstructured.Unstructured{}
+	q.SetGroupVersionKind(render.QuotaGVK)
+	if err := testClient.Get(ctx, client.ObjectKey{Name: "acme-sun-workspace"}, q); err != nil {
+		t.Fatal(err)
+	}
+	_ = unstructured.SetNestedField(q.Object, "2000m", "status", "total", "hard", "requests.cpu")
+	if err := testClient.Status().Update(ctx, q); err != nil {
+		t.Fatal(err)
+	}
+	reconcileOnce(t, r, "acme-sun")
+	ws = getWorkspace(t, "acme-sun")
+	if c := condition(ws, v1.ConditionPolicyReady); c.Status != metav1.ConditionTrue || ws.Status.Phase != v1.PhaseReady {
+		t.Errorf("PolicyReady %+v, phase %s", c, ws.Status.Phase)
+	}
+	cpu := ws.Status.Usage["requests.cpu"]
+	if cpu.String() != "300m" || len(ws.Status.Namespaces) != 1 {
+		t.Fatalf("usage %v, namespaces %+v", ws.Status.Usage, ws.Status.Namespaces)
+	}
+	if pods := ws.Status.Namespaces[0].Usage["pods"]; pods.String() != "2" {
+		t.Errorf("Namespace usage %v", ws.Status.Namespaces[0].Usage)
 	}
 }
 
@@ -303,7 +368,8 @@ func TestWorkspaceForceDelete(t *testing.T) {
 	}
 	reconcileOnce(t, r, "acme-wind") // step 1
 	capsuleReconciles(t, "acme-wind")
-	reconcileOnce(t, r, "acme-wind") // Namespace deleted, not waited for; Tenant deleted
+	reconcileOnce(t, r, "acme-wind") // Namespace deleted, not waited for; replication deleted
+	reconcileOnce(t, r, "acme-wind") // Tenant deleted
 	tenant := &unstructured.Unstructured{}
 	tenant.SetGroupVersionKind(render.TenantGVK)
 	if err := testClient.Get(ctx, client.ObjectKey{Name: "acme-wind"}, tenant); !apierrors.IsNotFound(err) {
@@ -324,13 +390,14 @@ func TestPhase(t *testing.T) {
 		return metav1.Condition{Type: typ, Status: metav1.ConditionStatus(status), Reason: reason}
 	}
 	allTrue := []metav1.Condition{
-		cond(v1.ConditionCapsuleTenantReady, "True", "Reconciled"), cond(v1.ConditionIdentityBindingsReady, "True", "Reconciled"),
+		cond(v1.ConditionCapsuleTenantReady, "True", "Reconciled"), cond(v1.ConditionPolicyReady, "True", "Reconciled"),
+		cond(v1.ConditionIdentityBindingsReady, "True", "Reconciled"),
 	}
 	progressing := []metav1.Condition{
 		cond(v1.ConditionCapsuleTenantReady, "False", subreconciler.ReasonProgressing), cond(v1.ConditionIdentityBindingsReady, "True", "Reconciled"),
 	}
 	broken := []metav1.Condition{
-		cond(v1.ConditionCapsuleTenantReady, "False", subreconciler.ReasonTenantNotReady), cond(v1.ConditionIdentityBindingsReady, "True", "Reconciled"),
+		cond(v1.ConditionCapsuleTenantReady, "False", subreconciler.ReasonCapsuleNotReady), cond(v1.ConditionIdentityBindingsReady, "True", "Reconciled"),
 	}
 	rejected := []metav1.Condition{cond(v1.ConditionCapsuleTenantReady, "False", subreconciler.ReasonRejected)}
 	for _, c := range []struct {

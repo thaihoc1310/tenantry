@@ -14,15 +14,15 @@ import (
 
 // Namespaces is status.namespaces: every Namespace of the Tenant, sorted by
 // name, source portal when spec.namespaces asked for it and kubectl
-// otherwise. Usage comes with the quota (M7).
-func Namespaces(ws *v1.PlatformWorkspace, existing []corev1.Namespace) []v1.NamespaceStatus {
+// otherwise, with its share of the quota usage when known.
+func Namespaces(ws *v1.PlatformWorkspace, existing []corev1.Namespace, usage map[string]v1.ResourceList) []v1.NamespaceStatus {
 	var out []v1.NamespaceStatus
 	for _, ns := range existing {
 		src := v1.SourceKubectl
 		if slices.ContainsFunc(ws.Spec.Namespaces, func(s string) bool { return render.NamespaceName(ws, s) == ns.Name }) {
 			src = v1.SourcePortal
 		}
-		out = append(out, v1.NamespaceStatus{Name: ns.Name, Source: src})
+		out = append(out, v1.NamespaceStatus{Name: ns.Name, Source: src, Usage: usage[ns.Name]})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out

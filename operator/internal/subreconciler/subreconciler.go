@@ -26,8 +26,8 @@ const (
 	// trying again with the same spec cannot help.
 	ReasonRejected    = "Rejected"
 	ReasonApplyFailed = "ApplyFailed"
-	// ReasonTenantNotReady: Capsule reports the Tenant not Ready.
-	ReasonTenantNotReady = "TenantNotReady"
+	// ReasonCapsuleNotReady: Capsule reports one of its objects not Ready.
+	ReasonCapsuleNotReady = "CapsuleNotReady"
 	// ReasonNamespaceFailed: a Namespace could not be created or deleted.
 	ReasonNamespaceFailed = "NamespaceFailed"
 	// ReasonCordoned: the Workspace is cordoned, so Capsule refuses the

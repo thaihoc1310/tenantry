@@ -13,7 +13,9 @@ package controller
 // +kubebuilder:rbac:groups=tenantry.io,resources=platformworkspaces/status;platformnodegrants/status;platformsharedpools/status;platformnodeinventories/status,verbs=get;patch;update
 
 // Capsule and Capsule Proxy.
-// +kubebuilder:rbac:groups=capsule.clastix.io,resources=tenants;tenantresources;proxysettings,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=capsule.clastix.io,resources=tenants;globaltenantresources;proxysettings,verbs=get;list;watch;create;update;patch;delete
+// The GlobalResourceQuota Capsule makes from a Tenant's quota: status.usage.
+// +kubebuilder:rbac:groups=capsule.clastix.io,resources=globalresourcequotas,verbs=get;list;watch
 
 // Calico: IPPools through the Calico API server, so deleting one releases
 // its block affinities (IMPLEMENTATION-PLAN §4.3 step 5).

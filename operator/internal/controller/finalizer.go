@@ -105,7 +105,21 @@ func (r *PlatformWorkspaceReconciler) finalize(ctx context.Context, ws *v1.Platf
 		}
 	}
 
-	// 4. The Tenant itself (TenantResources come with M7 and M9).
+	// 4. The replication of the LimitRange, then the Tenant itself; owner
+	// references would remove both too, but in no particular order.
+	rep := &unstructured.Unstructured{}
+	rep.SetGroupVersionKind(render.ReplicationGVK)
+	switch err := r.Get(ctx, client.ObjectKey{Name: ws.Name}, rep); {
+	case err == nil:
+		if rep.GetDeletionTimestamp() == nil {
+			if err := r.Delete(ctx, rep); err != nil && !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, err
+			}
+		}
+		return progress("waiting for GlobalTenantResource " + ws.Name + " to go away")
+	case !apierrors.IsNotFound(err):
+		return ctrl.Result{}, err
+	}
 	if tenantExists {
 		if tenant.GetDeletionTimestamp() == nil {
 			if err := r.Delete(ctx, tenant); err != nil && !apierrors.IsNotFound(err) {

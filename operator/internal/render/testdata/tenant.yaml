@@ -24,15 +24,6 @@ spec:
   cordoned: false
   forceTenantPrefix: true
   namespaceOptions:
-    additionalMetadata:
-      labels:
-        tenantry.io/cluster-id: cluster-a
-        tenantry.io/compute-mode: shared
-        tenantry.io/compute-pool: shared-general
-        tenantry.io/managed: "true"
-        tenantry.io/org: 01jabc
-        tenantry.io/organization-id: org-01jabc
-        tenantry.io/workspace-id: ws-01jsol
     forbiddenAnnotations:
       denied:
       - scheduler.alpha.kubernetes.io/node-selector
@@ -50,6 +41,34 @@ spec:
   rules:
   - enforce:
       action: allow
+      metadata:
+      - apiGroups:
+        - v1
+        kinds:
+        - Namespace
+        labels:
+          pod-security.kubernetes.io/audit:
+            managed: restricted
+          pod-security.kubernetes.io/enforce:
+            managed: baseline
+          pod-security.kubernetes.io/warn:
+            managed: restricted
+          tenantry.io/cluster-id:
+            managed: cluster-a
+          tenantry.io/compute-mode:
+            managed: shared
+          tenantry.io/compute-pool:
+            managed: shared-general
+          tenantry.io/managed:
+            managed: "true"
+          tenantry.io/org:
+            managed: 01jabc
+          tenantry.io/organization-id:
+            managed: org-01jabc
+          tenantry.io/workspace-id:
+            managed: ws-01jsol
+  - enforce:
+      action: allow
       workloads:
         registries:
         - exp: ^(docker\.io|ghcr\.io)/.+
@@ -60,11 +79,17 @@ spec:
       workloads:
         qosClasses:
         - BestEffort
-  serviceOptions:
-    allowedServices:
-      externalName: false
-      loadBalancer: false
-      nodePort: false
+  - enforce:
+      action: deny
+      services:
+        types:
+        - NodePort
+        - LoadBalancer
+        - ExternalName
+  - quota:
+    - hard:
+        requests.cpu: "2"
+      name: workspace
   storageClasses:
     allowed:
     - standard

@@ -137,6 +137,9 @@ func TestOperatorRole(t *testing.T) {
 	groups := []string{"system:serviceaccounts", "system:serviceaccounts:tenantry-operator", "system:authenticated"}
 	checkAccess(t, "operator", operatorSA, groups, "", []access{
 		{"create", "capsule.clastix.io", "tenants", "", true},
+		{"create", "capsule.clastix.io", "globaltenantresources", "", true},
+		{"list", "capsule.clastix.io", "globalresourcequotas", "", true},
+		{"patch", "capsule.clastix.io", "globalresourcequotas", "", false},
 		{"patch", "", "nodes", "", true},
 		{"create", "", "namespaces", "", true},
 		{"update", "tenantry.io", "platformworkspaces", "status", true},

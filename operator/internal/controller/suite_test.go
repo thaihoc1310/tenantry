@@ -115,6 +115,54 @@ func capsuleReconciles(t *testing.T, name string) {
 	if err := testClient.Status().Update(context.Background(), tenant); err != nil {
 		t.Fatalf("set Tenant status: %v", err)
 	}
+	// The LimitRange replication too, once the policy step has applied it.
+	rep := &unstructured.Unstructured{}
+	rep.SetGroupVersionKind(render.ReplicationGVK)
+	if err := testClient.Get(context.Background(), client.ObjectKey{Name: name}, rep); err != nil {
+		return
+	}
+	rep.Object["status"] = map[string]any{"size": int64(0), "conditions": []any{readyCondition()}}
+	if err := testClient.Status().Update(context.Background(), rep); err != nil {
+		t.Fatalf("set GlobalTenantResource status: %v", err)
+	}
+}
+
+func readyCondition() map[string]any {
+	return map[string]any{
+		"type": "Ready", "status": "True", "reason": "Succeeded", "message": "reconciled",
+		"lastTransitionTime": time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
+// capsuleQuota plays Capsule for the quota rule: the GlobalResourceQuota
+// <tenant>-workspace with hard and the usage given.
+func capsuleQuota(t *testing.T, tenant string, hard map[string]any, used map[string]map[string]any) {
+	t.Helper()
+	ctx := context.Background()
+	q := &unstructured.Unstructured{}
+	q.SetGroupVersionKind(render.QuotaGVK)
+	q.SetName(tenant + "-" + render.QuotaName)
+	q.SetLabels(map[string]string{labelQuotaTenant: tenant})
+	q.Object["spec"] = map[string]any{"quota": map[string]any{"hard": hard}}
+	if err := testClient.Create(ctx, q); err != nil {
+		t.Fatalf("create GlobalResourceQuota: %v", err)
+	}
+	total := map[string]any{}
+	namespaceUsage := map[string]any{}
+	for ns, u := range used {
+		namespaceUsage[ns] = map[string]any{"used": u}
+		for k, v := range u {
+			total[k] = v // one Namespace per resource in the tests
+		}
+	}
+	q.Object["status"] = map[string]any{
+		"conditions":     []any{readyCondition()},
+		"total":          map[string]any{"hard": hard, "used": total},
+		"namespaceUsage": namespaceUsage,
+	}
+	if err := testClient.Status().Update(ctx, q); err != nil {
+		t.Fatalf("set GlobalResourceQuota status: %v", err)
+	}
 }
 
 // finishNamespaceDeletion plays the namespace controller, which envtest lacks.

@@ -49,7 +49,7 @@ func TenantState(conditionType string, t *unstructured.Unstructured) Result {
 		if cond["status"] == "True" {
 			return ok(conditionType)
 		}
-		return failed(conditionType, ReasonTenantNotReady, fmt.Sprintf("Capsule: %v: %v", cond["reason"], cond["message"]))
+		return failed(conditionType, ReasonCapsuleNotReady, fmt.Sprintf("Capsule: %v: %v", cond["reason"], cond["message"]))
 	}
 	return waiting(conditionType, "Tenant "+t.GetName()+" has no Ready condition yet")
 }

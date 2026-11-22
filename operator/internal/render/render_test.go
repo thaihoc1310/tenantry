@@ -52,6 +52,7 @@ func TestGolden(t *testing.T) {
 		"tenant-revoked":  Tenant(solar(), opts, true),
 		"tenant-cordoned": Tenant(cordoned, opts, false),
 		"namespace":       Namespace(solar(), "frontend"),
+		"replication":     Replication(solar()),
 	}
 	for name, obj := range cases {
 		t.Run(name, func(t *testing.T) {

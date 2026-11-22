@@ -18,6 +18,10 @@ import (
 var (
 	TenantGVK    = schema.GroupVersionKind{Group: "capsule.clastix.io", Version: "v1beta2", Kind: "Tenant"}
 	NamespaceGVK = schema.GroupVersionKind{Version: "v1", Kind: "Namespace"}
+	// ReplicationGVK copies objects into a Tenant's Namespaces.
+	ReplicationGVK = schema.GroupVersionKind{Group: "capsule.clastix.io", Version: "v1beta2", Kind: "GlobalTenantResource"}
+	// QuotaGVK is what Capsule makes of a quota rule.
+	QuotaGVK = schema.GroupVersionKind{Group: "capsule.clastix.io", Version: "v1beta2", Kind: "GlobalResourceQuota"}
 )
 
 const (
@@ -77,14 +81,14 @@ var (
 	forbiddenAnnotationsRegex = `^cni\.projectcalico\.org/.*`
 )
 
-// Tenant is the Capsule Tenant of ws, named like it (sub-reconcilers tenant
-// and rbac, IMPLEMENTATION-PLAN §4.1). Namespace metadata and Service types
-// use fields Capsule 0.15.2 marks deprecated but still enforces
-// (namespaceOptions.additionalMetadata, forbiddenAnnotations,
-// serviceOptions); M7 moves them to spec.rules, where registries and QoS
-// already are (containerRegistries cannot accept Docker Hub short names).
-// Pass revoked to drop every owner but the operator and every
-// RoleBinding: the first step of a delete (IMPLEMENTATION-PLAN §4.3).
+// Tenant is the Capsule Tenant of ws, named like it: sub-reconcilers tenant,
+// rbac and policy write their parts of this one object (IMPLEMENTATION-PLAN
+// §4.1). Guardrails, Namespace metadata and the quota are spec.rules, the
+// API of Capsule 0.15. One deprecated field stays:
+// namespaceOptions.forbiddenAnnotations, since rules have no equivalent of
+// its deniedRegex (a whole annotation prefix). Pass revoked to drop every
+// owner but the operator and every RoleBinding: the first step of a delete
+// (IMPLEMENTATION-PLAN §4.3).
 func Tenant(ws *v1.PlatformWorkspace, o Options, revoked bool) *unstructured.Unstructured {
 	owners := []any{}
 	var bindings []any
@@ -108,12 +112,7 @@ func Tenant(ws *v1.PlatformWorkspace, o Options, revoked bool) *unstructured.Uns
 	}
 	owners = append(owners, map[string]any{"kind": "ServiceAccount", "name": o.OperatorServiceAccount})
 
-	nsLabels := map[string]any{v1.LabelOrg: OrgULID(ws.Spec.OrganizationID)}
-	for k, v := range ManagedLabels(ws) {
-		nsLabels[k] = v
-	}
 	nsOptions := map[string]any{
-		"additionalMetadata": map[string]any{"labels": nsLabels},
 		"forbiddenAnnotations": map[string]any{
 			"denied":      forbiddenAnnotations,
 			"deniedRegex": forbiddenAnnotationsRegex,
@@ -123,28 +122,48 @@ func Tenant(ws *v1.PlatformWorkspace, o Options, revoked bool) *unstructured.Uns
 		nsOptions["quota"] = int64(ws.Spec.NamespaceQuota)
 	}
 
+	rules := []any{
+		// Every Namespace of the Tenant, whoever creates it, carries these
+		// labels and nobody else can change them (PRODUCT-PLAN §18).
+		map[string]any{"enforce": map[string]any{
+			"action": "allow",
+			"metadata": []any{map[string]any{
+				"apiGroups": []any{"v1"}, "kinds": []any{"Namespace"}, "labels": managedValues(NamespaceLabels(ws)),
+			}},
+		}},
+		map[string]any{"enforce": map[string]any{
+			"action":    "allow",
+			"workloads": map[string]any{"registries": registryMatchers(o.AllowedRegistries)},
+		}},
+		// Every Pod states what it needs (the LimitRange fills in defaults):
+		// BestEffort Pods would escape the requests the quota counts.
+		map[string]any{"enforce": map[string]any{
+			"action":    "deny",
+			"workloads": map[string]any{"qosClasses": []any{"BestEffort"}},
+		}},
+		// Services stay inside the cluster: Routes are the way out (PRODUCT-PLAN §7.6).
+		map[string]any{"enforce": map[string]any{
+			"action":   "deny",
+			"services": map[string]any{"types": []any{"NodePort", "LoadBalancer", "ExternalName"}},
+		}},
+	}
+	// Sub-reconciler policy: one quota shared by every Namespace, checked
+	// when a Pod is admitted (PRODUCT-PLAN §5.4).
+	if len(ws.Spec.Resources) > 0 {
+		hard := map[string]any{}
+		for k, q := range ws.Spec.Resources {
+			hard[k] = q.String()
+		}
+		rules = append(rules, map[string]any{"quota": []any{map[string]any{"name": QuotaName, "hard": hard}}})
+	}
+
 	spec := map[string]any{
 		"owners":            owners,
 		"forceTenantPrefix": true,
 		"cordoned":          ws.Spec.Cordoned,
 		"namespaceOptions":  nsOptions,
 		"storageClasses":    map[string]any{"allowed": strings2any(ws.Spec.StorageClasses)},
-		// Services stay inside the cluster: Routes are the way out (PRODUCT-PLAN §7.6).
-		"serviceOptions": map[string]any{"allowedServices": map[string]any{
-			"nodePort": false, "loadBalancer": false, "externalName": false,
-		}},
-		"rules": []any{
-			map[string]any{"enforce": map[string]any{
-				"action":    "allow",
-				"workloads": map[string]any{"registries": registryMatchers(o.AllowedRegistries)},
-			}},
-			// Every Pod states what it needs: BestEffort Pods would escape
-			// the requests the Workspace's quota counts.
-			map[string]any{"enforce": map[string]any{
-				"action":    "deny",
-				"workloads": map[string]any{"qosClasses": []any{"BestEffort"}},
-			}},
-		},
+		"rules":             rules,
 	}
 	if len(bindings) > 0 {
 		spec["additionalRoleBindings"] = bindings
@@ -166,6 +185,66 @@ func Namespace(ws *v1.PlatformWorkspace, suffix string) *unstructured.Unstructur
 	l[LabelCapsuleTenant] = ws.Name
 	n.SetLabels(l)
 	return n
+}
+
+// NamespaceLabels go on every Namespace of the Tenant: the managed labels,
+// the Organization's ULID for the RoleBinding VAP, and the Pod Security
+// level (sub-reconciler policy): baseline enforced, restricted reported.
+func NamespaceLabels(ws *v1.PlatformWorkspace) map[string]string {
+	l := ManagedLabels(ws)
+	l[v1.LabelOrg] = OrgULID(ws.Spec.OrganizationID)
+	l["pod-security.kubernetes.io/enforce"] = "baseline"
+	l["pod-security.kubernetes.io/warn"] = "restricted"
+	l["pod-security.kubernetes.io/audit"] = "restricted"
+	return l
+}
+
+func managedValues(l map[string]string) map[string]any {
+	out := map[string]any{}
+	for k, v := range l {
+		out[k] = map[string]any{"managed": v}
+	}
+	return out
+}
+
+// QuotaName names the Workspace's quota inside its Tenant; Capsule turns it
+// into the GlobalResourceQuota <tenant>-<QuotaName>.
+const QuotaName = "workspace"
+
+// QuotaObjectName is the GlobalResourceQuota Capsule makes from the quota.
+func QuotaObjectName(ws *v1.PlatformWorkspace) string { return ws.Name + "-" + QuotaName }
+
+// LimitRangeName is the LimitRange every Namespace of a Tenant gets.
+const LimitRangeName = "tenantry-defaults"
+
+// Defaults of a container that states no resources: it becomes Burstable
+// and counts against the quota.
+var (
+	defaultRequest = map[string]any{"cpu": "100m", "memory": "128Mi"}
+	defaultLimit   = map[string]any{"cpu": "500m", "memory": "512Mi"}
+)
+
+// Replication is the GlobalTenantResource that copies the LimitRange into
+// every Namespace of the Tenant, kubectl-made ones included (sub-reconciler
+// policy). Capsule protects the copies from the tenant. Cluster-scoped like
+// the PlatformWorkspace that owns it, named like it.
+func Replication(ws *v1.PlatformWorkspace) *unstructured.Unstructured {
+	r := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{
+		"scope":           "Namespace",
+		"pruningOnDelete": true,
+		"tenantSelector":  map[string]any{"matchLabels": map[string]any{v1.LabelWorkspaceID: ws.Spec.WorkspaceID}},
+		"resources": []any{map[string]any{"rawItems": []any{map[string]any{
+			"apiVersion": "v1", "kind": "LimitRange",
+			"metadata": map[string]any{"name": LimitRangeName},
+			"spec": map[string]any{"limits": []any{map[string]any{
+				"type": "Container", "defaultRequest": defaultRequest, "default": defaultLimit,
+			}}},
+		}}}},
+	}}}
+	r.SetGroupVersionKind(ReplicationGVK)
+	r.SetName(ws.Name)
+	r.SetLabels(ManagedLabels(ws))
+	return r
 }
 
 // registryMatchers allow images from the given registries. Capsule matches
