@@ -1498,7 +1498,7 @@ GET    /api/v1/admin/organizations                 # ?status=Pending cho hàng �
 GET    /api/v1/admin/organizations/{orgId}         # M5, entitlement + ClusterGrant + usage (cùng số với /usage)
 POST   /api/v1/admin/organizations/{orgId}:approve # kèm entitlement + ClusterGrant (điền sẵn từ onboarding policy)
 POST   /api/v1/admin/organizations/{orgId}:reject  # kèm lý do → review_note
-POST   /api/v1/admin/organizations                 # tạo Org cho khách: slug, owner (email/user), entitlement, ClusterGrant ban đầu
+POST   /api/v1/admin/organizations                 # tạo Org cho khách: slug, owner (email/user), entitlement, ClusterGrant ban đầu; owner phải đã đăng nhập portal ít nhất một lần, chưa thì 422 OWNER_USER_NOT_FOUND (không có lời mời làm Owner)
 PUT    /api/v1/admin/organizations/{orgId}/entitlement
 POST   /api/v1/admin/users/{userId}:disable        # M5, users.status=Disabled + xóa phiên; Group Sync tắt account trên Keycloak
 POST   /api/v1/admin/users/{userId}:enable         # M5
