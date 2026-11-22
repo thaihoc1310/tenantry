@@ -6,7 +6,6 @@
   const ROUTES = [
     [/^\/welcome$/, P.Welcome],
     [/^\/invitations\/[^/]+$/, P.Invitation],
-    [/^\/ownership-transfers\/[^/]+$/, P.Transfer],
     [/^\/orgs\/[^/]+$/, P.Overview],
     [/^\/orgs\/[^/]+\/workspaces$/, P.Workspaces],
     [/^\/orgs\/[^/]+\/workspaces\/new$/, P.Wizard],
@@ -35,7 +34,6 @@
       ['Accept an invitation', '/invitations/t'],
       ['Invitation: wrong account', '/invitations/t?state=mismatch'],
       ['Invitation: expired link', '/invitations/t?state=expired'],
-      ['Accept ownership', '/ownership-transfers/t'],
     ]],
     ['Organization', [
       ['Overview: just approved', '/orgs/acme?state=fresh'],
@@ -53,7 +51,11 @@
       ['Clusters', '/orgs/acme/clusters'],
       ['Audit', '/orgs/acme/audit'],
       ['Settings: owner', '/orgs/acme/settings'],
+      ['Settings: owner, transfer waiting', '/orgs/acme/settings?transfer=pending'],
       ['Settings: admin', '/orgs/acme/settings?as=admin'],
+      ['Settings: admin, accept ownership', '/orgs/acme/settings?as=admin&transfer=pending'],
+      ['Settings: member', '/orgs/acme/settings?as=member'],
+      ['Overview: ownership offered to you', '/orgs/acme?as=admin&transfer=pending'],
     ]],
     ['Workspace', [
       ['Wizard 1: name', '/orgs/acme/workspaces/new'],

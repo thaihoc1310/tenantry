@@ -102,7 +102,7 @@ flowchart LR
 | `headlamp-{clusterId}` | confidential | có | mỗi Cluster mới thêm một client theo mẫu; tách audience để rotate secret Headlamp độc lập với kubectl |
 | `kubectl` | public + PKCE | có | dùng chung cho mọi Cluster; Cluster phân biệt bằng endpoint Proxy |
 | `cluster-verify` | confidential, chỉ client credentials | không | chỉ cho `make cluster-verify`: token của service account có aud `kubernetes`, kube-apiserver nhận thành user `oidc:<sub>` không có RoleBinding nào |
-| `tenantry-sync` (từ M4) | confidential, chỉ service account | không | Group Sync Worker gọi Admin API; quyền ở mục 7 |
+| `tenantry-sync` (từ M4) | confidential, chỉ service account | không | Group Sync Worker gọi Admin API; quyền ở mục 7. Keycloak 26.8 kiểm audience ở Admin API, nên client có client scope `kc-admin-api`, `fullScopeAllowed: false` và scope mapping đúng hai role của nó; thiếu scope này mọi lệnh admin bị 401 mà log Keycloak không ghi lý do |
 
 Thời hạn token của mọi client lấy từ một bộ số duy nhất ở mục 3.
 
@@ -128,7 +128,7 @@ Ba con số là mặc định cho demo, đổi trong realm export; không có b�
 
 ### 3.2 Phiên portal gắn với SSO session của Keycloak
 
-Phiên portal **sống đúng bằng refresh token của nó**. Khi SSO session ở Keycloak kết thúc — hết idle, hết max, user logout, Group Sync thu hồi, Admin disable account — lần refresh kế tiếp thất bại và phiên portal chết theo, chậm nhất sau 5 phút.
+Phiên portal **sống đúng bằng refresh token của nó**. Khi SSO session ở Keycloak kết thúc — hết idle, hết max, user logout, Admin disable account — lần refresh kế tiếp thất bại và phiên portal chết theo, chậm nhất sau 5 phút.
 
 ```mermaid
 sequenceDiagram
@@ -247,18 +247,15 @@ Nhờ luật này, mọi quyền Kubernetes trong Tenant vẫn bắt nguồn t�
 | Gỡ realm role `platform-admin` | Chậm nhất 5 phút (lần refresh kế tiếp) | Không liên quan |
 | RoleBinding TenantOwner tự tạo bằng kubectl | — | Không cần thu hồi: VAP `tenantry-tenant-rolebinding-subjects` (mục 4, M11) chỉ cho subject là group của chính Organization, nên gỡ user khỏi group/Organization theo các dòng trên là đủ |
 
-Khi gỡ user khỏi group **đang có binding Workspace**, Group Sync Worker gỡ membership trên Keycloak rồi gọi logout user (`POST /admin/realms/tenantry/users/{id}/logout`) để refresh token cũ không xin được token mới. Hệ quả cần ghi trên UI:
+Khi gỡ user khỏi group, Group Sync Worker chỉ gỡ membership trên Keycloak, **không logout user**. Keycloak chạy lại group mapper mỗi lần refresh token (đã kiểm ở M4 trên Keycloak 26.8: refresh token lấy trước khi đổi group vẫn ra token theo membership mới; sau khi gỡ, claim `groups` biến mất trong khoảng 60 giây), nên lần refresh kế tiếp của portal, Headlamp hay kubelogin đã không còn group đó. Không logout thì user không bị đăng xuất khỏi mọi nơi, kể cả các Organization khác mà họ vẫn là member.
 
-- Logout của Keycloak kết thúc **mọi** SSO session của user, không riêng Workspace hay Organization nào. User bị gỡ sẽ phải đăng nhập lại ở portal, Headlamp và kubectl — kể cả với các Organization khác mà họ vẫn là member.
-- Group không có binding nào thì không cấp quyền Kubernetes, nên gỡ member khỏi group đó không logout ai.
-- Thêm user vào group không logout: quyền mới xuất hiện ở lần phát token kế tiếp, chậm nhất 5 phút.
+- Thêm user vào group cũng vậy: quyền mới xuất hiện ở lần phát token kế tiếp, chậm nhất 5 phút.
 
 Cam kết ghi vào UI và audit: *"Quyền Kubernetes bị thu hồi chậm nhất sau 5 phút. Quyền trên portal bị thu hồi ngay."*
 
 **Điểm cần review**
 
 - Không introspection ở Capsule Proxy cho từng request: nó thêm độ trễ và đặt Keycloak lên đường dữ liệu. Giữ TTL ngắn.
-- Cần kiểm chứng trên lab: Keycloak chạy lại group mapper khi refresh, tức token refresh ngay sau khi gỡ group đã không còn group claim. Nếu đúng, bước logout chỉ còn là lớp bảo vệ thứ hai và có thể bỏ để user không bị đăng xuất mọi nơi (kiểm ở M4).
 
 ## 6. Rate limit
 
@@ -274,7 +271,7 @@ Cam kết ghi vào UI và audit: *"Quyền Kubernetes bị thu hồi chậm nh�
 |---|---|---|---|---|
 | SA `tenantry-worker-provisioning` | Provisioning Worker | `platformworkspaces`, `platformnodegrants`, `platformsharedpools` (`tenantry.io`): `get/list/watch/create/patch/delete`; `platformnodeinventories`: `get/list/watch` (object duy nhất do chart operator tạo). Không ghi `*/status`, không quyền nào khác | in-cluster SA (MVP); Phase 2 thay bằng Cluster Agent | tự động theo SA token projection |
 | SA `tenantry-operator` | Workspace Controller | Bốn CRD `tenantry.io`: đọc, finalizer, ghi `*/status`. Capsule `tenants`, `tenantresources`; Capsule Proxy `proxysettings`; Calico `ippools` (ghi), `workloadendpoints`, `ipamblocks` (đọc); `namespaces`, `ingresses` (ghi); `pods` (đọc: node sạch, Pod còn trên node); `nodes` (đọc, patch label/taint); `events`. Không có `certificates`. Thuộc Capsule `users` qua group `system:serviceaccounts:<namespace của operator>` và được render làm owner của mọi Tenant, để tạo Namespace qua webhook Capsule | in-cluster SA | theo SA |
-| Keycloak client `tenantry-sync` (từ M4) | Group Sync Worker | service account với role `manage-users`, `query-groups` của `realm-management`; không `manage-realm`. `manage-users` đặt lại được mật khẩu và gán realm role (kể cả `platform-admin`) cho bất kỳ user nào, nên secret này **mạnh ngang Platform Admin** | Kubernetes Secret, sinh bằng script | thủ công, ghi runbook |
+| Keycloak client `tenantry-sync` (từ M4) | Group Sync Worker | service account với role `manage-users`, `query-groups` của `realm-management` (scope mapping đúng hai role đó, client scope `kc-admin-api`, mục 2); không `manage-realm`. `manage-users` đặt lại được mật khẩu và gán realm role (kể cả `platform-admin`) cho bất kỳ user nào, nên secret này **mạnh ngang Platform Admin** | Sinh bằng script, giữ ở Secret `keycloak-realm`; worker nhận bản sao trong Secret `tenantry-keycloak-sync` mà chỉ Deployment `tenantry-worker-groupsync` mount (`make chart-lint` fail nếu Deployment khác mount) | thủ công, ghi runbook |
 | Client secret `portal`, `headlamp-cluster-a` | API, Headlamp | OIDC | Secret `keycloak-realm` (ns `keycloak`, dùng khi nạp realm); API và Headlamp giữ bản sao trong namespace của mình | thủ công; realm chỉ nạp một lần nên đổi phải đổi cả trong Keycloak |
 | Client secret `cluster-verify` | `make cluster-verify` | token aud `kubernetes`; kube-apiserver nhận thành user `oidc:<sub>` không có RoleBinding nào | Secret `keycloak-realm`, cùng Secret với hai client secret trên và mật khẩu user demo, user `admin` của realm `tenantry` | thủ công |
 | Admin realm `master` (bootstrap admin) | người vận hành | toàn quyền Keycloak: sửa realm, mapper, client, đúc token cho mọi user | Secret `keycloak-admin` (ns `keycloak`); chỉ dùng qua `port-forward` (mục 1) | thủ công |
@@ -286,7 +283,7 @@ Cam kết ghi vào UI và audit: *"Quyền Kubernetes bị thu hồi chậm nh�
 
 Hai worker là hai Deployment để một tiến trình không cầm đồng thời quyền apply CR và quyền quản trị user Keycloak (IMPLEMENTATION-PLAN mục 5.3). Việc tách chỉ hạn chế credential bị lộ trực tiếp: qua role PostgreSQL dùng chung, chiếm được một tiến trình vẫn điều khiển được cả hai worker (mục 1).
 
-`tenantry-sync` được thu hẹp ở M12 (hardening) bằng fine-grained admin permissions v2 của Keycloak 26: chỉ quản lý membership của group `org_*` và `tenantry:tenant-users`, logout và enable/disable user.
+`tenantry-sync` được thu hẹp ở M12 (hardening) bằng fine-grained admin permissions v2 của Keycloak 26: chỉ quản lý membership của group `org_*` và `tenantry:tenant-users`, enable/disable user.
 
 Operator cần quyền patch Node — quyền rộng nhất trong hệ thống — và RBAC không lọc được theo key label. ValidatingAdmissionPolicy (M8) chỉ cho SA `tenantry-operator` đổi label/taint có key `tenantry.io/*` hoặc `workspaces.tenantry.io/*` trên Node; phần còn lại (operator chỉ đụng hai tiền tố đó) được giữ bằng test của operator.
 
@@ -294,7 +291,7 @@ Không có credential nào của user được lưu ở dạng dùng lại đư�
 
 **Điểm cần review**
 
-- Kiểm chứng trên Keycloak 26 của lab rằng `manage-users` + `query-groups` đủ để tạo group, thêm/gỡ member, logout và enable/disable user (kiểm ở M4, disable/enable ở M5).
+- Đã kiểm ở M4 trên Keycloak 26.8 của lab: `manage-users` + `query-groups` đủ để tạo/xóa group và thêm/gỡ member; enable/disable user kiểm ở M5.
 
 ## 8. Ma trận quyền
 

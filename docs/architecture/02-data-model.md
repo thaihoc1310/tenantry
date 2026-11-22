@@ -112,9 +112,11 @@ erDiagram
     text token_hash
     text role
     text[] group_ids "optional"
+    text invited_by FK
     timestamptz expires_at
     text accepted_by FK
     text state
+    timestamptz created_at
   }
   ownership_transfers {
     text id PK

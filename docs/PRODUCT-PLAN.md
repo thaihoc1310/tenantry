@@ -43,6 +43,7 @@
 31. **Cấp dedicated node**: node không còn Pod tenant nào, kể cả Pod Shared của chính Organization; quy trình bớt khỏi pool → drain → uncordon → cấp (6.3).
 32. **Kịch bản demo thống nhất số liệu và chạy được trên lab 4 node**: Solar Shared 2 CPU/4Gi (limits 4/8Gi); node dedicated là `wk3` rút khỏi shared pool (reservable 2,5 CPU), Water 1 + Green 1, Workspace thứ ba 1 CPU bị từ chối (5.4, 6.3, 28).
 33. **Quota của Workspace là một quota chung cho mọi Namespace** (`Tenant.spec.resourceQuotas` scope `Tenant`), không chia trước theo Namespace; chấp nhận giới hạn tạo Pod đồng thời có thể vượt nhẹ (5.4).
+34. **Gỡ user khỏi group không còn logout user trên Keycloak**: Keycloak chạy lại group mapper khi refresh (đã kiểm ở M4), nên token kế tiếp đã mất group; bỏ logout để user không bị đăng xuất khỏi mọi nơi (9.3; thay cho điểm 3).
 
 ### v0.6 → v0.7
 
@@ -943,17 +944,16 @@ PostgreSQL là source of truth cho Organization group. Một sync worker dùng K
 - add/remove Keycloak user khỏi group;
 - retry lỗi và lưu `sync_status`;
 - gỡ là đánh dấu xóa (tombstone): row chỉ biến mất sau khi Keycloak đã gỡ xong, nên không thay đổi nào bị bỏ sót khi Keycloak tạm lỗi;
-- logout user trên Keycloak để chặn refresh/new token sau khi thu hồi quyền;
 - không cho user tự sửa group Kubernetes qua Keycloak Account Console.
 
 Ngoài Organization group, worker quản lý một platform group `tenantry:tenant-users`. User có ít nhất một Workspace binding (qua một group còn sống, tới một Workspace chưa `Deleting`/`Deleted`) được thêm vào group này; khi mất binding cuối cùng thì bị remove. Membership của group này được tính lại cả khi **binding** đổi, không chỉ khi membership đổi: mọi transaction thay đổi tập binding (tạo/xóa Workspace, `PUT`/`DELETE` binding, xóa group) đặt `sync_status = 'Pending'` cho mọi `group_members` còn sống của các group bị ảnh hưởng, để Group Sync tính lại cho từng user. Sau prefix của Kubernetes, Capsule nhận diện group là `oidc:tenantry:tenant-users`. Đây là bản động của group `projectcapsule.dev` đang được hard-code trong lab.
 
 Capsule user gồm đúng hai subject: group `oidc:tenantry:tenant-users` (người dùng) và group ServiceAccount của operator (`system:serviceaccounts:<namespace của operator>`). ServiceAccount của operator được render làm owner của mọi Tenant để tạo được các Namespace trong `spec.namespaces` — Capsule chỉ cho owner đồng thời là Capsule user tạo Namespace của Tenant (đã kiểm chứng trên Capsule 0.13.10 ở lab cũ, kiểm lại với 0.15.x ở M6). Quyền của người dùng vẫn đến từ Owner group của Workspace; platform group này không tự cấp quyền vào bất kỳ Tenant nào.
 
-Group claim chỉ có hiệu lực với token mới. Kubernetes tự kiểm tra JWT signature/expiry và không gọi ngược Keycloak cho từng request, vì vậy logout trên Keycloak **không vô hiệu ngay token đã phát hành**. Contract thu hồi quyền:
+Group claim chỉ có hiệu lực với token mới. Kubernetes tự kiểm tra JWT signature/expiry và không gọi ngược Keycloak cho từng request, vì vậy gỡ group trên Keycloak **không vô hiệu ngay token đã phát hành**. Contract thu hồi quyền:
 
 - quyền Kubernetes bị thu hồi chậm nhất khi token hiện tại hết hạn (5 phút); quyền trên portal bị thu hồi ngay;
-- gỡ user khỏi group đang có binding Workspace kèm logout trên Keycloak để user không lấy được token mới. Logout này đăng xuất user **ở mọi nơi** (portal, Headlamp, kubectl, kể cả Organization khác) — UI phải nói rõ;
+- Keycloak chạy lại group mapper mỗi lần refresh (đã kiểm ở M4), nên token kế tiếp đã không còn group bị gỡ; vì vậy không logout user, user không bị đăng xuất khỏi portal, Headlamp hay Organization khác;
 - immediate revocation thực sự cần online token validation và không thuộc scope đồ án.
 
 Contract này đứng được vì quyền Kubernetes của user chỉ đến qua group: TenantOwner không bind được user lẻ hay group của Organization khác vào Namespace của mình (10.4), nên gỡ user khỏi group là gỡ hết quyền khi token hết hạn.

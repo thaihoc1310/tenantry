@@ -1,5 +1,5 @@
-// Screens a user sees before belonging to an Organization, the invitation
-// link, and the in-app ownership transfer page (accepted by transfer id, no token).
+// Screens a user sees before belonging to an Organization, and the
+// invitation link. Ownership transfer is accepted in Settings (pages-org.js).
 (function () {
   T.pages = T.pages || {};
 
@@ -105,7 +105,7 @@
               </key-values>
               <p class="t-explain">As <strong>OrgMember</strong> you see the Organization and the Workspaces your groups can reach. The group <code>developers</code> decides what you can do inside those Workspaces.</p>
               <div class="t-row" style="justify-content: flex-end">
-                <el-button>Decline</el-button>
+                <el-button @click="$root.go('/welcome')">Not now</el-button>
                 <el-button type="primary" @click="$root.go('/orgs/acme/workspaces', { as: 'member' })">Accept invitation</el-button>
               </div>
             </div>
@@ -127,29 +127,6 @@
             <empty-state title="The link expired or was already used" description="Invitation links work once and expire after 7 days. Ask the person who invited you to send a new one."></empty-state>
           </panel>
         </template>
-      </app-shell>`,
-  };
-
-  // /ownership-transfers/:token
-  T.pages.Transfer = {
-    data: () => ({ ok: false }),
-    template: `
-      <app-shell area="bare" narrow>
-        <page-header title="Become the owner of Acme" description="Alice Nguyen wants to hand the Organization Acme over to you."></page-header>
-        <panel>
-          <div class="t-stack">
-            <key-values :items="[['Organization', 'Acme'], ['Current owner', 'Alice Nguyen (alice@example.com)'], ['You', 'Joe Tran (joe@example.com), OrgAdmin'], ['Request expires', 'in 3 days']]"></key-values>
-            <el-alert type="warning" :closable="false" show-icon title="What changes when you accept">
-              <div>You become <strong>OrgOwner</strong>: only you can delete the Organization or hand it over again.</div>
-              <div>Alice becomes <strong>OrgAdmin</strong>. Workspaces, groups and quota stay as they are.</div>
-            </el-alert>
-            <el-checkbox v-model="ok" id="transfer-ok">I understand that I become responsible for this Organization.</el-checkbox>
-            <div class="t-row" style="justify-content: flex-end">
-              <el-button>Decline</el-button>
-              <el-button type="primary" :disabled="!ok">Accept ownership</el-button>
-            </div>
-          </div>
-        </panel>
       </app-shell>`,
   };
 })();

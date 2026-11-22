@@ -106,7 +106,7 @@ flowchart TB
   APIS --> CM
   Capsule --> WL
   GS --> PG
-  GS -->|"Admin API: group, member,<br/>logout, enable/disable user"| KC
+  GS -->|"Admin API: group, member,<br/>enable/disable user"| KC
   API -->|"PromQL usage"| Mon
 
   Kubectl -->|"exec plugin → browser"| KC

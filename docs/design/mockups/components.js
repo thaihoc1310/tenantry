@@ -217,7 +217,12 @@
       props: { area: { type: String, default: 'org' }, active: String, narrow: Boolean, limited: Boolean },
       data: () => ({ org: T.org }),
       computed: {
-        who() { return this.area === 'admin' ? T.admin : T.me; },
+        who() {
+          if (this.area === 'admin') return T.admin;
+          const q = T.route.query;
+          if (T.route.path.startsWith('/invitations')) return q.state === 'mismatch' ? T.mallory : T.joe;
+          return q.as === 'admin' ? T.joe : q.as === 'member' ? T.bob : T.me;
+        },
         base() { return '#/orgs/' + T.org.slug; },
         orgNav() {
           const all = [
@@ -229,7 +234,7 @@
             ['audit', 'Audit', '/audit', 'Tickets'],
             ['settings', 'Settings', '/settings', 'Setting'],
           ];
-          return this.limited ? all.slice(0, 2) : all;
+          return this.limited ? all.filter((n) => ['overview', 'workspaces', 'settings'].includes(n[0])) : all;
         },
         adminNav() {
           return [

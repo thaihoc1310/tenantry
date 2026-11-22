@@ -7,6 +7,10 @@ T.GI = 'Gi';
 
 T.me = { name: 'Alice Nguyen', email: 'alice@example.com', initials: 'AN' };
 T.admin = { name: 'Platform Admin', email: 'admin@example.com', initials: 'PA' };
+// Who the top bar shows on ?as=admin (Joe, OrgAdmin) and ?as=member (Bob, OrgMember).
+T.joe = { name: 'Joe Tran', email: 'joe@example.com', initials: 'JT' };
+T.bob = { name: 'Bob Le', email: 'bob@example.com', initials: 'BL' };
+T.mallory = { name: 'Mallory', email: 'mallory@example.com', initials: 'MA' };
 
 T.org = { id: 'org-01jabc', name: 'Acme', slug: 'acme', status: 'Active', role: 'OrgOwner', description: 'Staging environments for the Acme web team.' };
 
@@ -97,9 +101,9 @@ T.invitations = [
   { email: 'carol@example.com', role: 'OrgMember', group: 'developers', expires: 'in 6 days', by: 'Alice Nguyen' },
 ];
 T.groups = [
-  { name: 'admins', members: 1, sync: 'Synced', bindings: ['solar: TenantOwner', 'lunar: TenantOwner', 'orbit: TenantOwner'], builtin: true },
-  { name: 'developers', members: 1, sync: 'Synced', bindings: ['solar: Developer'], builtin: true },
-  { name: 'viewers', members: 1, sync: 'Synced', bindings: ['solar: Viewer'], builtin: true },
+  { name: 'admins', members: 1, sync: 'Synced', bindings: ['solar: TenantOwner', 'lunar: TenantOwner', 'orbit: TenantOwner'] },
+  { name: 'developers', members: 1, sync: 'Synced', bindings: ['solar: Developer'] },
+  { name: 'viewers', members: 1, sync: 'Synced', bindings: ['solar: Viewer'] },
   { name: 'backend', members: 1, sync: 'Pending', bindings: [] },
 ];
 

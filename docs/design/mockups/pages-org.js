@@ -16,6 +16,7 @@
       },
       workspaces() { return this.fresh ? [] : T.workspaces; },
       canCreate() { return this.state === 'normal' || this.fresh; },
+      offered() { return this.r.query.transfer === 'pending'; },
       why() {
         if (this.state === 'maintenance') return 'Cluster A is in maintenance. Existing Workspaces keep running; creating and resizing are paused.';
         if (this.state === 'full') return 'This Organization has used all of its Workspaces and CPU on Cluster A.';
@@ -25,13 +26,18 @@
     template: `
       <app-shell active="overview">
         <page-header :title="org.name">
-          <template #tags><code>{{ org.slug }}</code><status-tag value="Active" /><el-tag type="info" effect="plain" round>You are OrgOwner</el-tag></template>
+          <template #tags><code>{{ org.slug }}</code><status-tag value="Active" /><el-tag type="info" effect="plain" round>{{ offered ? 'You are OrgAdmin' : 'You are OrgOwner' }}</el-tag></template>
           <template #actions>
             <el-tooltip :content="why" :disabled="canCreate" placement="bottom-end">
               <span><el-button type="primary" :disabled="!canCreate" @click="$root.go('/orgs/acme/workspaces/new')"><el-icon><Plus /></el-icon>&nbsp;Create Workspace</el-button></span>
             </el-tooltip>
           </template>
         </page-header>
+
+        <el-alert v-if="offered" type="warning" :closable="false" show-icon title="Alice Nguyen offers you ownership of Acme" style="margin-bottom: 16px">
+          <div>The offer expires in 6 days. Until you accept, Alice stays the owner.</div>
+          <div style="margin-top: 8px"><el-button size="small" type="primary" @click="$root.go('/orgs/acme/settings', { as: 'admin', transfer: 'pending' })">Review in Settings</el-button></div>
+        </el-alert>
 
         <el-alert v-if="fresh" type="success" show-icon title="Your Organization was approved" description="You start with a small shared quota on Cluster A: 2 Workspaces, 2 CPU cores and 4 Gi of memory. Create your first Workspace to use it." />
         <el-alert v-if="state === 'maintenance'" type="warning" :closable="false" show-icon title="Cluster A is in maintenance" description="Existing Workspaces keep running and stay reachable. Creating and resizing are paused until maintenance ends." />
@@ -203,12 +209,12 @@
           <template #actions><el-button type="primary" @click="dialog = true"><el-icon><Plus /></el-icon>&nbsp;Create group</el-button></template>
         </page-header>
 
-        <el-alert type="info" :closable="false" show-icon title="Changes reach Kubernetes within a few minutes" description="After you add someone to a group they must log in again to kubectl or the web console. After you remove someone, their Kubernetes access ends within 5 minutes." />
+        <el-alert type="info" :closable="false" show-icon title="Changes reach Kubernetes within 5 minutes" description="People gain or lose a group the next time kubectl or the web console refreshes their token. Nobody has to log in again." />
 
         <panel flush>
           <div class="t-tablewrap">
             <el-table :data="groups" style="width: 100%">
-              <el-table-column label="Group" min-width="170"><template #default="{ row }"><strong>{{ row.name }}</strong> <el-tag v-if="row.builtin" size="small" type="info" effect="plain" round>Default</el-tag></template></el-table-column>
+              <el-table-column label="Group" min-width="170"><template #default="{ row }"><strong>{{ row.name }}</strong></template></el-table-column>
               <el-table-column label="Members" width="110" align="right"><template #default="{ row }"><span class="num">{{ row.members }}</span></template></el-table-column>
               <el-table-column label="Roles in Workspaces" min-width="260">
                 <template #default="{ row }">
@@ -235,7 +241,7 @@
 
         <el-dialog v-model="dialog" title="Create group" width="460px">
           <el-form label-position="top" @submit.prevent>
-            <el-form-item label="Name" for="grp-name"><el-input id="grp-name" v-model="name" placeholder="qa" /><div class="t-field-note">Lowercase letters, digits and hyphens. The name cannot be changed later.</div></el-form-item>
+            <el-form-item label="Name" for="grp-name"><el-input id="grp-name" v-model="name" placeholder="qa" /><div class="t-field-note">Lowercase letters, digits and hyphens. You can rename it later: Kubernetes sees a fixed id, so renaming never changes access.</div></el-form-item>
           </el-form>
           <template #footer><el-button @click="dialog = false">Cancel</el-button><el-button type="primary" @click="dialog = false">Create group</el-button></template>
         </el-dialog>
@@ -317,15 +323,35 @@
       </app-shell>`,
   };
 
-  // /orgs/acme/settings?as=admin
+  // /orgs/acme/settings?as=admin|member&transfer=pending
   T.pages.Settings = {
-    data: () => ({ r: T.route, name: 'Acme', desc: T.org.description, to: 'joe@example.com' }),
-    computed: { owner() { return this.r.query.as !== 'admin'; } },
+    data: () => ({ r: T.route, name: 'Acme', desc: T.org.description, to: 'joe@example.com', ok: false }),
+    computed: {
+      role() { return this.r.query.as || 'owner'; },
+      owner() { return this.role === 'owner'; },
+      member() { return this.role === 'member'; },
+      pending() { return this.r.query.transfer === 'pending'; },
+    },
     template: `
-      <app-shell active="settings">
+      <app-shell active="settings" :limited="member">
         <page-header title="Settings"></page-header>
 
-        <panel title="Details">
+        <panel v-if="role === 'admin' && pending" title="Become the owner of Acme">
+          <div class="t-stack" style="max-width: 640px">
+            <key-values :items="[['Offered by', 'Alice Nguyen (alice@example.com), OrgOwner'], ['You', 'Joe Tran (joe@example.com), OrgAdmin'], ['Offer expires', 'in 6 days']]"></key-values>
+            <el-alert type="warning" :closable="false" show-icon title="What changes when you accept">
+              <div>You become <strong>OrgOwner</strong>: only you can delete the Organization or hand it over again.</div>
+              <div>Alice becomes <strong>OrgAdmin</strong>. Workspaces, groups and quota stay as they are.</div>
+            </el-alert>
+            <el-checkbox v-model="ok" id="transfer-ok">I understand that I become responsible for this Organization.</el-checkbox>
+            <div class="t-row" style="justify-content: flex-end">
+              <el-button>Decline</el-button>
+              <el-button type="primary" :disabled="!ok">Accept ownership</el-button>
+            </div>
+          </div>
+        </panel>
+
+        <panel v-if="!member" title="Details">
           <el-form label-position="top" style="max-width: 520px" @submit.prevent>
             <el-form-item label="Display name" for="set-name"><el-input id="set-name" v-model="name" /></el-form-item>
             <el-form-item label="Slug" for="set-slug"><el-input id="set-slug" model-value="acme" disabled /><div class="t-field-note">The slug is part of every Kubernetes name and cannot be changed.</div></el-form-item>
@@ -334,7 +360,15 @@
           </el-form>
         </panel>
 
-        <panel v-if="owner" title="Transfer ownership">
+        <panel v-if="owner && pending" title="Transfer ownership">
+          <div class="t-stack" style="max-width: 560px">
+            <key-values :items="[['Offered to', 'Joe Tran (joe@example.com), OrgAdmin'], ['Offer expires', 'in 6 days']]"></key-values>
+            <p class="muted">You stay the owner until Joe accepts. If Joe stops being an OrgAdmin or leaves, the offer is cancelled.</p>
+            <div><el-button>Cancel transfer</el-button></div>
+          </div>
+        </panel>
+
+        <panel v-else-if="owner" title="Transfer ownership">
           <div class="t-stack" style="max-width: 560px">
             <p class="muted">Hand this Organization to one of its OrgAdmins. They must accept within 7 days; until then you stay the owner. Afterwards you become OrgAdmin.</p>
             <el-form label-position="top" @submit.prevent>

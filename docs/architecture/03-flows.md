@@ -19,7 +19,7 @@ Tên và alias được giữ nguyên trong mọi sơ đồ; sơ đồ nào khô
 | `DB` | PostgreSQL | Source of truth cho product state, outbox, phiên portal |
 | `KC` | Keycloak | Account, OIDC, group claim, realm role `platform-admin` |
 | `PW` | Outbox / Provisioning Worker | Đọc `outbox_events`, apply `PlatformWorkspace` CR bằng credential scoped, đồng bộ status về DB |
-| `GS` | Group Sync Worker | Đồng bộ group/membership từ DB sang Keycloak, logout user khi thu hồi quyền |
+| `GS` | Group Sync Worker | Đồng bộ group/membership từ DB sang Keycloak, bảo trì group `tenantry:tenant-users` |
 | `K8S` | kube-apiserver | API server của Cluster chứa Workspace |
 | `CTRL` | Workspace Controller | controller-runtime trong Cluster, reconcile CR `tenantry.io` |
 | `CAP` | Capsule | Capsule Operator: Tenant (kèm quota chung), TenantResource, admission |
@@ -383,9 +383,9 @@ sequenceDiagram
 
 ---
 
-## 4. Gỡ user khỏi group → Keycloak sync → logout → contract thu hồi
+## 4. Gỡ user khỏi group → Keycloak sync → contract thu hồi
 
-**Mục đích:** Gỡ user khỏi group là một tombstone trong DB; Group Sync Worker gỡ trên Keycloak, bảo trì group `tenantry:tenant-users` và logout user; token cũ vẫn hợp lệ tới TTL 5 phút [9.3][11.4]. Contract và hệ quả: `06-security-and-identity.md` mục 5.
+**Mục đích:** Gỡ user khỏi group là một tombstone trong DB; Group Sync Worker gỡ trên Keycloak, bảo trì group `tenantry:tenant-users`; token cũ vẫn hợp lệ tới TTL 5 phút, token refresh kế tiếp đã mất group [9.3][11.4]. Contract và hệ quả: `06-security-and-identity.md` mục 5.
 
 ```mermaid
 sequenceDiagram
@@ -413,9 +413,6 @@ sequenceDiagram
   alt Joe không còn binding Workspace nào
     GS->>KC: Remove Joe khỏi group tenantry:tenant-users
   end
-  opt Group developers đang có binding Workspace
-    GS->>KC: Logout Joe: kết thúc mọi SSO session
-  end
   alt Keycloak lỗi tạm thời
     GS->>DB: sync_status=Error, sync_attempts+1, next_sync_at theo backoff
   else Thành công
@@ -426,9 +423,7 @@ sequenceDiagram
   PROXY->>K8S: Forward token của user, JWT còn đúng signature và expiry
   K8S-->>KL: 200 vẫn truy cập được cho tới expiry
   KL->>KC: Refresh token khi access token hết hạn
-  KC-->>KL: 400 session đã kết thúc, cần login lại
-  KL->>KC: Browser login lại
-  KC-->>KL: Token mới không còn group developers
+  KC-->>KL: Token mới không còn group developers (group mapper chạy lại khi refresh)
   KL->>PROXY: kubectl get pods -n acme-solar-frontend
   PROXY->>K8S: Forward với identity mới
   K8S-->>KL: 403 Forbidden
@@ -438,9 +433,10 @@ sequenceDiagram
 
 - Bước 5–7: sau commit, Joe mất group ngay với portal (mọi query lọc `deleted_at IS NULL`); row tombstone chỉ còn là việc chờ worker. Nếu Keycloak lỗi lâu thì Kubernetes vẫn thấy group cũ khi Joe login lại — cần alert `sync lag` [21.2].
 - Bước 10–11: `tenantry:tenant-users` là điều kiện Capsule coi subject là Capsule user; chỉ gỡ khi user không còn **bất kỳ** binding Workspace nào trên platform, không tính theo Cluster [9.3].
-- Bước 12: logout chặn refresh/new token, không làm JWT đã phát hành hết hạn sớm. Nó kết thúc **mọi** phiên của Joe: portal, Headlamp và kubectl của các Organization khác cũng phải login lại. Bước 18–21 là hành vi đúng thiết kế, phải ghi trên UI [19.2].
-- Bước 13–14: retry với backoff; mọi lời gọi Keycloak ở bước 9, 11, 12 idempotent nên chạy lại từ đầu là an toàn.
-- Bước 15–24: contract "mất quyền Kubernetes chậm nhất sau TTL" chỉ đúng vì TenantOwner không tự bind được user hay group ngoài Organization bằng RoleBinding của riêng họ (luật admission ở `06-security-and-identity.md` mục 4).
+- Bước 12–13: retry với backoff; mọi lời gọi Keycloak ở bước 9, 11 idempotent nên chạy lại từ đầu là an toàn.
+- Bước 14–16: token đã phát hành vẫn dùng được tới khi hết hạn (tối đa 5 phút).
+- Bước 17–18: Keycloak chạy lại group mapper mỗi lần refresh (đã kiểm ở M4 trên Keycloak 26.8), nên token mới đã mất group mà không cần logout; Joe không bị đăng xuất khỏi portal, Headlamp hay các Organization khác (`06-security-and-identity.md` mục 5).
+- Bước 14–21: contract "mất quyền Kubernetes chậm nhất sau TTL" chỉ đúng vì TenantOwner không tự bind được user hay group ngoài Organization bằng RoleBinding của riêng họ (luật admission ở `06-security-and-identity.md` mục 4).
 - Remove member khỏi Organization và member tự rời (mục 11b) đi cùng đường này cho mọi group của Organization mà user thuộc.
 - Đo "thời gian từ group change tới token mới có hiệu lực" là một chỉ số đánh giá [24.6].
 
@@ -1043,9 +1039,6 @@ sequenceDiagram
     opt Joe không còn binding Workspace nào
       GS->>KC: Remove khỏi tenantry:tenant-users
     end
-    opt Có group đang giữ binding Workspace
-      GS->>KC: Logout Joe
-    end
     GS->>DB: DELETE các row group_members tombstone
   end
 ```
@@ -1055,7 +1048,7 @@ sequenceDiagram
 - Bước 3–5: chỉ một điều kiện chặn — Joe là Owner thì phải transfer trước [9.4]. Role được đọc dưới lock row Organization, cùng lock với accept transfer ở mục 11a.
 - Bước 6–10: xóa membership **trước** rồi mới tombstone group member, đúng thứ tự ở `02-data-model.md` mục 2 (chặn race với thêm vào group). Row membership bị xóa hẳn nên Joe mất quyền portal ở acme ngay; lịch sử nằm ở audit. Rời Org không xóa account Keycloak; Joe vẫn thuộc các Org khác [9.4].
 - Bước 8: transfer đang chờ Joe nhận bị hủy (`04-state-machines.md` mục 8).
-- Bước 11–15: cùng đường sync/logout như mục 4; contract token cũ tới TTL áp dụng y hệt.
+- Bước 11–14: cùng đường sync như mục 4; contract token cũ tới TTL áp dụng y hệt.
 - Owner remove member (`DELETE /members/{userId}`) dùng cùng nhánh `else`, thêm rule "không remove được OrgOwner" [9.4].
 
 ---

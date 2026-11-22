@@ -320,12 +320,12 @@ Không đi qua `outbox_events` (bảng đó chỉ mang thay đổi cho Cluster).
 - Mọi thay đổi ở `org` service đặt `sync_status = Pending` trong cùng transaction. Xóa là **tombstone** (`deleted_at`), không xóa row — row bị xóa thì không còn gì để worker biết phải gỡ trên Keycloak.
 - Vòng lặp: lấy row `sync_status IN (Pending, Error)` tới hạn `next_sync_at` bằng `FOR UPDATE SKIP LOCKED`, rồi đưa Keycloak về đúng hướng row mong muốn:
   - row sống → đảm bảo group tồn tại theo `machine_name` (`org_<ulid>:group_<ulid>`, lưu `keycloak_group_id`) và user là member → `Synced`;
-  - tombstone → gỡ membership (hoặc xóa group) trên Keycloak; nếu group đang có binding Workspace thì logout user (`POST /admin/realms/{realm}/users/{id}/logout`) → xóa hẳn row.
+  - tombstone → gỡ membership (hoặc xóa group) trên Keycloak → xóa hẳn row. Không logout user: Keycloak chạy lại group mapper khi refresh nên token kế tiếp đã mất group (`architecture/06-security-and-identity.md` mục 5).
 - Sau mỗi lần xử lý row `group_members`, cập nhật group platform `tenantry:tenant-users` cho user đó theo rule "user có ≥1 Workspace binding qua group còn sống" (spec §9.3).
 - Tập binding đổi thì kết quả rule đổi theo, dù membership không đổi. Vì vậy mọi transaction làm đổi tập binding (tạo/xóa Workspace, `PUT`/`DELETE` binding, xóa group) đặt `sync_status = 'Pending'` cho mọi `group_members` còn sống của các group bị ảnh hưởng, để worker tính lại `tenantry:tenant-users` cho các user đó.
 - Disable/enable user (M5): API đặt `users.status`, `users.sync_status = 'Pending'` và (khi disable) xóa mọi phiên của user trong một transaction; worker lấy row `users` tới hạn `next_sync_at` như với group và đặt `enabled=false/true` cho user trên Keycloak bằng client `tenantry-sync` (schema: `architecture/02-data-model.md` mục 2).
 - Lỗi → `Error`, `sync_attempts++`, `next_sync_at` theo backoff 1s → 5 phút, `last_error`. Mọi lời gọi Keycloak idempotent nên chạy lại là an toàn.
-- Keycloak Admin API: client mỏng tự viết cho vài endpoint cần dùng (group by name, create/delete group, add/remove membership, logout user), xác thực bằng service account của client `tenantry-sync`.
+- Keycloak Admin API: client mỏng tự viết cho vài endpoint cần dùng (group by name, create/delete group, add/remove membership; enable/disable user từ M5), xác thực bằng service account của client `tenantry-sync`.
 - Create Workspace bị chặn `GROUP_SYNC_PENDING` nếu group chọn chưa `Synced`.
 - Mapper group claim cấu hình một lần trong realm export cho client `headlamp-{clusterId}` và `kubectl` (không cho `portal`).
 - Metric: sync lag (thời gian từ `Pending` → `Synced`), error count (spec §21.2).
@@ -525,13 +525,13 @@ Trong một feature: trang (`*Page.vue`), component riêng của feature, và m�
   3. Member: patch role, remove (chặn Owner), `members/me:leave` (chặn Owner). Transfer ownership trong portal, không token: `POST .../{orgId}:transfer-ownership` (Owner chọn một OrgAdmin), `GET .../{orgId}/ownership-transfer` (đề nghị đang chờ, Owner và người nhận xem được), `POST /ownership-transfers/{transferId}:accept` (chỉ người nhận), `DELETE /ownership-transfers/{transferId}` (Owner hủy). Transaction accept kiểm lại dưới lock: vẫn `Proposed`, chưa hết hạn, người nhận còn là OrgAdmin, người đề nghị còn là OrgOwner; **hạ Owner cũ trước rồi mới nâng người nhận** (unique index một-Owner không deferrable).
   4. Group CRUD, add/remove member; tạo group kiểm `maxGroups` dưới lock entitlement, không tính tombstone (`ENTITLEMENT_EXCEEDED`). Guard "không xóa group còn binding" làm ở M6 cùng bảng `workspace_group_bindings` (trước M6 chưa thể có binding).
   5. Group Sync Worker (mục 5.2) + group `tenantry:tenant-users`; `sync_status` hiển thị trên UI.
-  6. Realm: client `tenantry-sync` (confidential, service account với role `manage-users`, `query-groups` của `realm-management`), Secret do script sinh; chart `tenantry-backend` thêm Deployment `tenantry-worker-groupsync` (`--loops=groupsync`, mục 5.3). Group mapper cho `kubectl`/`headlamp-cluster-a` và Capsule user group `oidc:tenantry:tenant-users` đã có từ M1.
+  6. Realm: client `tenantry-sync` (confidential, service account với role `manage-users`, `query-groups` của `realm-management`, client scope `kc-admin-api`, `fullScopeAllowed: false`; `architecture/06-security-and-identity.md` mục 2), Secret do script sinh; chart `tenantry-backend` thêm Deployment `tenantry-worker-groupsync` (`--loops=groupsync`, mục 5.3). Group mapper cho `kubectl`/`headlamp-cluster-a` và Capsule user group `oidc:tenantry:tenant-users` đã có từ M1.
   7. Mời member, tạo group trên Organization chưa `Active` trả `409 ORG_NOT_ACTIVE`; mã lỗi mới (`ENTITLEMENT_EXCEEDED`, mã của invitation) thêm vào `ErrorCode` và `apperr` (mục 3.3).
   8. Web: Members & invitations, Groups, Settings (transfer/leave, đề nghị transfer đang chờ), trang xem trước và accept invite.
   9. Authz matrix test đầy đủ cho §16.1–16.2.
   10. Audit events cho mọi mutation trên.
 - **Đầu ra kiểm chứng**: Alice tạo link mời → Joe register/login → accept → thấy Org; Alice tạo group `backend` add Joe → `kubectl oidc-login` của Joe (hoặc token từ Keycloak) có claim `groups: ["org_...:group_..."]`.
-- **Test bắt buộc**: unit invitation expiry/one-time/email mismatch; vượt `maxMembers` (lúc tạo và lúc accept) và `maxGroups` bị chặn; replay `Idempotency-Key` của invitation không trả link; transfer accept đúng thứ tự hạ/nâng và bị từ chối khi người nhận không còn là OrgAdmin; integration Keycloak create group/add/remove/logout; kiểm chứng trên Keycloak 26 của lab: quyền của `tenantry-sync` đủ (06 mục 7) và refresh token có chạy lại group mapper (06 mục 5); tombstone: gỡ member → mất quyền portal ngay, row chỉ biến mất sau khi Keycloak đã gỡ, thêm lại giữa chừng hội tụ về "là member"; worker chết giữa sync chạy lại không lệch; authz matrix; concurrency accept invite hai lần.
+- **Test bắt buộc**: unit invitation expiry/one-time/email mismatch; vượt `maxMembers` (lúc tạo và lúc accept) và `maxGroups` bị chặn; replay `Idempotency-Key` của invitation không trả link; transfer accept đúng thứ tự hạ/nâng và bị từ chối khi người nhận không còn là OrgAdmin; integration Keycloak create group/add/remove, refresh ra token theo membership mới; kiểm chứng trên Keycloak 26 của lab: quyền của `tenantry-sync` đủ (06 mục 7) và refresh token có chạy lại group mapper (06 mục 5); tombstone: gỡ member → mất quyền portal ngay, row chỉ biến mất sau khi Keycloak đã gỡ, thêm lại giữa chừng hội tụ về "là member"; worker chết giữa sync chạy lại không lệch; authz matrix; concurrency accept invite hai lần.
 - **Phụ thuộc**: M3.
 - **Rủi ro chính**: Keycloak Admin API version/lag; viết client mỏng có retry và test với đúng Keycloak 26.x của lab.
 - **Ước lượng**: L.
@@ -780,7 +780,7 @@ gantt
 
 - **PostgreSQL** thật qua `TEST_DATABASE_URL` (mỗi test một database riêng): reservation transaction, exclusion constraint CIDR, outbox `FOR UPDATE SKIP LOCKED`, idempotency key, phiên, tombstone group.
 - **envtest** cho controller: reconcile tạo đúng object, idempotent, finalizer thứ tự, status.namespaces từ Namespace fake; không cần Capsule thật (CRD Capsule/Calico load vào envtest từ `operator/config/crd/external/`).
-- **Keycloak container** (image 26.x cùng lab): tạo group, add/remove member, logout user, token có group claim.
+- **Keycloak container** (image 26.x cùng lab): tạo group, add/remove member, token có group claim, refresh ra token theo membership mới.
 - **Worker apply CR** với envtest apiserver + scoped RBAC: xác nhận credential không làm được gì ngoài các CRD `tenantry.io`.
 
 ### 9.3 E2E trên lab cluster thật (`test/e2e`, Go test, tag `e2e`)
@@ -817,13 +817,15 @@ make cluster-up / cluster-verify  # dựng nền Cluster và kiểm tra
 make generate                     # go generate (oapi-codegen, sqlc) + npm run generate của web (openapi-typescript)
 make migrate-up / migrate-down / migrate-status
 make seed                         # cluster-a, onboarding policy, shared-general, onboarding-pod-network
-make run-api / run-worker / run-web / web-install / web-check
+make run-api / run-worker / run-web / web-install / web-check   # run-worker mặc định WORKER_LOOPS=provisioning,housekeeping; groupsync cần secret của tenantry-sync
 make build / fmt / lint / vet / test
-make image / chart-lint           # image backend; lint + render chart tenantry-backend
-make deploy                       # helm upgrade --install các chart lên Cluster với values trong deploy/cluster/values/
+make image / chart-lint           # image backend và portal; lint + render các chart (fail nếu Deployment khác groupsync mount secret tenantry-sync)
+make deploy                       # build + nạp image qua ssh rồi helm upgrade --install các chart với values trong deploy/cluster/values/
+make e2e                          # Playwright trên lab (tạo account e2e*); E2E_SLOW=1 thêm test refresh 5 phút
+make keycloak-live-test           # client Keycloak thật chạy với Keycloak của lab bằng quyền tenantry-sync
 ```
 
-Thêm theo milestone: `run-operator` và controller-gen trong `generate` (M6), `test-e2e`, `bench` (M12), `realm-export` khi cần kéo thay đổi realm về file.
+Thêm theo milestone: `run-operator` và controller-gen trong `generate` (M6), `test-e2e` (Go, M12), `bench` (M12), `realm-export` khi cần kéo thay đổi realm về file.
 
 - **Migrations**: **goose** — SQL thuần, embed vào binary `tenantry-migrate`, chạy như Helm hook job trước API. golang-migrate là lựa chọn tương đương; chọn goose vì hỗ trợ migration Go khi cần backfill.
 - **Keycloak realm**: `deploy/keycloak/realm-tenantry.json` là nguồn; client secret và mật khẩu không nằm trong file.
