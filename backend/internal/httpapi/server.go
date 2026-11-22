@@ -58,6 +58,7 @@ func Register(r chi.Router, db *pgxpool.Pool, a *auth.Service) {
 	})
 	r.Get("/auth/login", login(a))
 	r.Get("/auth/callback", callback(a))
+	r.Post("/auth/logout", logout(a))
 }
 
 // validate checks each request against the embedded OpenAPI document

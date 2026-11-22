@@ -36,6 +36,18 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 	return err
 }
 
+const deleteExpiredSessions = `-- name: DeleteExpiredSessions :execrows
+DELETE FROM sessions WHERE expires_at < now()
+`
+
+func (q *Queries) DeleteExpiredSessions(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredSessions)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteSession = `-- name: DeleteSession :exec
 DELETE FROM sessions WHERE id_hash = $1
 `
@@ -43,6 +55,18 @@ DELETE FROM sessions WHERE id_hash = $1
 func (q *Queries) DeleteSession(ctx context.Context, idHash []byte) error {
 	_, err := q.db.Exec(ctx, deleteSession, idHash)
 	return err
+}
+
+const endSession = `-- name: EndSession :one
+DELETE FROM sessions WHERE id_hash = $1 RETURNING refresh_token_enc
+`
+
+// Logout: the row goes, and its refresh token comes back to end the SSO session.
+func (q *Queries) EndSession(ctx context.Context, idHash []byte) ([]byte, error) {
+	row := q.db.QueryRow(ctx, endSession, idHash)
+	var refresh_token_enc []byte
+	err := row.Scan(&refresh_token_enc)
+	return refresh_token_enc, err
 }
 
 const getSession = `-- name: GetSession :one
@@ -78,4 +102,50 @@ func (q *Queries) GetSession(ctx context.Context, idHash []byte) (GetSessionRow,
 		&i.User.UpdatedAt,
 	)
 	return i, err
+}
+
+const lockSession = `-- name: LockSession :one
+SELECT id_hash, user_id, realm_roles, refresh_token_enc, access_expires_at, expires_at, created_at FROM sessions WHERE id_hash = $1 AND expires_at > now() FOR UPDATE
+`
+
+// Held while the session's access token is refreshed, so concurrent requests
+// of one session wait and then see the renewed row instead of refreshing again.
+func (q *Queries) LockSession(ctx context.Context, idHash []byte) (Session, error) {
+	row := q.db.QueryRow(ctx, lockSession, idHash)
+	var i Session
+	err := row.Scan(
+		&i.IDHash,
+		&i.UserID,
+		&i.RealmRoles,
+		&i.RefreshTokenEnc,
+		&i.AccessExpiresAt,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const renewSession = `-- name: RenewSession :exec
+UPDATE sessions
+SET realm_roles = $2, refresh_token_enc = $3, access_expires_at = $4, expires_at = $5
+WHERE id_hash = $1
+`
+
+type RenewSessionParams struct {
+	IDHash          []byte
+	RealmRoles      []string
+	RefreshTokenEnc []byte
+	AccessExpiresAt time.Time
+	ExpiresAt       time.Time
+}
+
+func (q *Queries) RenewSession(ctx context.Context, arg RenewSessionParams) error {
+	_, err := q.db.Exec(ctx, renewSession,
+		arg.IDHash,
+		arg.RealmRoles,
+		arg.RefreshTokenEnc,
+		arg.AccessExpiresAt,
+		arg.ExpiresAt,
+	)
+	return err
 }

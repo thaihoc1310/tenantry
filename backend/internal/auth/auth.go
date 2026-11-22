@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"slices"
@@ -83,6 +84,7 @@ type provider struct {
 	oauth       oauth2.Config
 	idToken     *oidc.IDTokenVerifier // audience: the portal client
 	accessToken *oidc.IDTokenVerifier // audience: portal-api
+	endSession  string                // end_session_endpoint; logout
 }
 
 func New(db *pgxpool.Pool, cfg config.Auth) (*Service, error) {
@@ -237,7 +239,7 @@ func (s *Service) FinishLogin(ctx context.Context, sealed, state, code string) (
 			RealmRoles:      roles,
 			RefreshTokenEnc: s.seal([]byte(tok.RefreshToken), idHash),
 			AccessExpiresAt: accessExpiry,
-			ExpiresAt:       s.sessionExpiry(tok),
+			ExpiresAt:       s.sessionExpiry(tok, s.now()),
 		})
 	})
 	if err != nil {
@@ -270,9 +272,10 @@ func (s *Service) readAccessToken(ctx context.Context, p *provider, raw string) 
 }
 
 // sessionExpiry is when the refresh token stops working: Keycloak's
-// refresh_expires_in (the SSO idle timeout), capped at MaxSession.
-func (s *Service) sessionExpiry(tok *oauth2.Token) time.Time {
-	limit := s.now().Add(MaxSession)
+// refresh_expires_in (the SSO idle timeout), never past MaxSession after the
+// login at created.
+func (s *Service) sessionExpiry(tok *oauth2.Token, created time.Time) time.Time {
+	limit := created.Add(MaxSession)
 	if sec, ok := tok.Extra("refresh_expires_in").(float64); ok && sec > 0 {
 		if t := s.now().Add(time.Duration(sec) * time.Second); t.Before(limit) {
 			return t
@@ -292,7 +295,9 @@ type Principal struct {
 func (p Principal) PlatformAdmin() bool { return slices.Contains(p.Roles, RolePlatformAdmin) }
 
 // Session resolves a session value. A disabled user loses access on the next
-// request and their session row is deleted.
+// request and their session row is deleted. Once the access token has
+// expired, the session is refreshed at Keycloak first, which re-reads the
+// realm roles and ends the session if Keycloak's SSO session has ended.
 func (s *Service) Session(ctx context.Context, token string) (Principal, error) {
 	idHash, ok := hashToken(token)
 	if !ok {
@@ -311,7 +316,141 @@ func (s *Service) Session(ctx context.Context, token string) (Principal, error) 
 		}
 		return Principal{}, ErrNoSession
 	}
-	return Principal{User: row.User, Roles: row.Session.RealmRoles}, nil
+	roles := row.Session.RealmRoles
+	if !s.now().Before(row.Session.AccessExpiresAt) {
+		if roles, err = s.refresh(ctx, idHash); err != nil {
+			return Principal{}, err
+		}
+	}
+	return Principal{User: row.User, Roles: roles}, nil
+}
+
+// refresh renews the session's expired access token and returns the realm
+// roles it carries. The session row stays locked meanwhile: concurrent
+// requests of the session wait, then find it renewed and skip Keycloak.
+//
+// Keycloak refusing the refresh token (invalid_grant: SSO session idle or
+// over, logged out, account disabled) ends the session. Keycloak being
+// unreachable does not: the request fails and the next one tries again.
+// Carrying on with the old roles instead would break the promise that a
+// removed platform-admin role stops working within one access token lifetime.
+func (s *Service) refresh(ctx context.Context, idHash []byte) ([]string, error) {
+	var roles []string
+	ended := false
+	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		q := s.q.WithTx(tx)
+		sess, err := q.LockSession(ctx, idHash)
+		if errors.Is(err, pgx.ErrNoRows) {
+			ended = true // logged out or expired while waiting for the lock
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if s.now().Before(sess.AccessExpiresAt) {
+			roles = sess.RealmRoles // renewed by the request we waited for
+			return nil
+		}
+		refreshToken, err := s.open(sess.RefreshTokenEnc, idHash)
+		if err != nil {
+			// Sealed with an older session key: rotating the key logs everyone out.
+			ended = true
+			return q.DeleteSession(ctx, idHash)
+		}
+
+		p, err := s.provider(ctx)
+		if err != nil {
+			return err
+		}
+		cctx := s.clientContext(ctx)
+		tok, err := p.oauth.TokenSource(cctx, &oauth2.Token{RefreshToken: string(refreshToken)}).Token()
+		var refused *oauth2.RetrieveError
+		if errors.As(err, &refused) && refused.ErrorCode == "invalid_grant" {
+			ended = true
+			return q.DeleteSession(ctx, idHash)
+		}
+		if err != nil {
+			return fmt.Errorf("refresh session: %w", err)
+		}
+		var accessExpiry time.Time
+		if roles, accessExpiry, err = s.readAccessToken(cctx, p, tok.AccessToken); err != nil {
+			return err
+		}
+		return q.RenewSession(ctx, store.RenewSessionParams{
+			IDHash:          idHash,
+			RealmRoles:      roles,
+			RefreshTokenEnc: s.seal([]byte(tok.RefreshToken), idHash),
+			AccessExpiresAt: accessExpiry,
+			ExpiresAt:       s.sessionExpiry(tok, sess.CreatedAt),
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if ended {
+		return nil, ErrNoSession
+	}
+	return roles, nil
+}
+
+// Logout ends the session and the Keycloak SSO session behind it, so
+// Headlamp and kubelogin need a new login too ("log out" means everywhere).
+// The row goes first: the portal session is over even when Keycloak cannot
+// be told, and the error returned then is only worth logging.
+func (s *Service) Logout(ctx context.Context, token string) error {
+	idHash, ok := hashToken(token)
+	if !ok {
+		return nil
+	}
+	sealed, err := s.q.EndSession(ctx, idHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // already gone
+	}
+	if err != nil {
+		return err
+	}
+	refreshToken, err := s.open(sealed, idHash)
+	if err != nil {
+		return fmt.Errorf("end SSO session: refresh token sealed with another session key: %w", err)
+	}
+	p, err := s.provider(ctx)
+	if err != nil {
+		return err
+	}
+	return s.endSSO(ctx, p, string(refreshToken))
+}
+
+// endSSO calls Keycloak's logout endpoint the way a confidential client
+// does from its backend: a form POST with the refresh token, the client
+// authenticated like on the token endpoint.
+func (s *Service) endSSO(ctx context.Context, p *provider, refreshToken string) error {
+	if p.endSession == "" {
+		return errors.New("end SSO session: the issuer advertises no end_session_endpoint")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endSession,
+		strings.NewReader(url.Values{"refresh_token": {refreshToken}}.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// RFC 6749 §2.3.1: both parts form-encoded, as oauth2 does for the token endpoint.
+	req.SetBasicAuth(url.QueryEscape(s.cfg.ClientID), url.QueryEscape(s.cfg.ClientSecret))
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("end SSO session: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	var e struct {
+		Error string `json:"error"`
+	}
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 4<<10)).Decode(&e)
+	if resp.StatusCode == http.StatusBadRequest && e.Error == "invalid_grant" {
+		return nil // the SSO session had already ended
+	}
+	return fmt.Errorf("end SSO session: Keycloak answered %d %s", resp.StatusCode, e.Error)
 }
 
 // newSessionToken returns 32 random bytes for the browser and their sha256 for the table.
@@ -346,7 +485,14 @@ func (s *Service) provider(ctx context.Context) (*provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("discover OIDC issuer %s: %w", s.cfg.Issuer, err)
 	}
+	var extra struct {
+		EndSession string `json:"end_session_endpoint"`
+	}
+	if err := p.Claims(&extra); err != nil {
+		return nil, fmt.Errorf("discover OIDC issuer %s: %w", s.cfg.Issuer, err)
+	}
 	s.idp = &provider{
+		endSession: extra.EndSession,
 		oauth: oauth2.Config{
 			ClientID:     s.cfg.ClientID,
 			ClientSecret: s.cfg.ClientSecret,

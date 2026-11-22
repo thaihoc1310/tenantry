@@ -12,6 +12,9 @@ info:
     `GET /auth/login?returnTo=/some/path` sends the browser to Keycloak and
     `GET /auth/callback` brings it back with the session and CSRF cookies set.
     A `401` on any call means: navigate to `/auth/login`.
+    `POST /auth/logout` (with the CSRF header) answers `204`, deletes both
+    cookies and ends the Keycloak SSO session too, so Headlamp and kubectl
+    ask for a new login as well.
 servers:
   - url: /api/v1
 

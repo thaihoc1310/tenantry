@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -141,11 +142,40 @@ func requireCSRF(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		c, err := r.Cookie(CSRFCookie)
-		if err != nil || c.Value == "" || subtle.ConstantTimeCompare([]byte(c.Value), []byte(r.Header.Get(CSRFHeader))) != 1 {
+		if !csrfOK(r) {
 			writeError(w, r, errCSRF)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func csrfOK(r *http.Request) bool {
+	c, err := r.Cookie(CSRFCookie)
+	return err == nil && c.Value != "" && subtle.ConstantTimeCompare([]byte(c.Value), []byte(r.Header.Get(CSRFHeader))) == 1
+}
+
+// logout ends the session here and at Keycloak and deletes the cookies;
+// 204 either way, after which the SPA leaves for a page of its choosing.
+// Without a session there is nothing to end, so no CSRF check either: the
+// cookies are deleted and that is all. With one, CSRF is required, or any
+// site could log the user out of everything.
+func logout(a *auth.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if c, err := r.Cookie(SessionCookie); err == nil {
+			if !csrfOK(r) {
+				writeError(w, r, errCSRF)
+				return
+			}
+			if err := a.Logout(r.Context(), c.Value); err != nil {
+				// The portal session is gone already; only Keycloak's is left
+				// to time out, so the user is not told to retry.
+				slog.ErrorContext(r.Context(), "logout left the Keycloak session running", "err", err, "request_id", requestID(r.Context()))
+			}
+		}
+		setCookie(w, SessionCookie, "", -1, true)
+		setCookie(w, CSRFCookie, "", -1, false)
+		w.WriteHeader(http.StatusNoContent)
+	}
 }

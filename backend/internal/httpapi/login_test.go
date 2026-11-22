@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -30,16 +31,25 @@ type account struct {
 }
 
 // fakeKeycloak is an OIDC issuer in the test process: discovery and keys
-// from go-oidc's oidctest, plus a token endpoint that redeems codes the way
-// Keycloak does (client secret, PKCE, single use).
+// from go-oidc's oidctest, plus the endpoints Keycloak has for a
+// confidential client: redeem a code (client secret, PKCE, single use),
+// refresh, and log out.
 type fakeKeycloak struct {
 	t   *testing.T
 	srv *httptest.Server
 	key *rsa.PrivateKey
 
-	mu    sync.Mutex
-	down  bool             // discovery answers 503
-	codes map[string]grant // issued, not yet redeemed
+	mu       sync.Mutex
+	down     bool               // every endpoint answers 503
+	codes    map[string]grant   // issued, not yet redeemed
+	accounts map[string]account // by sub, as of now: tests change roles here
+	// refreshTokens maps every refresh token issued to its SSO session. A
+	// refresh issues a new one and the old one keeps working, as with the
+	// realm's Revoke Refresh Token off.
+	refreshTokens map[string]*ssoSession
+	refreshes     int      // successful refresh grants
+	issued        []string // refresh tokens, in order
+	loggedOut     []string // refresh tokens the logout endpoint was called with
 	// Tamper with the next tokens.
 	wrongNonce, wrongAudience, noRefreshToken bool
 }
@@ -49,17 +59,36 @@ type grant struct {
 	nonce, challenge string
 }
 
+type ssoSession struct {
+	sub   string
+	ended bool
+}
+
 func newFakeKeycloak(t *testing.T) *fakeKeycloak {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fakeKeycloak{t: t, key: key, codes: map[string]grant{}}
+	f := &fakeKeycloak{t: t, key: key, codes: map[string]grant{}, accounts: map[string]account{}, refreshTokens: map[string]*ssoSession{}}
 	keys := &oidctest.Server{PublicKeys: []oidctest.PublicKey{{PublicKey: key.Public(), KeyID: "k1", Algorithm: "RS256"}}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /token", f.token)
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /logout", f.logout)
+	mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		// oidctest's discovery plus the logout endpoint, which it leaves out.
+		rec := httptest.NewRecorder()
+		keys.ServeHTTP(rec, r)
+		var disc map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &disc); err != nil {
+			t.Error(err)
+		}
+		disc["end_session_endpoint"] = f.srv.URL + "/logout"
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(disc)
+	})
+	mux.Handle("/", keys)
+	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		down := f.down
 		f.mu.Unlock()
@@ -67,9 +96,8 @@ func newFakeKeycloak(t *testing.T) *fakeKeycloak {
 			http.Error(w, "starting", http.StatusServiceUnavailable)
 			return
 		}
-		keys.ServeHTTP(w, r)
-	})
-	f.srv = httptest.NewServer(mux)
+		mux.ServeHTTP(w, r)
+	}))
 	t.Cleanup(f.srv.Close)
 	keys.SetIssuer(f.srv.URL)
 	return f
@@ -99,18 +127,31 @@ func (f *fakeKeycloak) authorize(authURL string, acct account) (code, state stri
 	code = rand.Text()
 	f.mu.Lock()
 	f.codes[code] = grant{acct: acct, nonce: q.Get("nonce"), challenge: q.Get("code_challenge")}
+	f.accounts[acct.sub] = acct
 	f.mu.Unlock()
 	return code, q.Get("state")
 }
 
+// oauthError answers like Keycloak does when it refuses a request.
+func oauthError(w http.ResponseWriter, status int, code string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": code})
+}
+
+func clientAuthenticated(r *http.Request) bool {
+	id, secret, ok := r.BasicAuth()
+	return ok && id == "portal" && secret == "portal-secret"
+}
+
 func (f *fakeKeycloak) token(w http.ResponseWriter, r *http.Request) {
-	refuse := func(code string) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": code})
+	refuse := func(code string) { oauthError(w, http.StatusBadRequest, code) }
+	if !clientAuthenticated(r) {
+		oauthError(w, http.StatusUnauthorized, "invalid_client")
+		return
 	}
-	if id, secret, ok := r.BasicAuth(); !ok || id != "portal" || secret != "portal-secret" {
-		refuse("invalid_client")
+	if r.FormValue("grant_type") == "refresh_token" {
+		f.refresh(w, r)
 		return
 	}
 	f.mu.Lock()
@@ -138,20 +179,102 @@ func (f *fakeKeycloak) token(w http.ResponseWriter, r *http.Request) {
 		"nonce": nonce, "email": g.acct.email, "email_verified": g.acct.emailVerified, "name": g.acct.name,
 		"preferred_username": "user-" + g.acct.sub,
 	}
-	accessToken := map[string]any{
-		"iss": f.srv.URL, "aud": []string{"portal-api", "account"}, "sub": g.acct.sub, "azp": "portal",
-		"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(),
-		"realm_access": map[string]any{"roles": g.acct.roles},
-	}
-	resp := map[string]any{
-		"token_type": "Bearer", "expires_in": 300, "refresh_expires_in": 28800,
-		"id_token": f.sign(idToken), "access_token": f.sign(accessToken), "refresh_token": "refresh-" + g.acct.sub,
-	}
+	resp := f.tokens(g.acct, &ssoSession{sub: g.acct.sub})
+	resp["id_token"] = f.sign(idToken)
 	if noRefresh {
 		delete(resp, "refresh_token")
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// refresh is the refresh_token grant: new tokens with the account's roles
+// as of now, as long as the SSO session lives.
+func (f *fakeKeycloak) refresh(w http.ResponseWriter, r *http.Request) {
+	// Slow enough that concurrent requests of one session would all get
+	// here if the API did not serialize them.
+	time.Sleep(50 * time.Millisecond)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	sso, ok := f.refreshTokens[r.FormValue("refresh_token")]
+	if !ok || sso.ended {
+		oauthError(w, http.StatusBadRequest, "invalid_grant")
+		return
+	}
+	f.refreshes++
+	resp := f.tokensLocked(f.accounts[sso.sub], sso)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// logout is Keycloak's logout endpoint called by a confidential client with
+// a refresh token: it ends the SSO session behind it.
+func (f *fakeKeycloak) logout(w http.ResponseWriter, r *http.Request) {
+	if !clientAuthenticated(r) {
+		oauthError(w, http.StatusUnauthorized, "invalid_client")
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rt := r.FormValue("refresh_token")
+	f.loggedOut = append(f.loggedOut, rt)
+	sso, ok := f.refreshTokens[rt]
+	if !ok || sso.ended {
+		oauthError(w, http.StatusBadRequest, "invalid_grant")
+		return
+	}
+	sso.ended = true
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// endSSO ends sub's SSO sessions the way an idle timeout or an Admin would.
+func (f *fakeKeycloak) endSSO(sub string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, sso := range f.refreshTokens {
+		if sso.sub == sub {
+			sso.ended = true
+		}
+	}
+}
+
+func (f *fakeKeycloak) setRoles(sub string, roles ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a := f.accounts[sub]
+	a.roles = roles
+	f.accounts[sub] = a
+}
+
+// stats returns the successful refreshes, the last refresh token issued and
+// the refresh tokens logged out with.
+func (f *fakeKeycloak) stats() (refreshes int, lastIssued string, loggedOut []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.refreshes, f.issued[len(f.issued)-1], slices.Clone(f.loggedOut)
+}
+
+func (f *fakeKeycloak) tokens(acct account, sso *ssoSession) map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.tokensLocked(acct, sso)
+}
+
+// tokensLocked issues an access token and a new refresh token of sso.
+func (f *fakeKeycloak) tokensLocked(acct account, sso *ssoSession) map[string]any {
+	now := time.Now()
+	accessToken := map[string]any{
+		"iss": f.srv.URL, "aud": []string{"portal-api", "account"}, "sub": acct.sub, "azp": "portal",
+		"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(),
+		"realm_access": map[string]any{"roles": acct.roles},
+	}
+	rt := "refresh-" + rand.Text()
+	f.refreshTokens[rt] = sso
+	f.issued = append(f.issued, rt)
+	return map[string]any{
+		"token_type": "Bearer", "expires_in": 300, "refresh_expires_in": 28800,
+		"access_token": f.sign(accessToken), "refresh_token": rt,
+	}
 }
 
 func (f *fakeKeycloak) sign(claims map[string]any) string {
@@ -242,7 +365,7 @@ func TestLogin(t *testing.T) {
 		hashOf(t, session.Value), userID).Scan(&roles, &refreshEnc, &expiresIn); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(roles, ",") != "offline_access,platform-admin" || strings.Contains(string(refreshEnc), "refresh-kc-1") {
+	if strings.Join(roles, ",") != "offline_access,platform-admin" || strings.Contains(string(refreshEnc), "refresh-") {
 		t.Fatalf("roles %v, refresh token stored as %q", roles, refreshEnc)
 	}
 	if expiresIn < 7*time.Hour || expiresIn > 8*time.Hour {

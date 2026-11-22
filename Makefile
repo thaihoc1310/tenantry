@@ -46,8 +46,8 @@ run-api: ## Run the Platform API locally (secrets from DEV_SECRETS)
 	@test -f $(DEV_SECRETS) || { echo "missing $(DEV_SECRETS), see the comment above run-api in the Makefile"; exit 1; }
 	cd $(BACKEND) && set -a && . $(DEV_SECRETS) && set +a && \
 		TENANTRY_OIDC_ISSUER=$(TENANTRY_OIDC_ISSUER) TENANTRY_PUBLIC_URL=$(TENANTRY_PUBLIC_URL) go run ./cmd/tenantry-api
-run-worker: ## Run the outbox worker locally (logs events; no cluster yet)
-	cd $(BACKEND) && go run ./cmd/tenantry-worker
+run-worker: ## Run every worker loop locally (outbox events are only logged; no cluster yet)
+	cd $(BACKEND) && go run ./cmd/tenantry-worker --loops=all
 
 .PHONY: cluster-up cluster-verify
 cluster-up: ## Build the cluster foundation on the lab (deploy/cluster); safe to re-run

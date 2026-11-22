@@ -1,6 +1,7 @@
-# Delivers outbox events to clusters. Its ServiceAccount, with rights on the
-# tenantry.io CRDs only, comes with those CRDs (M6); the group sync worker is
-# a second Deployment with its own credentials (M4).
+# Delivers outbox events to clusters and deletes expired rows
+# (IMPLEMENTATION-PLAN §5.3). Its ServiceAccount, with rights on the
+# tenantry.io CRDs only, comes with those CRDs (M6); the group sync loop runs
+# in a second Deployment with its own credentials (M4).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -33,6 +34,7 @@ spec:
           image: {{ include "tenantry.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: [/usr/local/bin/tenantry-worker]
+          args: [--loops=provisioning,housekeeping]
           env:
             {{- include "tenantry.env" . | nindent 12 }}
           resources:

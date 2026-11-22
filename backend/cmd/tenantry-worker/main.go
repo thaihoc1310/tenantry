@@ -1,30 +1,54 @@
-// Command tenantry-worker delivers outbox events to clusters. It ships in the
-// same image as tenantry-api but runs as its own Deployment, so it restarts
-// and scales independently of the API (one replica is enough; more are safe).
+// Command tenantry-worker runs the background loops (IMPLEMENTATION-PLAN
+// §5.3). It ships in the same image as tenantry-api but runs as its own
+// Deployments, one per set of credentials, picked with --loops:
+//
+//	provisioning  delivers outbox events to clusters
+//	housekeeping  deletes expired rows (PostgreSQL only)
+//	all           every loop; for running locally
+//
+// The group sync loop joins in M4.
 package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
+	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/config"
+	"github.com/thaihoc1310/tenantry/backend/internal/housekeeping"
 	"github.com/thaihoc1310/tenantry/backend/internal/outbox"
 )
 
+var allLoops = []string{"provisioning", "housekeeping"}
+
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:]); err != nil {
 		slog.Error("tenantry-worker stopped", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(args []string) error {
+	fs := flag.NewFlagSet("tenantry-worker", flag.ContinueOnError)
+	loopsFlag := fs.String("loops", "", "loops to run, comma-separated: "+strings.Join(allLoops, ", ")+", or all")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	loops, err := parseLoops(*loopsFlag)
+	if err != nil {
+		return err
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -41,12 +65,46 @@ func run() error {
 	}
 	defer pool.Close()
 
-	// SIGTERM finishes the batch in hand, then exits.
+	// SIGTERM lets each loop finish what it has in hand, then exit.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
 
-	log.Info("outbox worker started", "poll", outbox.PollInterval, "batch", outbox.BatchSize)
-	outbox.NewWorker(pool, outbox.LogHandler(log), log).Run(ctx)
-	log.Info("outbox worker stopped")
+	var wg sync.WaitGroup
+	for _, l := range loops {
+		log := log.With("loop", l)
+		wg.Go(func() {
+			log.Info("loop started")
+			switch l {
+			case "provisioning":
+				outbox.NewWorker(pool, outbox.LogHandler(log), log).Run(ctx)
+			case "housekeeping":
+				housekeeping.Run(ctx, pool, log)
+			}
+			log.Info("loop stopped")
+		})
+	}
+	wg.Wait()
 	return nil
+}
+
+// parseLoops reads --loops. It is required: a Deployment that forgot it
+// must not quietly run loops whose credentials it does not hold.
+func parseLoops(v string) ([]string, error) {
+	switch strings.TrimSpace(v) {
+	case "":
+		return nil, errors.New("--loops is required")
+	case "all":
+		return allLoops, nil
+	}
+	var loops []string
+	for l := range strings.SplitSeq(v, ",") {
+		l = strings.TrimSpace(l)
+		if !slices.Contains(allLoops, l) {
+			return nil, fmt.Errorf("--loops: unknown loop %q (want %s, or all)", l, strings.Join(allLoops, ", "))
+		}
+		if !slices.Contains(loops, l) {
+			loops = append(loops, l)
+		}
+	}
+	return loops, nil
 }
