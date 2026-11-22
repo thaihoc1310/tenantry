@@ -1,0 +1,66 @@
+apiVersion: capsule.clastix.io/v1beta2
+kind: Tenant
+metadata:
+  labels:
+    tenantry.io/cluster-id: cluster-a
+    tenantry.io/compute-mode: shared
+    tenantry.io/compute-pool: shared-general
+    tenantry.io/managed: "true"
+    tenantry.io/organization-id: org-01jabc
+    tenantry.io/workspace-id: ws-01jsol
+  name: acme-solar
+spec:
+  additionalRoleBindings:
+  - clusterRoleName: tenantry:tenant-developer
+    subjects:
+    - apiGroup: rbac.authorization.k8s.io
+      kind: Group
+      name: oidc:org_01jabc:group_01jdev
+  - clusterRoleName: tenantry:tenant-viewer
+    subjects:
+    - apiGroup: rbac.authorization.k8s.io
+      kind: Group
+      name: oidc:org_01jabc:group_01jview
+  containerRegistries:
+    allowed:
+    - docker.io
+    - ghcr.io
+  cordoned: true
+  forceTenantPrefix: true
+  namespaceOptions:
+    additionalMetadata:
+      labels:
+        tenantry.io/cluster-id: cluster-a
+        tenantry.io/compute-mode: shared
+        tenantry.io/compute-pool: shared-general
+        tenantry.io/managed: "true"
+        tenantry.io/org: 01jabc
+        tenantry.io/organization-id: org-01jabc
+        tenantry.io/workspace-id: ws-01jsol
+    forbiddenAnnotations:
+      denied:
+      - scheduler.alpha.kubernetes.io/node-selector
+      - scheduler.alpha.kubernetes.io/defaultTolerations
+      - scheduler.alpha.kubernetes.io/tolerationsWhitelist
+      deniedRegex: ^cni\.projectcalico\.org/.*
+  owners:
+  - kind: Group
+    name: oidc:org_01jabc:group_01jadmin
+  - kind: Group
+    name: oidc:org_01jabc:group_01jops
+  - kind: ServiceAccount
+    name: system:serviceaccount:tenantry-operator:tenantry-operator
+  rules:
+  - enforce:
+      action: deny
+      workloads:
+        qosClasses:
+        - BestEffort
+  serviceOptions:
+    allowedServices:
+      externalName: false
+      loadBalancer: false
+      nodePort: false
+  storageClasses:
+    allowed:
+    - standard

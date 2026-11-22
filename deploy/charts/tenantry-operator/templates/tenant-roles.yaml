@@ -1,0 +1,2 @@
+{{- /* ClusterRoles tenantry:tenant-developer and tenantry:tenant-viewer, kept as a plain file (see its header). */}}
+{{ .Files.Get "files/tenant-roles.yaml" }}

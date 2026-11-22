@@ -1,0 +1,76 @@
+# The ClusterRoles a Workspace binds its Developer and Viewer groups to in its
+# Namespaces (PRODUCT-PLAN §10.3, §10.5; matrix in architecture/06 §8). The
+# operator's envtest checks them with SubjectAccessReviews, so they stay a
+# plain file the chart includes as it is.
+#
+# Developer: CRUD of workloads, logs, exec and port-forward. Secrets may be
+# written but not read back: whoever creates Pods can mount a Secret anyway,
+# so that only keeps them off the screen. No RoleBindings, Namespaces,
+# Ingresses, NetworkPolicies, quotas or LimitRanges.
+# Viewer: read the same objects and logs; no Secret, no exec.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tenantry:tenant-developer
+rules:
+  - apiGroups: [""]
+    resources: [pods, services, configmaps, persistentvolumeclaims, serviceaccounts]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [pods/log, pods/status, services/status, persistentvolumeclaims/status, endpoints, events, resourcequotas, limitranges]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods/exec, pods/portforward, pods/attach]
+    verbs: [create, get]
+  - apiGroups: [""]
+    resources: [pods/eviction]
+    verbs: [create]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets, replicasets, controllerrevisions, deployments/scale, statefulsets/scale, replicasets/scale]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tenantry:tenant-viewer
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/log, pods/status, services, services/status, configmaps, persistentvolumeclaims, persistentvolumeclaims/status, serviceaccounts, endpoints, events, resourcequotas, limitranges]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets, replicasets, controllerrevisions, deployments/scale, statefulsets/scale, replicasets/scale]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list, watch]
