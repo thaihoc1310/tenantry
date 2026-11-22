@@ -1,0 +1,14 @@
+{
+  "responses": {
+    "204": null,
+    "409": {
+      "code": "ORGANIZATION_NOT_EMPTY",
+      "message": "the organization still has 1 Workspace(s) and 0 dedicated node(s): delete the Workspaces, and ask a Platform Admin to take the nodes back",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K",
+      "details": {
+        "workspaces": 1,
+        "dedicatedNodes": 0
+      }
+    }
+  }
+}

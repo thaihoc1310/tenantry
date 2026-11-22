@@ -144,6 +144,28 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "429": { $ref: "#/components/responses/RateLimited" }
+    delete:
+      operationId: deleteOrganization
+      security: [{ session: [], csrf: [] }]
+      summary: Delete the organization (OrgOwner)
+      description: |
+        Only with no Workspace left (deleting one finishes when its cluster
+        is clean) and no dedicated node (a Platform Admin takes them back).
+        Its grants go, open invitations and transfers end, and its groups
+        leave Keycloak; it is 404 everywhere after (04-state-machines §11).
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: |
+            `ORG_NOT_ACTIVE`: a request not approved is not deleted this way.
+            `ORGANIZATION_NOT_EMPTY`: Workspaces or dedicated nodes left (`details.workspaces`, `details.dedicatedNodes`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
 
   /organizations/{orgId}/entitlement:
     parameters:
@@ -2146,6 +2168,7 @@ components:
         - CLUSTER_GRANT_QUOTA_EXCEEDED
         - CLUSTER_GRANT_BELOW_ALLOCATION
         - WORKSPACE_QUOTA_BELOW_USAGE
+        - ORGANIZATION_NOT_EMPTY
         - INTERNAL
 
     ErrorResponse:

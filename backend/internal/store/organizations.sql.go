@@ -129,6 +129,18 @@ func (q *Queries) CreateOrganizationRequest(ctx context.Context, arg CreateOrgan
 	return i, err
 }
 
+const deleteOrganizationGrants = `-- name: DeleteOrganizationGrants :execrows
+DELETE FROM organization_cluster_grants WHERE org_id = $1
+`
+
+func (q *Queries) DeleteOrganizationGrants(ctx context.Context, orgID string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOrganizationGrants, orgID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getEntitlement = `-- name: GetEntitlement :one
 SELECT org_id, max_members, max_groups, max_workspaces_total, updated_at FROM organization_entitlements WHERE org_id = $1
 `
@@ -346,6 +358,36 @@ func (q *Queries) LockOrganization(ctx context.Context, id string) (Organization
 	return i, err
 }
 
+const markOrganizationDeleted = `-- name: MarkOrganizationDeleted :exec
+UPDATE organizations SET status = 'Deleted', updated_at = now() WHERE id = $1
+`
+
+func (q *Queries) MarkOrganizationDeleted(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, markOrganizationDeleted, id)
+	return err
+}
+
+const organizationLeftovers = `-- name: OrganizationLeftovers :one
+SELECT
+  (SELECT count(*) FROM workspaces w WHERE w.org_id = $1)::int AS workspaces,
+  (SELECT count(*) FROM dedicated_node_grants d WHERE d.org_id = $1 AND d.revoked_at IS NULL)::int AS dedicated_nodes
+`
+
+type OrganizationLeftoversRow struct {
+	Workspaces     int32
+	DedicatedNodes int32
+}
+
+// What keeps an organization from being deleted (04-state-machines §11):
+// any Workspace row, Deleted ones waiting for a quarantine included, and
+// dedicated nodes not revoked.
+func (q *Queries) OrganizationLeftovers(ctx context.Context, orgID string) (OrganizationLeftoversRow, error) {
+	row := q.db.QueryRow(ctx, organizationLeftovers, orgID)
+	var i OrganizationLeftoversRow
+	err := row.Scan(&i.Workspaces, &i.DedicatedNodes)
+	return i, err
+}
+
 const rejectOrganization = `-- name: RejectOrganization :one
 UPDATE organizations SET status = 'Rejected', review_note = $2, updated_at = now()
 WHERE id = $1 AND status = 'Pending'
@@ -373,6 +415,48 @@ func (q *Queries) RejectOrganization(ctx context.Context, arg RejectOrganization
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const revokeOrganizationInvitations = `-- name: RevokeOrganizationInvitations :execrows
+UPDATE invitations SET state = 'Revoked', updated_at = now() WHERE org_id = $1 AND state = 'Pending'
+`
+
+func (q *Queries) RevokeOrganizationInvitations(ctx context.Context, orgID string) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeOrganizationInvitations, orgID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const tombstoneOrganizationGroupMembers = `-- name: TombstoneOrganizationGroupMembers :execrows
+UPDATE group_members gm
+SET deleted_at = now(), sync_status = 'Pending', sync_attempts = 0, next_sync_at = now(), last_error = '', updated_at = now()
+FROM groups g
+WHERE gm.group_id = g.id AND g.org_id = $1 AND gm.deleted_at IS NULL
+`
+
+func (q *Queries) TombstoneOrganizationGroupMembers(ctx context.Context, orgID string) (int64, error) {
+	result, err := q.db.Exec(ctx, tombstoneOrganizationGroupMembers, orgID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const tombstoneOrganizationGroups = `-- name: TombstoneOrganizationGroups :execrows
+UPDATE groups
+SET deleted_at = now(), sync_status = 'Pending', sync_attempts = 0, next_sync_at = now(), last_error = '', updated_at = now()
+WHERE org_id = $1 AND deleted_at IS NULL
+`
+
+// The group sync worker deletes each from Keycloak, memberships with it.
+func (q *Queries) TombstoneOrganizationGroups(ctx context.Context, orgID string) (int64, error) {
+	result, err := q.db.Exec(ctx, tombstoneOrganizationGroups, orgID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateOrganization = `-- name: UpdateOrganization :one

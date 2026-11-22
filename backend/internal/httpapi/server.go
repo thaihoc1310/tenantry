@@ -265,3 +265,10 @@ type principal struct {
 func requestID(ctx context.Context) string { s, _ := ctx.Value(requestIDKey).(string); return s }
 func caller(ctx context.Context) principal { p, _ := ctx.Value(principalKey).(principal); return p }
 func userID(ctx context.Context) string    { return caller(ctx).user.ID }
+
+func (s server) DeleteOrganization(ctx context.Context, req oapi.DeleteOrganizationRequestObject) (oapi.DeleteOrganizationResponseObject, error) {
+	if err := s.orgs.Delete(ctx, userID(ctx), req.OrgId); err != nil {
+		return nil, err
+	}
+	return oapi.DeleteOrganization204Response{}, nil
+}

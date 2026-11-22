@@ -86,3 +86,32 @@ SELECT
   (SELECT count(*) FROM organization_members m WHERE m.org_id = $1)::int AS members,
   (SELECT count(*) FROM groups g WHERE g.org_id = $1 AND g.deleted_at IS NULL)::int AS groups,
   (SELECT count(*) FROM workspaces w WHERE w.org_id = $1 AND w.state <> 'Deleted')::int AS workspaces;
+
+-- name: OrganizationLeftovers :one
+-- What keeps an organization from being deleted (04-state-machines §11):
+-- any Workspace row, Deleted ones waiting for a quarantine included, and
+-- dedicated nodes not revoked.
+SELECT
+  (SELECT count(*) FROM workspaces w WHERE w.org_id = $1)::int AS workspaces,
+  (SELECT count(*) FROM dedicated_node_grants d WHERE d.org_id = $1 AND d.revoked_at IS NULL)::int AS dedicated_nodes;
+
+-- name: MarkOrganizationDeleted :exec
+UPDATE organizations SET status = 'Deleted', updated_at = now() WHERE id = $1;
+
+-- name: DeleteOrganizationGrants :execrows
+DELETE FROM organization_cluster_grants WHERE org_id = $1;
+
+-- name: RevokeOrganizationInvitations :execrows
+UPDATE invitations SET state = 'Revoked', updated_at = now() WHERE org_id = $1 AND state = 'Pending';
+
+-- name: TombstoneOrganizationGroups :execrows
+-- The group sync worker deletes each from Keycloak, memberships with it.
+UPDATE groups
+SET deleted_at = now(), sync_status = 'Pending', sync_attempts = 0, next_sync_at = now(), last_error = '', updated_at = now()
+WHERE org_id = $1 AND deleted_at IS NULL;
+
+-- name: TombstoneOrganizationGroupMembers :execrows
+UPDATE group_members gm
+SET deleted_at = now(), sync_status = 'Pending', sync_attempts = 0, next_sync_at = now(), last_error = '', updated_at = now()
+FROM groups g
+WHERE gm.group_id = g.id AND g.org_id = $1 AND gm.deleted_at IS NULL;

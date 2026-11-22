@@ -108,6 +108,10 @@ export const errorText: Record<ErrorCode | 'NETWORK', Text> = {
     en: 'The Workspace already uses more than this. Free some first.',
     vi: 'Workspace đang dùng nhiều hơn mức này. Hãy giải phóng bớt trước.',
   },
+  ORGANIZATION_NOT_EMPTY: {
+    en: 'Delete its Workspaces first, and ask a Platform Admin to take back its dedicated nodes.',
+    vi: 'Hãy xóa các Workspace trước và nhờ Platform Admin thu hồi node dedicated.',
+  },
   INTERNAL: {
     en: 'Something went wrong on our side. Your data is safe; try again in a moment.',
     vi: 'Hệ thống gặp lỗi. Dữ liệu của bạn vẫn an toàn; thử lại sau ít phút.',

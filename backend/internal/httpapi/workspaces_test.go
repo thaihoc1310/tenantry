@@ -779,3 +779,54 @@ func TestDeleteWorkspace(t *testing.T) {
 		t.Fatalf("force a Running delete: %d", rec.Code)
 	}
 }
+
+// The OrgOwner deletes an organization once nothing is left in it; after,
+// it is 404 everywhere and its groups leave Keycloak (04-state-machines §11).
+func TestDeleteOrganization(t *testing.T) {
+	h, db, orgID, owner, admins, devs := workspaceOrg(t)
+	ctx := context.Background()
+	rec := createWorkspace(h, owner, "zeta", workspaceBody("solar", admins, devs, ""))
+	var created oapi.WorkspaceAccepted
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &created) != nil {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	del := func(token string) *httptest.ResponseRecorder {
+		return asAdmin(h, token, http.MethodDelete, "/api/v1/organizations/zeta", "", "")
+	}
+	if rec := del(sessionOf("usr-erin")); rec.Code != 403 {
+		t.Fatalf("OrgAdmin deletes: %d", rec.Code)
+	}
+	if rec := del(sessionOf("usr-dave")); rec.Code != 404 {
+		t.Fatalf("non-member deletes: %d", rec.Code)
+	}
+	if rec := del(owner); rec.Code != 409 || errorBody(t, rec).Code != oapi.ORGANIZATIONNOTEMPTY || (*errorBody(t, rec).Details)["workspaces"] != 1.0 {
+		t.Fatalf("with a Workspace: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := db.Exec(ctx, `DELETE FROM workspaces WHERE id = $1`, created.Workspace.Id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO invitations (id, org_id, email, role, token_hash, invited_by, expires_at)
+		VALUES ('inv-x', $1, 'x@example.com', 'OrgMember', decode(repeat('ab', 32), 'hex'), 'usr-zeta', now() + interval '1 day')`, orgID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := del(owner); rec.Code != 204 {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body)
+	}
+	for q, want := range map[string]int{
+		`SELECT count(*) FROM organizations WHERE id = $1 AND status = 'Deleted'`:                                                 1,
+		`SELECT count(*) FROM organization_cluster_grants WHERE org_id = $1`:                                                      0,
+		`SELECT count(*) FROM invitations WHERE org_id = $1 AND state = 'Pending'`:                                                0,
+		`SELECT count(*) FROM groups WHERE org_id = $1 AND deleted_at IS NULL`:                                                    0,
+		`SELECT count(*) FROM group_members gm JOIN groups g ON g.id = gm.group_id WHERE g.org_id = $1 AND gm.deleted_at IS NULL`: 0,
+	} {
+		if n := count(t, db, q, orgID); n != want {
+			t.Errorf("%s: %d, want %d", q, n, want)
+		}
+	}
+	if rec := asAdmin(h, owner, http.MethodGet, "/api/v1/organizations/zeta", "", ""); rec.Code != 404 {
+		t.Fatalf("a Deleted organization: %d", rec.Code)
+	}
+	if trail := auditTrail(t, db, "organization.delete"); len(trail) != 1 {
+		t.Fatalf("audit %+v", trail)
+	}
+}

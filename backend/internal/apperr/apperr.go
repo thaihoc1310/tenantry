@@ -57,6 +57,8 @@ const (
 	ClusterGrantQuotaExceeded   Code = "CLUSTER_GRANT_QUOTA_EXCEEDED"   // a create or resize does not fit in the grant
 	ClusterGrantBelowAllocation Code = "CLUSTER_GRANT_BELOW_ALLOCATION" // an Admin's change below what is held
 	WorkspaceQuotaBelowUsage    Code = "WORKSPACE_QUOTA_BELOW_USAGE"    // a resize below what the Workspace uses
+
+	OrganizationNotEmpty Code = "ORGANIZATION_NOT_EMPTY" // Workspaces or dedicated nodes left (04-state-machines §11)
 )
 
 type Error struct {
