@@ -48,6 +48,11 @@ func run(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// A stray argument is a mistake in the Deployment (a YAML list split at
+	// a comma once dropped the housekeeping loop without a word).
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected arguments %q: loops go in one --loops flag, comma-separated", fs.Args())
+	}
 	loops, err := parseLoops(*loopsFlag)
 	if err != nil {
 		return err

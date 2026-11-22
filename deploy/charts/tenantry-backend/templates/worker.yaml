@@ -73,7 +73,9 @@ spec:
           image: {{ include "tenantry.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: [/usr/local/bin/tenantry-worker]
-          args: [--loops=provisioning,housekeeping]
+          # Quoted: unquoted, the flow sequence splits at the comma and
+          # housekeeping arrives as a stray argument.
+          args: ["--loops=provisioning,housekeeping"]
           env:
             {{- include "tenantry.env" . | nindent 12 }}
             - name: TENANTRY_CLUSTER_ID

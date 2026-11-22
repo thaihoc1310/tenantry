@@ -31,3 +31,11 @@ func TestLoopsRequired(t *testing.T) {
 		t.Fatalf("run without --loops: %v", err)
 	}
 }
+
+// The Deployment's args split at a comma ([--loops=provisioning,housekeeping]
+// in YAML) leave a stray argument: refused, not ignored.
+func TestStrayArgumentsRefused(t *testing.T) {
+	if err := run([]string{"--loops=provisioning", "housekeeping"}); err == nil || !strings.Contains(err.Error(), "unexpected arguments") {
+		t.Fatalf("stray argument: %v", err)
+	}
+}
