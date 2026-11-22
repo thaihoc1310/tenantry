@@ -1548,7 +1548,7 @@ API mutation trả operation ID nếu có Kubernetes reconciliation. Error có s
 - `ENTITLEMENT_BELOW_USAGE` — Admin hạ entitlement dưới số đang dùng hoặc `maxGroups` < 3;
 - `CLUSTER_GRANT_BELOW_ALLOCATION` — kể cả gỡ shared pool còn Workspace khỏi grant (`details.sharedPoolId`);
 - `WORKSPACE_QUOTA_BELOW_USAGE` — resize dưới usage, hoặc `namespaceQuota` dưới số Namespace đang có;
-- `ORGANIZATION_NOT_EMPTY` — xóa Organization còn Workspace hoặc dedicated node (`details.workspaces`, `details.dedicatedNodes`);
+- `ORGANIZATION_NOT_EMPTY` — xóa Organization còn Workspace hoặc dedicated node: `details.workspaces` (chưa `Deleted`), `details.dedicatedNodes`, `details.quarantinedWorkspaces` và `details.deletableAfter` (RFC3339, lúc quarantine cuối cùng hết); message chỉ nêu việc còn phải làm (xóa Workspace, nhờ Admin thu hồi node, hoặc đợi tới giờ đó);
 - `ORG_NOT_ACTIVE`;
 - `CLUSTER_NOT_GRANTED`;
 - `CLUSTER_NOT_READY`;
