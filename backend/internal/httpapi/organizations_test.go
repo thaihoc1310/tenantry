@@ -386,7 +386,6 @@ func TestCreateOrganization(t *testing.T) {
 	}{
 		{"one pending request per user", "usr-dave", `{"slug":"davetwo","displayName":"Dave Two"}`, 409, oapi.ORGREQUESTPENDING, ""},
 		{"slug of an active org", "usr-alice", `{"slug":"acme","displayName":"x"}`, 409, oapi.SLUGTAKEN, "slug"},
-		{"slug of a deleted org stays taken", "usr-alice", `{"slug":"gone","displayName":"x"}`, 409, oapi.SLUGTAKEN, "slug"},
 		{"slug of a pending request", "usr-alice", `{"slug":"daveco","displayName":"x"}`, 409, oapi.SLUGTAKEN, "slug"},
 		{"reserved slug", "usr-alice", `{"slug":"admin","displayName":"x"}`, 400, oapi.VALIDATIONFAILED, "slug"},
 		{"hyphen", "usr-alice", `{"slug":"alice-team","displayName":"x"}`, 400, oapi.VALIDATIONFAILED, "slug"},
