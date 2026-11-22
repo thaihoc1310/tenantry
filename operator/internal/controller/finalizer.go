@@ -129,6 +129,22 @@ func (r *PlatformWorkspaceReconciler) finalize(ctx context.Context, ws *v1.Platf
 		return progress("waiting for Tenant " + ws.Name + " to go away")
 	}
 
+	// 6. Dedicated: the node keeps the Organization's label and taint and
+	// the other Workspaces' labels, only this Workspace's goes.
+	if ws.Spec.Compute.Mode == v1.ComputeDedicated && ws.Spec.Compute.NodeName != "" {
+		node := &corev1.Node{}
+		switch err := r.Get(ctx, client.ObjectKey{Name: ws.Spec.Compute.NodeName}, node); {
+		case err == nil:
+			if _, labelled := node.Labels[render.MembershipLabel(ws)]; labelled {
+				if err := subreconciler.SetNodeLabel(ctx, r.Client, node.Name, render.MembershipLabel(ws), nil); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+		case !apierrors.IsNotFound(err):
+			return ctrl.Result{}, err
+		}
+	}
+
 	// 7. Done: the CR goes, and the worker releases what the Workspace held.
 	controllerutil.RemoveFinalizer(ws, v1.WorkspaceFinalizer)
 	return ctrl.Result{}, r.Update(ctx, ws)

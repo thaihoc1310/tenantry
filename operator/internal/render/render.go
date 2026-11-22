@@ -5,6 +5,7 @@
 package render
 
 import (
+	"encoding/json"
 	"regexp"
 	"sort"
 	"strings"
@@ -70,24 +71,79 @@ func NamespaceName(ws *v1.PlatformWorkspace, suffix string) string {
 	return ws.Name + "-" + suffix
 }
 
-// ForbiddenAnnotations a tenant may not set on its Namespaces: the ones the
-// platform uses for IP pools and placement (architecture/05 §5).
-var (
-	forbiddenAnnotations = []any{
-		"scheduler.alpha.kubernetes.io/node-selector",
-		"scheduler.alpha.kubernetes.io/defaultTolerations",
-		"scheduler.alpha.kubernetes.io/tolerationsWhitelist",
+// MembershipLabel puts a Dedicated Workspace's Pods on its node.
+func MembershipLabel(ws *v1.PlatformWorkspace) string {
+	return v1.WorkspaceMemberLabelPrefix + ws.Spec.WorkspaceID
+}
+
+func nodeSelectorKey(ws *v1.PlatformWorkspace) string {
+	if ws.Spec.Compute.Mode == v1.ComputeDedicated {
+		return MembershipLabel(ws)
 	}
-	forbiddenAnnotationsRegex = `^cni\.projectcalico\.org/.*`
+	return v1.LabelComputePool
+}
+
+func nodeSelectorValue(ws *v1.PlatformWorkspace) string {
+	if ws.Spec.Compute.Mode == v1.ComputeDedicated {
+		return "true"
+	}
+	return ws.Spec.Compute.SharedPoolID
+}
+
+// Annotations of PodNodeSelector and PodTolerationRestriction
+// (architecture/05 §2).
+const (
+	AnnotationNodeSelector         = "scheduler.alpha.kubernetes.io/node-selector"
+	AnnotationDefaultTolerations   = "scheduler.alpha.kubernetes.io/defaultTolerations"
+	AnnotationTolerationsWhitelist = "scheduler.alpha.kubernetes.io/tolerationsWhitelist"
 )
 
+// conditionTaints are the node.kubernetes.io taints Kubernetes itself puts
+// on nodes and tolerates in Pods: a whitelist without them refuses every Pod.
+var conditionTaints = []string{
+	"not-ready", "unreachable", "disk-pressure", "memory-pressure", "pid-pressure", "network-unavailable", "unschedulable",
+}
+
+// NamespaceAnnotations hold a Namespace to the Workspace's nodes: the node
+// selector, and the tolerations its Pods may carry. A Dedicated Workspace's
+// Pods tolerate their Organization's taint by default; nothing else can be
+// tolerated in either mode.
+func NamespaceAnnotations(ws *v1.PlatformWorkspace) map[string]string {
+	type toleration struct {
+		Key      string `json:"key"`
+		Operator string `json:"operator"`
+		Value    string `json:"value,omitempty"`
+		Effect   string `json:"effect,omitempty"`
+	}
+	var defaults, whitelist []toleration
+	if ws.Spec.Compute.Mode == v1.ComputeDedicated {
+		org := toleration{Key: v1.LabelDedicatedOrg, Operator: "Equal", Value: ws.Spec.OrganizationID, Effect: "NoSchedule"}
+		defaults, whitelist = append(defaults, org), append(whitelist, org)
+	}
+	for _, t := range conditionTaints {
+		whitelist = append(whitelist, toleration{Key: "node.kubernetes.io/" + t, Operator: "Exists"})
+	}
+	defaultsJSON, _ := json.Marshal(defaults)
+	if defaults == nil {
+		defaultsJSON = []byte("[]")
+	}
+	whitelistJSON, _ := json.Marshal(whitelist)
+	return map[string]string{
+		AnnotationNodeSelector:         nodeSelectorKey(ws) + "=" + nodeSelectorValue(ws),
+		AnnotationDefaultTolerations:   string(defaultsJSON),
+		AnnotationTolerationsWhitelist: string(whitelistJSON),
+	}
+}
+
+// anyValue matches every value of a metadata key.
+var anyValue = map[string]any{"values": []any{map[string]any{"exp": ".*"}}}
+
 // Tenant is the Capsule Tenant of ws, named like it: sub-reconcilers tenant,
-// rbac and policy write their parts of this one object (IMPLEMENTATION-PLAN
-// §4.1). Guardrails, Namespace metadata and the quota are spec.rules, the
-// API of Capsule 0.15. One deprecated field stays:
-// namespaceOptions.forbiddenAnnotations, since rules have no equivalent of
-// its deniedRegex (a whole annotation prefix). Pass revoked to drop every
-// owner but the operator and every RoleBinding: the first step of a delete
+// compute, rbac and policy write their parts of this one object
+// (IMPLEMENTATION-PLAN §4.1). Everything is spec.rules, the API of Capsule
+// 0.15, but the fields rules do not replace (owners, nodeSelector, storage
+// classes, Namespace quota). Pass revoked to drop every owner but the
+// operator and every RoleBinding: the first step of a delete
 // (IMPLEMENTATION-PLAN §4.3).
 func Tenant(ws *v1.PlatformWorkspace, o Options, revoked bool) *unstructured.Unstructured {
 	owners := []any{}
@@ -112,23 +168,33 @@ func Tenant(ws *v1.PlatformWorkspace, o Options, revoked bool) *unstructured.Uns
 	}
 	owners = append(owners, map[string]any{"kind": "ServiceAccount", "name": o.OperatorServiceAccount})
 
-	nsOptions := map[string]any{
-		"forbiddenAnnotations": map[string]any{
-			"denied":      forbiddenAnnotations,
-			"deniedRegex": forbiddenAnnotationsRegex,
-		},
-	}
+	nsOptions := map[string]any{}
 	if ws.Spec.NamespaceQuota > 0 {
 		nsOptions["quota"] = int64(ws.Spec.NamespaceQuota)
 	}
 
 	rules := []any{
 		// Every Namespace of the Tenant, whoever creates it, carries these
-		// labels and nobody else can change them (PRODUCT-PLAN §18).
+		// labels and annotations, and nobody else can change them (PRODUCT-PLAN
+		// §18): Capsule puts the managed value back.
 		map[string]any{"enforce": map[string]any{
 			"action": "allow",
 			"metadata": []any{map[string]any{
-				"apiGroups": []any{"v1"}, "kinds": []any{"Namespace"}, "labels": managedValues(NamespaceLabels(ws)),
+				"apiGroups": []any{"v1"}, "kinds": []any{"Namespace"},
+				"labels":      managedValues(NamespaceLabels(ws)),
+				"annotations": managedValues(NamespaceAnnotations(ws)),
+			}},
+		}},
+		// Calico pool annotations would pick another Workspace's addresses
+		// (architecture/05 §5); M9 makes ipv4pools a managed value instead.
+		map[string]any{"enforce": map[string]any{
+			"action": "deny",
+			"metadata": []any{map[string]any{
+				"apiGroups": []any{"v1"}, "kinds": []any{"Namespace"},
+				"annotations": map[string]any{
+					"cni.projectcalico.org/ipv4pools": anyValue,
+					"cni.projectcalico.org/ipv6pools": anyValue,
+				},
 			}},
 		}},
 		map[string]any{"enforce": map[string]any{
@@ -164,6 +230,8 @@ func Tenant(ws *v1.PlatformWorkspace, o Options, revoked bool) *unstructured.Uns
 		"namespaceOptions":  nsOptions,
 		"storageClasses":    map[string]any{"allowed": strings2any(ws.Spec.StorageClasses)},
 		"rules":             rules,
+		// Sub-reconciler compute: Pods of the Workspace stay on its nodes.
+		"nodeSelector": map[string]any{nodeSelectorKey(ws): nodeSelectorValue(ws)},
 	}
 	if len(bindings) > 0 {
 		spec["additionalRoleBindings"] = bindings
@@ -229,6 +297,15 @@ var (
 // policy). Capsule protects the copies from the tenant. Cluster-scoped like
 // the PlatformWorkspace that owns it, named like it.
 func Replication(ws *v1.PlatformWorkspace) *unstructured.Unstructured {
+	limit := map[string]any{"type": "Container", "defaultRequest": defaultRequest, "default": defaultLimit}
+	if ws.Spec.Compute.Mode == v1.ComputeDedicated {
+		// Guaranteed QoS: limits = requests in every container, so what the
+		// node reserved is what Pods may use (PRODUCT-PLAN §5.4).
+		limit = map[string]any{
+			"type": "Container", "defaultRequest": defaultRequest, "default": defaultRequest,
+			"maxLimitRequestRatio": map[string]any{"cpu": "1", "memory": "1"},
+		}
+	}
 	r := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{
 		"scope":           "Namespace",
 		"pruningOnDelete": true,
@@ -236,9 +313,7 @@ func Replication(ws *v1.PlatformWorkspace) *unstructured.Unstructured {
 		"resources": []any{map[string]any{"rawItems": []any{map[string]any{
 			"apiVersion": "v1", "kind": "LimitRange",
 			"metadata": map[string]any{"name": LimitRangeName},
-			"spec": map[string]any{"limits": []any{map[string]any{
-				"type": "Container", "defaultRequest": defaultRequest, "default": defaultLimit,
-			}}},
+			"spec":     map[string]any{"limits": []any{limit}},
 		}}}},
 	}}}
 	r.SetGroupVersionKind(ReplicationGVK)

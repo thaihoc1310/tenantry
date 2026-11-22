@@ -27,7 +27,7 @@ func newWorkspace(name string) *v1.PlatformWorkspace {
 			OrganizationID: "org-01jabc", WorkspaceID: "ws-" + name, ClusterID: "cluster-a",
 			NamespaceQuota: 3,
 			Namespaces:     []string{"frontend"},
-			Compute:        v1.Compute{Mode: v1.ComputeShared, SharedPoolID: "shared-general"},
+			Compute:        v1.Compute{Mode: v1.ComputeShared, SharedPoolID: testPool},
 			StorageClasses: []string{"standard"},
 			AccessBindings: []v1.AccessBinding{
 				{GroupSubject: "oidc:org_01jabc:group_owner", Role: v1.RoleTenantOwner},
@@ -390,7 +390,7 @@ func TestPhase(t *testing.T) {
 		return metav1.Condition{Type: typ, Status: metav1.ConditionStatus(status), Reason: reason}
 	}
 	allTrue := []metav1.Condition{
-		cond(v1.ConditionCapsuleTenantReady, "True", "Reconciled"), cond(v1.ConditionPolicyReady, "True", "Reconciled"),
+		cond(v1.ConditionComputeReady, "True", "Reconciled"), cond(v1.ConditionCapsuleTenantReady, "True", "Reconciled"), cond(v1.ConditionPolicyReady, "True", "Reconciled"),
 		cond(v1.ConditionIdentityBindingsReady, "True", "Reconciled"),
 	}
 	progressing := []metav1.Condition{

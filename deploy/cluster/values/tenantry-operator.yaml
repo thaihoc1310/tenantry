@@ -9,3 +9,7 @@ tolerations:
     operator: Equal
     value: system
     effect: NoSchedule
+
+# kubeadm's admin group: 10-nodes.sh labels and taints the system pool.
+nodeLabelAdmins:
+  - kubeadm:cluster-admins

@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	v1 "github.com/thaihoc1310/tenantry/operator/api/v1alpha1"
+	"github.com/thaihoc1310/tenantry/operator/internal/subreconciler"
 )
 
 // sharedPoolFinalizer takes the pool label off its nodes when a pool goes.
@@ -42,7 +43,7 @@ func (r *PlatformSharedPoolReconciler) Reconcile(ctx context.Context, req ctrl.R
 	if !pool.DeletionTimestamp.IsZero() {
 		for _, n := range nodes.Items {
 			if n.Labels[v1.LabelComputePool] == pool.Name {
-				if err := setNodeLabel(ctx, r.Client, n.Name, v1.LabelComputePool, nil); err != nil {
+				if err := subreconciler.SetNodeLabel(ctx, r.Client, n.Name, v1.LabelComputePool, nil); err != nil {
 					return ctrl.Result{}, err
 				}
 			}
@@ -71,11 +72,11 @@ func (r *PlatformSharedPoolReconciler) Reconcile(ctx context.Context, req ctrl.R
 				continue
 			}
 			value := pool.Name
-			if err := setNodeLabel(ctx, r.Client, n.Name, v1.LabelComputePool, &value); err != nil {
+			if err := subreconciler.SetNodeLabel(ctx, r.Client, n.Name, v1.LabelComputePool, &value); err != nil {
 				return ctrl.Result{}, err
 			}
 		case !wanted && current == pool.Name:
-			if err := setNodeLabel(ctx, r.Client, n.Name, v1.LabelComputePool, nil); err != nil {
+			if err := subreconciler.SetNodeLabel(ctx, r.Client, n.Name, v1.LabelComputePool, nil); err != nil {
 				return ctrl.Result{}, err
 			}
 			continue

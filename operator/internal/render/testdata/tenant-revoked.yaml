@@ -13,13 +13,9 @@ spec:
   cordoned: false
   forceTenantPrefix: true
   namespaceOptions:
-    forbiddenAnnotations:
-      denied:
-      - scheduler.alpha.kubernetes.io/node-selector
-      - scheduler.alpha.kubernetes.io/defaultTolerations
-      - scheduler.alpha.kubernetes.io/tolerationsWhitelist
-      deniedRegex: ^cni\.projectcalico\.org/.*
     quota: 3
+  nodeSelector:
+    tenantry.io/compute-pool: shared-general
   owners:
   - kind: ServiceAccount
     name: system:serviceaccount:tenantry-operator:tenantry-operator
@@ -27,7 +23,14 @@ spec:
   - enforce:
       action: allow
       metadata:
-      - apiGroups:
+      - annotations:
+          scheduler.alpha.kubernetes.io/defaultTolerations:
+            managed: '[]'
+          scheduler.alpha.kubernetes.io/node-selector:
+            managed: tenantry.io/compute-pool=shared-general
+          scheduler.alpha.kubernetes.io/tolerationsWhitelist:
+            managed: '[{"key":"node.kubernetes.io/not-ready","operator":"Exists"},{"key":"node.kubernetes.io/unreachable","operator":"Exists"},{"key":"node.kubernetes.io/disk-pressure","operator":"Exists"},{"key":"node.kubernetes.io/memory-pressure","operator":"Exists"},{"key":"node.kubernetes.io/pid-pressure","operator":"Exists"},{"key":"node.kubernetes.io/network-unavailable","operator":"Exists"},{"key":"node.kubernetes.io/unschedulable","operator":"Exists"}]'
+        apiGroups:
         - v1
         kinds:
         - Namespace
@@ -52,6 +55,20 @@ spec:
             managed: org-01jabc
           tenantry.io/workspace-id:
             managed: ws-01jsol
+  - enforce:
+      action: deny
+      metadata:
+      - annotations:
+          cni.projectcalico.org/ipv4pools:
+            values:
+            - exp: .*
+          cni.projectcalico.org/ipv6pools:
+            values:
+            - exp: .*
+        apiGroups:
+        - v1
+        kinds:
+        - Namespace
   - enforce:
       action: allow
       workloads:

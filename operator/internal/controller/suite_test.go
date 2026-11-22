@@ -8,6 +8,8 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -32,6 +34,25 @@ var (
 
 const operatorSA = "system:serviceaccount:tenantry-operator:tenantry-operator"
 
+const (
+	testPool     = "test-pool"
+	testPoolNode = "test-pool-node"
+)
+
+// createReadyNode creates a Ready node with 4 CPU, 8Gi and 110 Pods.
+func createReadyNode(name string, labels map[string]string) error {
+	ctx := context.Background()
+	n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels}}
+	if err := testClient.Create(ctx, n); err != nil {
+		return err
+	}
+	n.Status.Allocatable = corev1.ResourceList{
+		corev1.ResourceCPU: resource.MustParse("4"), corev1.ResourceMemory: resource.MustParse("8Gi"), corev1.ResourcePods: resource.MustParse("110"),
+	}
+	n.Status.Conditions = []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}
+	return testClient.Status().Update(ctx, n)
+}
+
 func TestMain(m *testing.M) {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		// go test ./... without make operator-test: the envtest tests skip.
@@ -54,6 +75,10 @@ func TestMain(m *testing.M) {
 	testCfg = cfg
 	testClient, err = client.New(cfg, client.Options{Scheme: testScheme})
 	if err != nil {
+		panic(err)
+	}
+	// The shared pool of the Workspaces in these tests: one Ready node.
+	if err := createReadyNode(testPoolNode, map[string]string{v1.LabelComputePool: testPool}); err != nil {
 		panic(err)
 	}
 	code := m.Run()

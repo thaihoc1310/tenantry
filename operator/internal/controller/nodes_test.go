@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -76,7 +77,7 @@ func TestNodeCRDs(t *testing.T) {
 	}
 	for _, setup := range []interface{ SetupWithManager(ctrl.Manager) error }{
 		&PlatformSharedPoolReconciler{Client: mgr.GetClient()},
-		&PlatformNodeGrantReconciler{Client: mgr.GetClient()},
+		&PlatformNodeGrantReconciler{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader()},
 		&PlatformNodeInventoryReconciler{Client: mgr.GetClient()},
 	} {
 		if err := setup.SetupWithManager(mgr); err != nil {
@@ -100,8 +101,12 @@ func TestNodeCRDs(t *testing.T) {
 		if err := testClient.Get(ctx, client.ObjectKey{Name: v1.NodeInventoryName}, inv); err != nil {
 			return err
 		}
+		// Other tests share the API server: only this test's nodes are checked.
 		kinds := map[string]v1.NodeKind{}
 		for _, n := range inv.Status.Nodes {
+			if !slices.Contains([]string{"cp1", "wk1", "wk2", "wk3", "wk4"}, n.Name) {
+				continue
+			}
 			kinds[n.Name] = n.Kind
 			if !n.Ready || !n.Schedulable || cpu(n.Allocatable) == "0" {
 				return failure("node " + n.Name + " reported wrong")

@@ -23,3 +23,9 @@ tolerations: []
 resources:
   requests: { cpu: 50m, memory: 64Mi }
   limits: { memory: 256Mi }
+
+# Groups that may change node labels and taints under tenantry.io/ and
+# workspaces.tenantry.io/ besides the operator (ValidatingAdmissionPolicy
+# tenantry-node-labels). Empty: the operator alone. A cluster admin group
+# that can delete the policy anyway gains nothing from being refused.
+nodeLabelAdmins: []

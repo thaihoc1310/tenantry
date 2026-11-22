@@ -1,0 +1,111 @@
+{{- $operator := printf "system:serviceaccount:%s:tenantry-operator" .Release.Namespace }}
+# Node labels and taints with keys tenantry.io/* and workspaces.tenantry.io/*
+# decide where tenant Pods run: only the operator may change them, and the
+# groups in nodeLabelAdmins (architecture/06 §7; RBAC cannot filter label
+# keys). Everyone else's change to such a key is refused, other keys are not.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: tenantry-node-labels
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [nodes]
+  matchConditions:
+    - name: not-the-operator
+      expression: request.userInfo.username != {{ $operator | quote }}
+    - name: not-a-node-label-admin
+      expression: '!request.userInfo.groups.exists(g, g in {{ .Values.nodeLabelAdmins | toJson }})'
+  variables:
+    - name: newLabels
+      expression: >-
+        has(object.metadata.labels) ? object.metadata.labels.filter(k, k.startsWith('tenantry.io/') || k.startsWith('workspaces.tenantry.io/'))
+        .map(k, k + '=' + object.metadata.labels[k]) : []
+    - name: oldLabels
+      expression: >-
+        oldObject != null && has(oldObject.metadata.labels) ? oldObject.metadata.labels.filter(k, k.startsWith('tenantry.io/') || k.startsWith('workspaces.tenantry.io/'))
+        .map(k, k + '=' + oldObject.metadata.labels[k]) : []
+    - name: newTaints
+      expression: >-
+        has(object.spec.taints) ? object.spec.taints.filter(t, t.key.startsWith('tenantry.io/') || t.key.startsWith('workspaces.tenantry.io/'))
+        .map(t, t.key + '=' + (has(t.value) ? t.value : '') + ':' + t.effect) : []
+    - name: oldTaints
+      expression: >-
+        oldObject != null && has(oldObject.spec.taints) ? oldObject.spec.taints.filter(t, t.key.startsWith('tenantry.io/') || t.key.startsWith('workspaces.tenantry.io/'))
+        .map(t, t.key + '=' + (has(t.value) ? t.value : '') + ':' + t.effect) : []
+  validations:
+    - expression: >-
+        variables.newLabels.all(l, l in variables.oldLabels) && variables.oldLabels.all(l, l in variables.newLabels) &&
+        variables.newTaints.all(t, t in variables.oldTaints) && variables.oldTaints.all(t, t in variables.newTaints)
+      reason: Forbidden
+      message: only the Tenantry operator may change node labels and taints under tenantry.io/ and workspaces.tenantry.io/
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: tenantry-node-labels
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+spec:
+  policyName: tenantry-node-labels
+  validationActions: [Deny]
+---
+# A tenant may not pick a node by name (architecture/05 §2). Hardening only:
+# kubelet already refuses a Pod whose node does not match its Namespace's
+# node selector; this says why at once. Only tenant callers (oidc:) are
+# checked: controllers create Pods from these templates with their own
+# identity, so the templates are checked too.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: tenantry-tenant-node-name
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+      - apiGroups: [apps]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [deployments, statefulsets, daemonsets, replicasets]
+      - apiGroups: [batch]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [jobs, cronjobs]
+  matchConditions:
+    - name: tenant-caller
+      expression: request.userInfo.username.startsWith('oidc:')
+  variables:
+    - name: podSpec
+      expression: >-
+        request.kind.kind == 'Pod' ? object.spec :
+        request.kind.kind == 'CronJob' ? object.spec.jobTemplate.spec.template.spec : object.spec.template.spec
+  validations:
+    - expression: '!has(variables.podSpec.nodeName) || variables.podSpec.nodeName == ""'
+      reason: Forbidden
+      message: spec.nodeName is not allowed in a Workspace; the Workspace's node selector places Pods
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: tenantry-tenant-node-name
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+spec:
+  policyName: tenantry-tenant-node-name
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - {key: capsule.clastix.io/tenant, operator: Exists}
