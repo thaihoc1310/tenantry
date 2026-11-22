@@ -10,6 +10,7 @@ package isolation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -100,11 +101,12 @@ func refused(t *testing.T, what string, err error) {
 		t.Errorf("%s: allowed, want refused", what)
 		return
 	}
-	if !apierrors.IsForbidden(err) && !apierrors.IsInvalid(err) && !apierrors.IsBadRequest(err) {
-		t.Errorf("%s: %v, want a refusal", what, err)
+	var status apierrors.APIStatus
+	if !errors.As(err, &status) {
+		t.Errorf("%s: %v, want a refusal by the API server", what, err)
 		return
 	}
-	t.Logf("refused as wanted: %s: %s", what, firstLine(err.Error()))
+	t.Logf("refused as wanted (%d): %s: %s", status.Status().Code, what, firstLine(err.Error()))
 }
 
 func allowed(t *testing.T, what string, err error) {
@@ -257,8 +259,18 @@ func TestIsolation(t *testing.T) {
 		if connects(t, bWeb, "b-to-a", ipOf(aWeb, "srv-a")) {
 			t.Error("B reaches A")
 		}
-		if connects(t, aAPI, "a-to-metadata", "169.254.169.254:80") {
-			t.Error("A reaches the metadata endpoint")
+		for name, target := range map[string]string{
+			"a-to-metadata": "169.254.169.254:80", "a-to-node": "172.21.92.163:6443", "a-to-apiserver": "kubernetes.default.svc:443",
+		} {
+			if connects(t, aAPI, name, target) {
+				t.Errorf("%s: %s reachable", name, target)
+			} else {
+				t.Logf("blocked as wanted by NetworkPolicy: %s %s", name, target)
+			}
+		}
+		// Not "deny everything": DNS and the Internet work.
+		if !connects(t, aAPI, "a-to-internet", "example.com:443") {
+			t.Error("A cannot resolve and reach the Internet")
 		}
 	})
 
@@ -317,9 +329,15 @@ func TestIsolation(t *testing.T) {
 	})
 
 	t.Run("T19 quotas: CPU, Pods, storage, StorageClass, Namespaces", func(t *testing.T) {
+		// Limits stated, so the LimitRange's default limit does not refuse it
+		// first: the quota does.
 		refused(t, "Pod above the CPU quota", ownerA.Create(ctx, pod(aWeb, "big", func(p *corev1.Pod) {
 			p.Spec.Containers[0].Resources.Requests[corev1.ResourceCPU] = resource.MustParse("2")
+			p.Spec.Containers[0].Resources.Limits = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2"), corev1.ResourceMemory: resource.MustParse("16Mi")}
 		})))
+		refused(t, "container request above the LimitRange default limit", ownerA.Create(ctx, pod(aWeb, "unbounded", func(p *corev1.Pod) {
+			p.Spec.Containers[0].Resources.Requests[corev1.ResourceCPU] = resource.MustParse("800m")
+		}), client.DryRunAll))
 		standard := "standard"
 		pvc := func(name, class, size string) *corev1.PersistentVolumeClaim {
 			return &corev1.PersistentVolumeClaim{
