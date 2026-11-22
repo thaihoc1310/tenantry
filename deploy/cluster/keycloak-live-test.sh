@@ -28,11 +28,15 @@ kcadm=/opt/keycloak/bin/kcadm.sh; cfg=$(mktemp); trap 'rm -f "$cfg"' EXIT
 $kcadm config credentials --config "$cfg" --server http://localhost:8080 --realm master \
   --user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD" >/dev/null
 k() { $kcadm "$@" --config "$cfg" -r tenantry; }
-echo "$(k get users -q username=mallory -q exact=true --fields id --format csv --noquotes) $(k get users -q username=admin -q exact=true --fields id --format csv --noquotes) $(k get roles/platform-admin --fields id --format csv --noquotes)"
+marker=""
+while IFS=, read -r i n; do [ "$n" = "tenantry:platform-admins" ] && marker=$i; done <<< "$(k get groups -q search=tenantry:platform-admins -q exact=true --fields id,name --format csv --noquotes)"
+echo "$(k get users -q username=mallory -q exact=true --fields id --format csv --noquotes) $(k get users -q username=admin -q exact=true --fields id --format csv --noquotes) $(k get roles/platform-admin --fields id --format csv --noquotes) ${marker}"
 SH
 )"
-read -r KEYCLOAK_TEST_USER_ID KEYCLOAK_TEST_ADMIN_ID KEYCLOAK_TEST_ADMIN_ROLE_ID <<< "${ids}"
-export KEYCLOAK_TEST_USER_ID KEYCLOAK_TEST_ADMIN_ID KEYCLOAK_TEST_ADMIN_ROLE_ID KEYCLOAK_TEST_FGAP=1
+read -r KEYCLOAK_TEST_USER_ID KEYCLOAK_TEST_ADMIN_ID KEYCLOAK_TEST_ADMIN_ROLE_ID KEYCLOAK_TEST_MARKER_ID <<< "${ids}"
+export KEYCLOAK_TEST_USER_ID KEYCLOAK_TEST_ADMIN_ID KEYCLOAK_TEST_ADMIN_ROLE_ID KEYCLOAK_TEST_MARKER_ID
+# The narrowed checks run once the permissions are on (none in the rollback state).
+[ -z "${KEYCLOAK_TEST_MARKER_ID}" ] || export KEYCLOAK_TEST_FGAP=1
 
 # The secret goes into the test's environment, never onto a command line.
 KEYCLOAK_TEST_CLIENT_SECRET="$(kubectl -n tenantry-system get secret tenantry-keycloak-sync -o jsonpath='{.data.client-secret}' | base64 -d)"

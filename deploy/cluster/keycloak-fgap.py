@@ -13,10 +13,11 @@ exactly that through permissions of the realm's admin-permissions client:
                          Users, all: reset-password, DENIED (without it,
                          reset-password falls back to manage)
   tenantry-sync-not-platform-admins
-                         Group tenantry:platform-admins: view-members,
-                         manage-members, manage-membership,
+                         Group tenantry:platform-admins: view, manage,
+                         view-members, manage-members, manage-membership,
                          manage-membership-of-members, impersonate-members,
-                         DENIED. Every user holding the realm role
+                         DENIED (the group can be neither changed nor
+                         deleted, nor its members touched). Every user holding the realm role
                          platform-admin is put in that group: a deny on a
                          group's member scopes wins over user permissions.
 
@@ -46,6 +47,10 @@ import sys
 REALM = "tenantry"
 SA = "service-account-tenantry-sync"
 MARKER = "tenantry:platform-admins"
+# Denied to tenantry-sync on the marker group: the group itself (view,
+# manage: no renaming, deleting or reading it) and its members.
+DENIED_SCOPES = ["view", "manage", "view-members", "manage-members", "manage-membership",
+                 "manage-membership-of-members", "impersonate-members"]
 
 
 def doc(d):
@@ -76,15 +81,38 @@ for gid in $(k get groups --fields id --format csv --noquotes); do
   case "$rm" in *realmMappings*|*clientMappings*) say "group $gid carries a role mapping"; bad=1;; esac
 done
 [ "$bad" = 0 ] || {{ say "refusing: a group with roles would let tenantry-sync hand them out"; exit 1; }}
-say "checking that every platform-admin is in {MARKER}"
+fgap=$(k get realms/{REALM} --fields adminPermissionsEnabled --format csv --noquotes)
+if [ -z "${{APPLYING:-}}" ] && [ "$fgap" != true ]; then
+  say "admin permissions are off: tenantry-sync has manage-users (rollback state); nothing more to check"
+else
+say "checking that every platform-admin is in {MARKER}, and that the group is out of tenantry-sync's reach"
 gid=$(field "{MARKER}" "$(k get groups -q search="{MARKER}" -q exact=true --fields id,name --format csv --noquotes)")
 if [ -z "${{APPLYING:-}}" ]; then
-  members=""
-  [ -z "$gid" ] || members=$(k get "groups/$gid/members" --fields id --format csv --noquotes)
+  [ -n "$gid" ] || {{ say "no group {MARKER}"; exit 1; }}
+  members=$(k get "groups/$gid/members" --fields id --format csv --noquotes)
   for uid in $(k get roles/platform-admin/users --fields id --format csv --noquotes); do
     in=0; while IFS= read -r m; do [ "$m" = "$uid" ] && in=1; done <<< "$members"
     [ "$in" = 1 ] || {{ say "platform-admin $uid is not in {MARKER}: tenantry-sync could manage it"; bad=1; }}
   done
+  # The denying permission: on the group, with the scopes that keep it and
+  # its members out of reach, decided by the negative policy.
+  ap=$(k get clients -q clientId=admin-permissions --fields id --format csv --noquotes)
+  base="clients/$ap/authz/resource-server"
+  pid=$(field tenantry-sync-not-platform-admins "$(k get "$base/permission/scope" --fields id,name --format csv --noquotes)")
+  if [ -z "$pid" ]; then say "no permission tenantry-sync-not-platform-admins"; bad=1
+  else
+    res=$(k get "$base/policy/$pid/resources" --fields name --format csv --noquotes)
+    in=0; while IFS= read -r r; do [ "$r" = "$gid" ] && in=1; done <<< "$res"
+    [ "$in" = 1 ] || {{ say "tenantry-sync-not-platform-admins is not on {MARKER}"; bad=1; }}
+    scopes=$(k get "$base/policy/$pid/scopes" --fields name --format csv --noquotes)
+    for want in {" ".join(DENIED_SCOPES)}; do
+      in=0; while IFS= read -r x; do [ "$x" = "$want" ] && in=1; done <<< "$scopes"
+      [ "$in" = 1 ] || {{ say "tenantry-sync-not-platform-admins lacks the scope $want"; bad=1; }}
+    done
+    pols=$(k get "$base/policy/$pid/associatedPolicies" --fields name --format csv --noquotes)
+    [ "$pols" = tenantry-sync-sa-denied ] || {{ say "tenantry-sync-not-platform-admins is not decided by tenantry-sync-sa-denied alone"; bad=1; }}
+  fi
+fi
 fi
 [ "$bad" = 0 ] || exit 1
 """
@@ -125,7 +153,7 @@ done
         {"name": "tenantry-sync-no-reset-password", "resourceType": "Users", "scopes": ["reset-password"],
          "policies": ["tenantry-sync-sa-denied"]},
         {"name": "tenantry-sync-not-platform-admins", "resourceType": "Groups", "resources": ["__GROUP__"],
-         "scopes": ["view-members", "manage-members", "manage-membership", "manage-membership-of-members", "impersonate-members"],
+         "scopes": DENIED_SCOPES,
          "policies": ["tenantry-sync-sa-denied"]},
     ]
     for p in perms:

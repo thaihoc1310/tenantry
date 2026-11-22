@@ -78,8 +78,9 @@ func TestLiveKeycloak(t *testing.T) {
 // (architecture/06 §7): enabling a person's account still works, and none of
 // what would make it a Platform Admin does. Run by make keycloak-live-test
 // once the permissions are applied (KEYCLOAK_TEST_FGAP=1), with a plain user
-// (KEYCLOAK_TEST_USER_ID), a Platform Admin (KEYCLOAK_TEST_ADMIN_ID) and the
-// id of the platform-admin role (KEYCLOAK_TEST_ADMIN_ROLE_ID).
+// (KEYCLOAK_TEST_USER_ID), a Platform Admin (KEYCLOAK_TEST_ADMIN_ID), the id
+// of the platform-admin role (KEYCLOAK_TEST_ADMIN_ROLE_ID) and of the group
+// that keeps Platform Admins out of reach (KEYCLOAK_TEST_MARKER_ID).
 func TestLiveKeycloakNarrowed(t *testing.T) {
 	if os.Getenv("KEYCLOAK_TEST_URL") == "" || os.Getenv("KEYCLOAK_TEST_FGAP") == "" {
 		t.Skip("KEYCLOAK_TEST_URL or KEYCLOAK_TEST_FGAP not set")
@@ -92,8 +93,9 @@ func TestLiveKeycloakNarrowed(t *testing.T) {
 	}
 	c, ctx := NewClient(cfg), context.Background()
 	user, admin, role := os.Getenv("KEYCLOAK_TEST_USER_ID"), os.Getenv("KEYCLOAK_TEST_ADMIN_ID"), os.Getenv("KEYCLOAK_TEST_ADMIN_ROLE_ID")
-	if user == "" || admin == "" || role == "" {
-		t.Fatal("KEYCLOAK_TEST_USER_ID, KEYCLOAK_TEST_ADMIN_ID and KEYCLOAK_TEST_ADMIN_ROLE_ID are required")
+	marker := os.Getenv("KEYCLOAK_TEST_MARKER_ID")
+	if user == "" || admin == "" || role == "" || marker == "" {
+		t.Fatal("KEYCLOAK_TEST_USER_ID, KEYCLOAK_TEST_ADMIN_ID, KEYCLOAK_TEST_ADMIN_ROLE_ID and KEYCLOAK_TEST_MARKER_ID are required")
 	}
 
 	// What the worker does still works on a plain user.
@@ -126,6 +128,10 @@ func TestLiveKeycloakNarrowed(t *testing.T) {
 		{"disable a Platform Admin", "PUT", "/users/" + admin, map[string]any{"enabled": false}},
 		{"put a Platform Admin in a group", "PUT", "/users/" + admin + "/groups/" + group, nil},
 		{"reset a Platform Admin's password", "PUT", "/users/" + admin + "/reset-password", map[string]any{"type": "password", "value": "Pw-" + hex.EncodeToString(b), "temporary": true}},
+		// The group keeping Platform Admins out of reach cannot go away.
+		{"delete the Platform Admins' group", "DELETE", "/groups/" + marker, nil},
+		{"rename the Platform Admins' group", "PUT", "/groups/" + marker, map[string]any{"name": "renamed"}},
+		{"take a Platform Admin out of the group", "DELETE", "/users/" + admin + "/groups/" + marker, nil},
 		{"create a client", "POST", "/clients", map[string]any{"clientId": "tenantry-live-test-" + hex.EncodeToString(b)}},
 		{"change the realm", "PUT", "", map[string]any{"displayName": "taken over"}},
 	} {
