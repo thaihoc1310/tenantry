@@ -51,7 +51,7 @@ func run(args []string) error {
 	fs.StringVar(&o.proxyEndpoint, "proxy-endpoint", "", "Capsule Proxy URL, the server in tenant kubeconfigs (required)")
 	fs.StringVar(&o.consoleURL, "console-url", "", "Headlamp URL (required)")
 	fs.StringVar(&o.appsDomain, "apps-domain", "", "domain of tenant Routes (required)")
-	fs.StringVar(&o.networkCIDR, "network-cidr", "10.240.0.0/16", "address space of the shared network pool")
+	fs.StringVar(&o.networkCIDR, "network-cidr", "10.240.0.0/18", "address space of the shared network pool: the first quarter of the tenant supernet 10.240.0.0/16")
 	fs.StringVar(&o.storageClass, "storage-class", "standard", "StorageClass the onboarding grant allows")
 	if err := fs.Parse(args); err != nil {
 		return err

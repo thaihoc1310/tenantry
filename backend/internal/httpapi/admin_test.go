@@ -29,7 +29,7 @@ INSERT INTO clusters (id, display_name, status, proxy_endpoint, console_url, app
 INSERT INTO shared_compute_pools (id, cluster_id, name, allocation_overcommit_ratio) VALUES
   ('shared-general', 'cluster-a', 'Shared general', 3.0), ('shared-b', 'cluster-b', 'Shared B', 2.0);
 INSERT INTO network_pools (id, cluster_id, org_id, cidrs, default_prefix_length, allowed_prefix_lengths) VALUES
-  ('onboarding-pod-network', 'cluster-a', NULL, '{10.240.0.0/16}', 24, '{24}'),
+  ('onboarding-pod-network', 'cluster-a', NULL, '{10.240.0.0/18}', 24, '{24}'),
   ('acme-net', 'cluster-a', 'org-acme', '{10.241.0.0/16}', 24, '{20,24}'),
   ('net-b', 'cluster-b', NULL, '{10.250.0.0/16}', 24, '{24}');
 INSERT INTO onboarding_policies (id, default_cluster_id, entitlement_template, grant_template, active) VALUES

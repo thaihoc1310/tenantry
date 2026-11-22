@@ -62,5 +62,5 @@ seed:
   proxyEndpoint: ""   # Capsule Proxy URL, the server in tenant kubeconfigs
   consoleURL: ""      # Headlamp
   appsDomain: ""      # tenant Routes: <name>-<workspace>.<appsDomain>
-  networkCIDR: 10.240.0.0/16
+  networkCIDR: 10.240.0.0/18
   storageClass: standard

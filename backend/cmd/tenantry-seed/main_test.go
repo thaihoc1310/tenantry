@@ -23,7 +23,7 @@ import (
 var lab = options{
 	clusterID: "cluster-a", clusterName: "Cluster A",
 	proxyEndpoint: "https://kube-a.test", consoleURL: "https://console-a.test", appsDomain: "apps.test",
-	networkCIDR: "10.240.0.0/16", storageClass: "standard",
+	networkCIDR: "10.240.0.0/18", storageClass: "standard",
 }
 
 // The templates are exactly what the approval form takes, minus the cluster.
@@ -109,7 +109,7 @@ SELECT (SELECT string_agg(id || ':' || status, ',') FROM clusters) || ' ' ||
        (SELECT string_agg(id || ':' || default_cluster_id, ',') FROM onboarding_policies WHERE active)`).Scan(&state); err != nil {
 		t.Fatal(err)
 	}
-	if want := "cluster-a:Ready shared-general:2.50 onboarding-pod-network:10.240.0.0/16 default:cluster-a"; state != want {
+	if want := "cluster-a:Ready shared-general:2.50 onboarding-pod-network:10.240.0.0/18 default:cluster-a"; state != want {
 		t.Fatalf("after two runs: %s, want %s", state, want)
 	}
 }
