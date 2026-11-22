@@ -460,7 +460,10 @@ Trong một feature: trang (`*Page.vue`), component riêng của feature, và m�
      - `RequirePlatformAdmin`; `GET /admin/organizations?status=Pending` trả kèm grant điền sẵn từ policy; `POST /admin/organizations/{id}:approve|reject`.
      - Duyệt là một transaction: `Active`, entitlement, ClusterGrant đầy đủ (quota, shared pool, NetworkPool), 3 group mặc định `admins/developers/viewers`, Owner vào `admins`, audit. Từ chối: `Rejected` + `review_note`, nhả slug.
      - Ranh giới với milestone sau: group nằm ở `sync_status=Pending` cho tới khi Group Sync Worker có ở M4. Pool ở M3 chỉ có bảng và dữ liệu seed; API và UI quản lý pool, capacity math thuộc M5.
-  5. `GET /me`, `GET /organizations`, `/entitlement`, `/usage` (usage = 0 lúc này).
+  5. `GET /me`, `GET /organizations`, `/entitlement`, `/usage`:
+     - `/entitlement` trả `{ entitlement, clusterGrants[] }`, mỗi grant dùng schema `ClusterGrant` của bước 4.
+     - `/usage` theo spec §5.6: phần toàn Organization đếm thật (member, group, Workspace); phần theo từng grant bằng 0 cho tới khi có Workspace ở M7.
+     - Quyền theo spec §9.2: OrgOwner/OrgAdmin đọc được, OrgMember `403`, không phải member `404`, Organization chưa `Active` thì `409 ORG_NOT_ACTIVE` (thêm mã này vào enum `ErrorCode`).
   6. **Web**: dựng khung `web/` theo mục 6 (Vue 3, Vite, Vue Router, TanStack Query, Element Plus, client TypeScript sinh từ OpenAPI bằng `make generate`), kèm bộ component dùng chung `ErrorState`, `EmptyState`, `QuotaBar`, `StatusBadge`. Gồm layout, login redirect, màn trống "xin tạo Organization" (báo `SLUG_TAKEN` tại chỗ), trạng thái yêu cầu (chờ, hoặc bị từ chối kèm lý do), org switcher, Overview hiển thị grant/quota, trang Admin duyệt yêu cầu.
   7. **Deploy lên cụm**:
      - Chart `tenantry-web` (nginx); Ingress `portal.tenantry.site` đưa `/api` và `/auth` vào API, còn lại vào web.

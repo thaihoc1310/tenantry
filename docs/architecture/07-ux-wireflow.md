@@ -63,7 +63,7 @@ flowchart TB
 **Điểm cần review**
 
 - URL dùng **slug** (`/orgs/acme/workspaces/solar`) vì slug immutable — đổi display name không làm hỏng bookmark.
-- OrgMember chỉ có binding vào một Workspace vẫn thấy Overview của Org? Đề xuất: thấy Overview rút gọn (Workspace mình có quyền), không thấy quota/usage toàn Org, không thấy Members/Groups/Settings/Clusters.
+- **Đã chốt**: OrgMember thấy Overview rút gọn (các Workspace mình có quyền), không thấy quota/usage toàn Org, không thấy Members/Groups/Settings/Clusters. API từ chối tương ứng (`PRODUCT-PLAN.md` mục 9.2), portal không chỉ ẩn menu.
 
 ## 2. Wireflow — user mới (Alice)
 

@@ -466,9 +466,16 @@ MVP dùng hai resource profile rõ ràng:
 
 Quyết định này làm cho "Workspace được reserve 4 CPU/8 GiB trên node" có ý nghĩa kiểm chứng được, thay vì chỉ nhìn actual usage thay đổi từng giây hoặc cho phép limits của nhiều Workspace vượt capacity vật lý.
 
-### 5.5 Usage hiển thị
+### 5.6 Usage hiển thị
 
-Portal hiển thị theo từng ClusterGrant:
+`GET /organizations/{orgId}/usage` trả hai phần, mỗi con số đi kèm giới hạn của nó để portal vẽ thanh quota từ một response:
+
+- **toàn Organization**: số member, số group (không tính group đang chờ xóa), số Workspace, so với `maxMembers`, `maxGroups`, `maxWorkspacesTotal`. Đếm thật từ database, nên Organization vừa được duyệt đã có 1 member và 3 group;
+- **theo từng ClusterGrant**: allocated và remaining của mỗi con số trong grant, tính từ tổng các Workspace theo phạm vi ở 5.2 (CPU/RAM/Pod chỉ cộng Workspace Shared). Bằng 0 cho tới khi có Workspace.
+
+`GET /organizations/{orgId}/entitlement` trả global entitlement kèm danh sách ClusterGrant của Organization. Quyền đọc hai endpoint này ở 9.2.
+
+Các mục dưới đây được thêm dần theo milestone (pool, node và network ở M5/M8/M9, số đo thực tế khi có Prometheus). Portal hiển thị theo từng ClusterGrant:
 
 - allocated/remaining CPU, RAM, Pod, storage và Workspace count;
 - Workspace quota/claimed/used;
@@ -877,6 +884,10 @@ Không tạo membership chỉ dựa trên một email chưa được xác minh.
 | `OrgMember` | Xem Organization và Workspace mình được group cấp quyền; tự rời Organization |
 
 Đây là platform role, không tự động đồng nghĩa với Kubernetes role.
+
+Quota và usage của cả Organization (`/entitlement`, `/usage`) chỉ OrgOwner và OrgAdmin đọc được. OrgMember nhận `403 FORBIDDEN`; người không phải member nhận `404` như mọi endpoint của Organization, để không lộ Organization có tồn tại hay không. OrgMember chỉ thấy Overview rút gọn gồm các Workspace mình có quyền, không thấy Members, Groups, Settings, Clusters.
+
+Organization `Pending` hoặc `Rejected` chưa có entitlement và grant. Mọi endpoint cần Organization đã được duyệt (đọc `/entitlement`, `/usage`; về sau là mời member, tạo group, tạo Workspace) trả `409 ORG_NOT_ACTIVE`. Thứ tự kiểm: membership (404) → role (403) → trạng thái (409).
 
 Transfer ownership: Owner chọn một OrgAdmin làm người nhận → portal tạo yêu cầu có expiry → người nhận xác nhận trong portal → trong một transaction đổi role hai bên (người nhận thành Owner, Owner cũ thành OrgAdmin) và ghi audit.
 
@@ -1294,8 +1305,8 @@ GET    /api/v1/organizations                       # các Org user là member, k
 POST   /api/v1/organizations                       # xin tạo Org: slug, displayName, description → Pending
 GET    /api/v1/organizations/{orgId}
 PATCH  /api/v1/organizations/{orgId}               # display name/description; slug immutable
-GET    /api/v1/organizations/{orgId}/entitlement
-GET    /api/v1/organizations/{orgId}/usage
+GET    /api/v1/organizations/{orgId}/entitlement           # global entitlement + các ClusterGrant; chỉ OrgOwner/OrgAdmin (9.2)
+GET    /api/v1/organizations/{orgId}/usage                 # đã dùng/giới hạn toàn Org và theo từng grant (5.6)
 POST   /api/v1/organizations/{orgId}:transfer-ownership     # Owner đề nghị cho một OrgAdmin
 POST   /api/v1/ownership-transfers/{token}:accept           # người nhận xác nhận
 POST   /api/v1/organizations/{orgId}/members/me:leave       # tự rời Org (không áp dụng Owner)
@@ -1429,6 +1440,7 @@ API mutation trả operation ID nếu có Kubernetes reconciliation. Error có s
 
 - `CLUSTER_GRANT_CPU_QUOTA_EXCEEDED`;
 - `CLUSTER_GRANT_BELOW_ALLOCATION`;
+- `ORG_NOT_ACTIVE`;
 - `CLUSTER_NOT_GRANTED`;
 - `CLUSTER_NOT_READY`;
 - `COMPUTE_POOL_CAPACITY_EXCEEDED`;
