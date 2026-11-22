@@ -65,7 +65,9 @@ PORTAL_HOST="${PORTAL_HOST}" CONSOLE_HOST="${CONSOLE_HOST}" \
   "${CLUSTER_DIR}/realm-sync.py" "${CLUSTER_DIR}/../keycloak/realm-tenantry.json" |
   kubectl -n keycloak exec -i keycloak-0 -- bash -s
 
-# tenantry-sync works through fine-grained admin permissions, not manage-users
-# (architecture/06 §7): realm-sync.py has just left its service account with
-# query-users and query-groups; the permissions follow at once.
-"${CLUSTER_DIR}/keycloak-fgap.py" apply | kubectl -n keycloak exec -i keycloak-0 -- bash -s
+# tenantry-sync keeps manage-users for now: keycloak-fgap.py apply is not run.
+# On the lab (Keycloak 26.8.2) its permissions left the service account unable
+# to enable a user or add one to a group (403), so it was rolled back. Put
+# this step back, with query-users and query-groups in realm-tenantry.json,
+# once make keycloak-live-test passes with the permissions on.
+# "${CLUSTER_DIR}/keycloak-fgap.py" apply | kubectl -n keycloak exec -i keycloak-0 -- bash -s
