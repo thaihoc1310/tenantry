@@ -1,0 +1,15 @@
+# The context of Dockerfile.backend is the repository root (BuildKit reads
+# this file instead of a .dockerignore there): only what `go build ./cmd/...`
+# of the backend needs, the backend and the operator's Go sources.
+*
+!backend/go.mod
+!backend/go.sum
+!backend/cmd/
+!backend/internal/
+!backend/migrations/
+!operator/go.mod
+!operator/go.sum
+!operator/api/
+!operator/cmd/
+!operator/internal/
+**/*_test.go

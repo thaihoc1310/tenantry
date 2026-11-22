@@ -14,11 +14,14 @@ ROOT="${CLUSTER_DIR}/../.."
 # file of the build context that git does not ignore), not the image id,
 # which changes on every build (BuildKit stamps a time into it). Same
 # sources, same tag: nothing is rebuilt, loaded or restarted.
-image() { # name dockerfile context: build if needed, load, print the tag
-  local name="$1" dockerfile="$2" context="$3" tag node missing=""
+image() { # name dockerfile context [source dir...]: build if needed, load, print the tag
+  # The tag hashes the source dirs (the context by default), not the whole context.
+  local name="$1" dockerfile="$2" context="$3" tag node missing="" sources
+  shift 3
+  sources=("${@:-.}")
   tag="src-$({
     cat "${dockerfile}"
-    (cd "${context}" && git ls-files -co --exclude-standard -z | sort -z | xargs -0 sha256sum)
+    (cd "${context}" && git ls-files -co --exclude-standard -z -- "${sources[@]}" | sort -z | xargs -0 sha256sum)
   } | sha256sum | cut -c1-12)"
   for node in ${SYSTEM_NODES}; do
     ssh -o BatchMode=yes "${node}" sudo -n ctr -n k8s.io images ls -q "name==docker.io/${name}:${tag}" | grep -q . ||
@@ -33,7 +36,8 @@ image() { # name dockerfile context: build if needed, load, print the tag
   fi
   echo "${tag}"
 }
-backend_tag="$(image tenantry/backend "${ROOT}/deploy/Dockerfile.backend" "${ROOT}/backend")"
+# The backend builds from the repository root: it needs operator/ too.
+backend_tag="$(image tenantry/backend "${ROOT}/deploy/Dockerfile.backend" "${ROOT}" backend operator)"
 web_tag="$(image tenantry/web "${ROOT}/deploy/Dockerfile.web" "${ROOT}/web")"
 echo "images: tenantry/backend:${backend_tag} tenantry/web:${web_tag}"
 

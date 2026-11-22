@@ -1,16 +1,20 @@
 # One image for every backend binary (tenantry-api, tenantry-worker,
 # tenantry-migrate, tenantry-seed); each workload picks its binary with `command`.
+# The context is the repository root: the backend builds the operator's CRs
+# from operator/api (backend/go.mod replaces the module with ../operator).
 #
-#   docker build -f deploy/Dockerfile.backend -t tenantry/backend:dev backend
+#   docker build -f deploy/Dockerfile.backend -t tenantry/backend:dev .
 
 FROM golang:1.26.8-bookworm AS build
-WORKDIR /src
+WORKDIR /src/backend
 # Modules first so a code change does not download them again.
-COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
-COPY . .
+COPY backend/go.mod backend/go.sum ./
+COPY operator/go.mod operator/go.sum ../operator/
+RUN --mount=type=cache,target=/go/pkg/mod GOWORK=off go mod download
+COPY operator/ ../operator/
+COPY backend/ ./
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/...
+    GOWORK=off CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/...
 
 # No shell, no package manager, uid 65532. Pinned by digest: the tag moves.
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab

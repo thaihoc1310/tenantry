@@ -90,7 +90,7 @@ CHART_LINT_SET := --set database.existingSecret=lint --set api.auth.existingSecr
 IMAGE ?= tenantry/backend:dev
 WEB_LINT_SET := --set ingress.host=portal.example.com --set ingress.clusterIssuer=lint
 image: ## Build the backend and portal images (make deploy builds and loads them itself)
-	docker build -f deploy/Dockerfile.backend -t $(IMAGE) $(BACKEND)
+	docker build -f deploy/Dockerfile.backend -t $(IMAGE) $(ROOT)
 	docker build -f deploy/Dockerfile.web -t tenantry/web:dev $(WEB)
 chart-lint: ## Lint and render the charts
 	helm lint deploy/charts/tenantry-backend $(CHART_LINT_SET)
@@ -105,7 +105,7 @@ chart-lint: ## Lint and render the charts
 	helm template tenantry-web deploy/charts/tenantry-web $(WEB_LINT_SET) >/dev/null
 
 .PHONY: generate build fmt fmt-check vet lint test
-generate: ## Regenerate code from openapi/tenantry.v1.yaml, Go and TypeScript (commit the result)
+generate: operator-generate ## Regenerate code: the operator's CRDs, then the backend and TypeScript from openapi/tenantry.v1.yaml (commit the result)
 	cd $(BACKEND) && go generate ./...
 	cd $(WEB) && npm run --silent generate
 build: ## Build every backend binary into bin/

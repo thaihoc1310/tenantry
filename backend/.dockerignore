@@ -1,8 +1,0 @@
-# Only what `go build ./cmd/...` needs goes into the build context.
-*
-!go.mod
-!go.sum
-!cmd/
-!internal/
-!migrations/
-**/*_test.go
