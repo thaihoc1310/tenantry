@@ -1,9 +1,10 @@
 # Tenantry — single entry point for dev/test/deploy (IMPLEMENTATION-PLAN §10).
-# Targets grow with the milestones; today it covers the backend only.
+# Targets grow with the milestones: backend, web portal, cluster.
 SHELL := /bin/bash
 ROOT  := $(shell pwd)
 
 BACKEND := $(ROOT)/backend
+WEB     := $(ROOT)/web
 COMPOSE := $(ROOT)/deploy/compose/docker-compose.dev.yml
 
 DATABASE_URL ?= postgres://tenantry:tenantry@localhost:5432/tenantry?sslmode=disable
@@ -39,7 +40,13 @@ SEED_FLAGS ?= --proxy-endpoint https://kube-a.tenantry.site --console-url https:
 seed: ## Seed cluster-a, its pools and the onboarding policy; safe to re-run
 	cd $(BACKEND) && go run ./cmd/tenantry-seed $(SEED_FLAGS)
 
-.PHONY: run-api run-worker
+.PHONY: run-api run-worker run-web web-install web-check
+web-install: ## Install the portal's npm packages, exactly as locked
+	cd $(WEB) && npm ci
+run-web: ## Run the portal on http://localhost:5173 (proxies /api and /auth to make run-api)
+	cd $(WEB) && npm run dev
+web-check: ## Type check, lint, unit tests and production build of the portal
+	cd $(WEB) && npm run typecheck && npm run lint && npm test && npx vite build
 # Local logins go through the lab's Keycloak and land on the Vite dev server
 # (IMPLEMENTATION-PLAN §10). The portal client secret and a session key stay
 # outside the repo, in DEV_SECRETS:
@@ -77,8 +84,9 @@ chart-lint: ## Lint and render the tenantry-backend chart
 	helm template tenantry deploy/charts/tenantry-backend $(CHART_LINT_SET) >/dev/null
 
 .PHONY: generate build fmt fmt-check vet lint test
-generate: ## Regenerate code from openapi/tenantry.v1.yaml (commit the result)
+generate: ## Regenerate code from openapi/tenantry.v1.yaml, Go and TypeScript (commit the result)
 	cd $(BACKEND) && go generate ./...
+	cd $(WEB) && npm run --silent generate
 build: ## Build every backend binary into bin/
 	cd $(BACKEND) && go build -o $(ROOT)/bin/ ./cmd/...
 fmt: ## gofmt
