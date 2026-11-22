@@ -1,0 +1,22 @@
+{
+  "responses": {
+    "200": {
+      "items": [
+        {
+          "mode": "Shared",
+          "available": true
+        },
+        {
+          "mode": "Dedicated",
+          "available": false,
+          "reason": "No node of this cluster is dedicated to your organization."
+        }
+      ]
+    },
+    "404": {
+      "code": "NOT_FOUND",
+      "message": "this organization has no grant on that cluster",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K"
+    }
+  }
+}

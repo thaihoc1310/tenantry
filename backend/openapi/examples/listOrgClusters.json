@@ -1,0 +1,25 @@
+{
+  "responses": {
+    "200": {
+      "items": [
+        {
+          "id": "cluster-a",
+          "displayName": "Cluster A",
+          "status": "Ready",
+          "proxyEndpoint": "https://kube-a.tenantry.site",
+          "consoleUrl": "https://console-a.tenantry.site",
+          "appsDomain": "mvp.tenantry.site",
+          "grantId": "grant-01jd3m8a1b2c3d4e5f6g7h8j9k",
+          "isDefault": true,
+          "sharedPools": 1,
+          "dedicatedNodes": 1
+        }
+      ]
+    },
+    "403": {
+      "code": "FORBIDDEN",
+      "message": "requires OrgOwner or OrgAdmin",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K"
+    }
+  }
+}

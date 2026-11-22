@@ -189,6 +189,137 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/OrgNotActive" }
 
+  /organizations/{orgId}/clusters:
+    parameters:
+      - $ref: "#/components/parameters/orgId"
+    get:
+      operationId: listOrgClusters
+      summary: The clusters the organization is granted, the default first (OrgOwner or OrgAdmin)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrgClusterList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: The organization is not Active (`ORG_NOT_ACTIVE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /organizations/{orgId}/clusters/{clusterId}:
+    parameters:
+      - $ref: "#/components/parameters/orgId"
+      - $ref: "#/components/parameters/clusterId"
+    get:
+      operationId: getOrgCluster
+      summary: One cluster the organization is granted (OrgOwner or OrgAdmin)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrgCluster" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: The organization is not Active (`ORG_NOT_ACTIVE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /organizations/{orgId}/clusters/{clusterId}/compute-options:
+    parameters:
+      - $ref: "#/components/parameters/orgId"
+      - $ref: "#/components/parameters/clusterId"
+    get:
+      operationId: getComputeOptions
+      summary: Which compute modes the organization can use on a cluster, and why not (OrgOwner or OrgAdmin)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComputeOptions" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: The organization is not Active (`ORG_NOT_ACTIVE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /organizations/{orgId}/clusters/{clusterId}/shared-pools:
+    parameters:
+      - $ref: "#/components/parameters/orgId"
+      - $ref: "#/components/parameters/clusterId"
+    get:
+      operationId: listOrgSharedPools
+      summary: The shared pools of the organization's grant on a cluster, as a summary (OrgOwner or OrgAdmin)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrgSharedPoolList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: The organization is not Active (`ORG_NOT_ACTIVE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /organizations/{orgId}/clusters/{clusterId}/dedicated-nodes:
+    parameters:
+      - $ref: "#/components/parameters/orgId"
+      - $ref: "#/components/parameters/clusterId"
+    get:
+      operationId: listOrgDedicatedNodes
+      summary: The nodes dedicated to the organization on a cluster, with their capacity (OrgOwner or OrgAdmin)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrgDedicatedNodeList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: The organization is not Active (`ORG_NOT_ACTIVE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /organizations/{orgId}/clusters/{clusterId}/network-pools:
+    parameters:
+      - $ref: "#/components/parameters/orgId"
+      - $ref: "#/components/parameters/clusterId"
+    get:
+      operationId: listOrgNetworkPools
+      summary: The network pools of the organization's grant on a cluster (OrgOwner or OrgAdmin)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrgNetworkPoolList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: The organization is not Active (`ORG_NOT_ACTIVE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
   /organizations/{orgId}/invitations:
     parameters:
       - $ref: "#/components/parameters/orgId"
@@ -2067,6 +2198,114 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/DedicatedNode" }
+
+    OrgCluster:
+      type: object
+      description: A cluster as an organization sees it, without the ranges it reserves.
+      required: [id, displayName, status, proxyEndpoint, consoleUrl, appsDomain, grantId, isDefault, sharedPools, dedicatedNodes]
+      properties:
+        id: { type: string }
+        displayName: { type: string }
+        status: { type: string, enum: [Registered, Ready, Maintenance, Unavailable] }
+        proxyEndpoint: { type: string }
+        consoleUrl: { type: string }
+        appsDomain: { type: string }
+        grantId: { type: string }
+        isDefault: { type: boolean, description: The organization's default cluster }
+        sharedPools: { type: integer, description: Shared pools the grant lists }
+        dedicatedNodes: { type: integer, description: Nodes dedicated to the organization there }
+
+    OrgClusterList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/OrgCluster" }
+
+    ComputeOptions:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [mode, available]
+            properties:
+              mode: { type: string, enum: [Shared, Dedicated] }
+              available: { type: boolean }
+              reason: { type: string, description: Why the mode cannot be chosen }
+
+    OrgSharedPool:
+      type: object
+      description: A shared pool as a summary; its nodes are not shown.
+      required: [id, name, nodeCount, capacity]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        nodeCount: { type: integer }
+        capacity:
+          type: object
+          description: "ceiling: what all Workspaces on the pool may reserve; allocated: what they do"
+          required: [ceiling, allocated]
+          properties:
+            ceiling: { $ref: "#/components/schemas/NodeCapacity" }
+            allocated: { $ref: "#/components/schemas/NodeCapacity" }
+
+    OrgSharedPoolList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/OrgSharedPool" }
+
+    OrgDedicatedNode:
+      type: object
+      required: [id, name, nodeState, capacityState, reservable, reserved, remaining, workspaces]
+      properties:
+        id: { type: string, description: The node grant's id }
+        name: { type: string }
+        nodeState: { type: string, enum: [Ready, NotReady, Cordoned] }
+        capacityState: { type: string, enum: [Available, PartiallyAllocated, FullyAllocated, Overcommitted] }
+        reservable: { $ref: "#/components/schemas/NodeCapacity" }
+        reserved: { $ref: "#/components/schemas/NodeCapacity" }
+        remaining: { $ref: "#/components/schemas/NodeCapacity" }
+        workspaces:
+          type: array
+          description: The organization's Workspaces holding a reservation on the node
+          items: { type: string }
+
+    OrgDedicatedNodeList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/OrgDedicatedNode" }
+
+    OrgNetworkPool:
+      type: object
+      required: [id, cidrs, defaultPrefixLength, allowedPrefixLengths, shared]
+      properties:
+        id: { type: string }
+        cidrs:
+          type: array
+          items: { type: string }
+        defaultPrefixLength: { type: integer }
+        allowedPrefixLengths:
+          type: array
+          items: { type: integer }
+        shared: { type: boolean, description: "Any organization's grant may list it; false: the organization's own" }
+
+    OrgNetworkPoolList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/OrgNetworkPool" }
 
     AdminOrganizationCreate:
       type: object

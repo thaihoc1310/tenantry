@@ -86,13 +86,18 @@ func (s *Service) SharedPools(ctx context.Context, clusterID string) ([]PoolView
 	} else if err != nil {
 		return nil, err
 	}
-	rows, err := s.q.ListSharedPools(ctx, clusterID)
+	return PoolViews(ctx, s.q, clusterID)
+}
+
+// PoolViews lists a cluster's shared pools with their capacity.
+func PoolViews(ctx context.Context, q *store.Queries, clusterID string) ([]PoolView, error) {
+	rows, err := q.ListSharedPools(ctx, clusterID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]PoolView, 0, len(rows))
 	for _, r := range rows {
-		v, err := poolView(ctx, s.q, r.SharedComputePool, r.Nodes)
+		v, err := poolView(ctx, q, r.SharedComputePool, r.Nodes)
 		if err != nil {
 			return nil, err
 		}
@@ -530,7 +535,12 @@ type NodeRequest struct {
 
 // DedicatedNodes lists the nodes an organization holds on a cluster.
 func (s *Service) DedicatedNodes(ctx context.Context, orgID, clusterID string) ([]DedicatedNode, error) {
-	rows, err := s.q.ListLiveDedicatedNodes(ctx, store.ListLiveDedicatedNodesParams{OrgID: orgID, ClusterID: clusterID})
+	return DedicatedNodesOf(ctx, s.q, orgID, clusterID)
+}
+
+// DedicatedNodesOf lists the nodes an organization holds on a cluster, with their capacity.
+func DedicatedNodesOf(ctx context.Context, q *store.Queries, orgID, clusterID string) ([]DedicatedNode, error) {
+	rows, err := q.ListLiveDedicatedNodes(ctx, store.ListLiveDedicatedNodesParams{OrgID: orgID, ClusterID: clusterID})
 	if err != nil {
 		return nil, err
 	}
