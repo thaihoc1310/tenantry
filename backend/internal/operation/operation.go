@@ -92,13 +92,23 @@ func Move(ctx context.Context, q *store.Queries, opID string, to State, errCode,
 	return op, err == nil, err
 }
 
+// Reapply writes the change of a Failed operation to the outbox again, when
+// every event of it was delivered and the controller reported the failure.
+// It runs in the retry's transaction.
+type Reapply func(ctx context.Context, q *store.Queries, op store.Operation) error
+
 // Service serves operations to users.
 type Service struct {
-	db *pgxpool.Pool
-	q  *store.Queries
+	db      *pgxpool.Pool
+	q       *store.Queries
+	reapply map[string]Reapply // by resource type
 }
 
-func NewService(db *pgxpool.Pool) *Service { return &Service{db: db, q: store.New(db)} }
+// NewService serves operations; reapply says, per resource type (Workspace),
+// how to retry a failure the controller reported.
+func NewService(db *pgxpool.Pool, reapply map[string]Reapply) *Service {
+	return &Service{db: db, q: store.New(db), reapply: reapply}
+}
 
 // Get returns an operation to any member of its organization, and to a
 // Platform Admin for every organization; others get ErrNotFound.
@@ -108,10 +118,9 @@ func (s *Service) Get(ctx context.Context, userID string, platformAdmin bool, op
 }
 
 // Retry puts a Failed operation back to Pending and has its undelivered events
-// sent again at once (OrgOwner, OrgAdmin, or a Platform Admin for any organization).
-//
-// A failure the controller reported has no undelivered event left; the
-// Workspace service will re-enqueue the apply for that case when it exists (M6).
+// sent again at once (OrgOwner, OrgAdmin, or a Platform Admin for any
+// organization). A failure the controller reported has no undelivered event
+// left: the change is written again through the resource type's Reapply.
 func (s *Service) Retry(ctx context.Context, userID string, platformAdmin bool, opID string) (store.Operation, error) {
 	row, err := s.find(ctx, userID, platformAdmin, opID)
 	if err != nil {
@@ -136,8 +145,14 @@ func (s *Service) Retry(ctx context.Context, userID string, platformAdmin bool, 
 			return ErrNotRetrying
 		}
 		op = moved
-		if _, err := q.ResetOperationEvents(ctx, opID); err != nil {
+		n, err := q.ResetOperationEvents(ctx, opID)
+		if err != nil {
 			return err
+		}
+		if reapply := s.reapply[op.ResourceType]; n == 0 && reapply != nil {
+			if err := reapply(ctx, q, op); err != nil {
+				return err
+			}
 		}
 		return audit.Record(ctx, q, audit.Event{
 			Actor: userID, OrgID: deref(op.OrgID), Action: audit.OperationRetry, TargetType: "Operation", TargetID: op.ID,

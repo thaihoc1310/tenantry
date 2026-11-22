@@ -85,6 +85,17 @@ func (f *fakeCluster) get(gvr schema.GroupVersionResource, name string) *unstruc
 	return nil
 }
 
+// setStatus replaces a CR's status as the controller would; status is a pointer.
+func (f *fakeCluster) setStatus(gvr schema.GroupVersionResource, name string, status any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(status)
+	if err != nil {
+		panic(err)
+	}
+	f.objs[gvr][name].Object["status"] = m
+}
+
 func list[T any](f *fakeCluster, gvr schema.GroupVersionResource) ([]T, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

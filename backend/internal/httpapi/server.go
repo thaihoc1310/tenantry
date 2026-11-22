@@ -47,7 +47,7 @@ func Register(r chi.Router, db *pgxpool.Pool, a *auth.Service, trustedProxies []
 	}
 	orgs := org.NewService(db)
 	srv := server{
-		orgs: orgs, users: user.NewService(db), clusters: reservation.NewService(db), ops: operation.NewService(db),
+		orgs: orgs, users: user.NewService(db), clusters: reservation.NewService(db), ops: operation.NewService(db, map[string]operation.Reapply{"Workspace": workspace.Reapply}),
 		workspaces: workspace.NewService(db, orgs), publicURL: publicURL(a),
 	}
 	api := oapi.NewStrictHandlerWithOptions(srv, nil, oapi.StrictHTTPServerOptions{

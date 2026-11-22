@@ -161,3 +161,10 @@ GROUP BY cluster_grant_id;
 
 -- name: CountWorkspaces :one
 SELECT count(*)::int FROM workspaces WHERE org_id = $1 AND state <> 'Deleted';
+
+-- name: RetryWorkspace :one
+-- A retry after a failure the controller reported: the next spec version,
+-- back to Provisioning or Updating (04-state-machines §1.3).
+UPDATE workspaces SET desired_generation = desired_generation + 1, state = @state, updated_at = now()
+WHERE id = @id
+RETURNING *;

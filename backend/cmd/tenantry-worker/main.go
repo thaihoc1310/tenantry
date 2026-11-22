@@ -115,12 +115,19 @@ func run(args []string) error {
 	return nil
 }
 
-// runProvisioning delivers events and keeps the health check fresh until ctx
-// ends; each part stops on its own when it does.
+// runProvisioning delivers events, copies the CRs' status back once the
+// watch cache has synced, and keeps the health check fresh, until ctx ends.
 func runProvisioning(ctx context.Context, pool *pgxpool.Pool, cfg config.Provisioning, cluster *k8s.Client, log *slog.Logger) {
 	var wg sync.WaitGroup
 	wg.Go(func() { outbox.NewWorker(pool, cfg.ClusterID, provisioning.Handler(cluster), log).Run(ctx) })
 	wg.Go(func() { provisioning.RunHealth(ctx, pool, cfg.ClusterID, cluster, log) })
+	wg.Go(func() {
+		if err := cluster.Start(ctx); err != nil {
+			log.Error("watching the cluster failed; status is not copied back", "err", err)
+			return
+		}
+		provisioning.NewSyncer(pool, cfg.ClusterID, cluster, cfg.OperationTimeout, log).Run(ctx)
+	})
 	wg.Wait()
 }
 

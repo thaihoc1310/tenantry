@@ -689,6 +689,50 @@ func (q *Queries) ResyncGroupMembers(ctx context.Context, groupIds []string) (in
 	return result.RowsAffected(), nil
 }
 
+const retryWorkspace = `-- name: RetryWorkspace :one
+UPDATE workspaces SET desired_generation = desired_generation + 1, state = $1, updated_at = now()
+WHERE id = $2
+RETURNING id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at
+`
+
+type RetryWorkspaceParams struct {
+	State string
+	ID    string
+}
+
+// A retry after a failure the controller reported: the next spec version,
+// back to Provisioning or Updating (04-state-machines §1.3).
+func (q *Queries) RetryWorkspace(ctx context.Context, arg RetryWorkspaceParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, retryWorkspace, arg.State, arg.ID)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ClusterID,
+		&i.ClusterGrantID,
+		&i.Slug,
+		&i.K8sName,
+		&i.DisplayName,
+		&i.State,
+		&i.RequestsCpuMilli,
+		&i.RequestsMemoryBytes,
+		&i.LimitsCpuMilli,
+		&i.LimitsMemoryBytes,
+		&i.Pods,
+		&i.RequestsStorageBytes,
+		&i.NamespaceQuota,
+		&i.ComputeMode,
+		&i.SharedPoolID,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.Conditions,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const setNamespaceState = `-- name: SetNamespaceState :one
 UPDATE workspace_namespaces SET state = $2, updated_at = now() WHERE id = $1 RETURNING id, workspace_id, cluster_id, name, source, state, usage_snapshot, created_at, updated_at
 `

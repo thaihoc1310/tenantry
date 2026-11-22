@@ -2,9 +2,11 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -129,4 +131,38 @@ func newOperation(ctx context.Context, q *store.Queries, ws store.Workspace, typ
 		OrgID: ws.OrgID, ResourceType: "Workspace", ResourceID: ws.ID, Type: typ,
 		CorrelationID: correlationID, CreatedBy: actor,
 	})
+}
+
+// Reapply writes the Workspace's CR again under op, a Failed operation being
+// retried after every event of it was delivered: the controller reported
+// the failure (IMPLEMENTATION-PLAN §5.1). A new spec.retryNonce gives the
+// CR a new generation, so the worker can tell the status after the retry
+// from the one before; reservations stay as they are.
+func Reapply(ctx context.Context, q *store.Queries, op store.Operation) error {
+	ws, err := q.LockWorkspace(ctx, op.ResourceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // the Workspace is gone: nothing to write again
+	}
+	if err != nil {
+		return err
+	}
+	state := ws.State
+	switch ws.State {
+	case StateFailed:
+		state = StateProvisioning
+	case StateDegraded, StateReady:
+		state = StateUpdating
+	}
+	if ws, err = q.RetryWorkspace(ctx, store.RetryWorkspaceParams{ID: ws.ID, State: state}); err != nil {
+		return err
+	}
+	cr, err := BuildCR(ctx, q, ws)
+	if err != nil {
+		return err
+	}
+	cr.Spec.RetryNonce = op.ID + "-" + strconv.FormatInt(ws.DesiredGeneration, 10)
+	_, err = outbox.Enqueue(ctx, q, op, outbox.Event{
+		TargetClusterID: ws.ClusterID, Type: EventApply, Payload: cr, Version: ws.DesiredGeneration,
+	})
+	return err
 }
