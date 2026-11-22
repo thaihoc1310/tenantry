@@ -138,9 +138,9 @@ func TestPersonas(t *testing.T) {
 
 	step(t, "Alice makes the Shared Workspace Solar, 2 CPU / 4Gi requests, 4 CPU / 8Gi limits, network auto-allocated")
 	bindings := []any{
-		map[string]any{"groupId": gs["admins"].ID, "groupName": "admins", "role": "TenantOwner"},
-		map[string]any{"groupId": gs["developers"].ID, "groupName": "developers", "role": "Developer"},
-		map[string]any{"groupId": gs["viewers"].ID, "groupName": "viewers", "role": "Viewer"},
+		map[string]any{"groupId": gs["admins"].ID, "role": "TenantOwner"},
+		map[string]any{"groupId": gs["developers"].ID, "role": "Developer"},
+		map[string]any{"groupId": gs["viewers"].ID, "role": "Viewer"},
 	}
 	var solar workspace
 	alice.api(t, http.MethodPost, "/organizations/"+slug+"/workspaces", map[string]any{
