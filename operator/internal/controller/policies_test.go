@@ -241,6 +241,8 @@ func TestChartPolicies(t *testing.T) {
 	p := inNet("system")
 	p.Namespace = "vap-system"
 	expectAllowed(t, "a Pod outside the Workspaces", rsController.Create(ctx, p))
+
+	checkAccessPolicies(t)
 }
 
 // expectNoParam: the network-ready policy refuses with the API server's

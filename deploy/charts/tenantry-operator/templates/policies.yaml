@@ -218,3 +218,109 @@ spec:
       matchExpressions:
         - {key: capsule.clastix.io/tenant, operator: Exists}
         - {key: tenantry.io/network, operator: In, values: ["true"]}
+---
+# Routes are the only way in (PRODUCT-PLAN §7.6, architecture/05 §7): a
+# tenant writes no Ingress, no cert-manager object (it could get a
+# certificate for someone else's host through the ClusterIssuer), no Gateway
+# API or Traefik object. Capsule's admin role and cert-manager's aggregation
+# give Workspace owners those rights, hence the policy. Only tenant callers
+# (oidc:) are refused, never "everyone but X": the operator writes the
+# Ingresses, and the namespace controller and garbage collector must delete
+# them with their Namespace.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: tenantry-tenant-ingress-lockdown
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [networking.k8s.io]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [ingresses]
+      - apiGroups: [cert-manager.io, acme.cert-manager.io, gateway.networking.k8s.io, traefik.io, traefik.containo.us]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: ["*"]
+  matchConditions:
+    - name: tenant-caller
+      expression: request.userInfo.username.startsWith('oidc:')
+  validations:
+    - expression: 'false'
+      reason: Forbidden
+      messageExpression: >-
+        request.resource.resource + ' cannot be written in a Workspace; a Route on the portal publishes an app'
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: tenantry-tenant-ingress-lockdown
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+spec:
+  policyName: tenantry-tenant-ingress-lockdown
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - {key: capsule.clastix.io/tenant, operator: Exists}
+---
+# A Workspace owner binds only their own Organization's groups and the
+# Workspace's ServiceAccounts (architecture/05 §7, 06 §5): revoking a member
+# from a group then revokes their Kubernetes rights. The Organization is the
+# Namespace's tenantry.io/org label, the Tenant its capsule.clastix.io/tenant
+# label; Capsule keeps both. Users, other Organizations' groups and the group
+# of every tenant user (oidc:tenantry:tenant-users) are refused. Only tenant
+# callers (oidc:) are checked: Capsule's additionalRoleBindings come from
+# Capsule.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: tenantry-tenant-rolebinding-subjects
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [rbac.authorization.k8s.io]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [rolebindings]
+  matchConditions:
+    - name: tenant-caller
+      expression: request.userInfo.username.startsWith('oidc:')
+  variables:
+    - name: labels
+      expression: 'has(namespaceObject.metadata.labels) ? namespaceObject.metadata.labels : {}'
+    - name: groupPrefix
+      expression: "'tenantry.io/org' in variables.labels ? 'oidc:org_' + variables.labels['tenantry.io/org'] + ':' : ''"
+    - name: saPrefix
+      expression: "'capsule.clastix.io/tenant' in variables.labels ? variables.labels['capsule.clastix.io/tenant'] + '-' : ''"
+  validations:
+    - expression: >-
+        variables.groupPrefix != '' && variables.saPrefix != '' &&
+        (!has(object.subjects) || object.subjects.all(s,
+          (s.kind == 'Group' && s.name.startsWith(variables.groupPrefix)) ||
+          (s.kind == 'ServiceAccount' && s.?namespace.orValue('').startsWith(variables.saPrefix))))
+      reason: Forbidden
+      messageExpression: >-
+        'RoleBinding subjects in a Workspace must be groups of its Organization (' + variables.groupPrefix +
+        '...) or ServiceAccounts of its Namespaces (' + variables.saPrefix + '...)'
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: tenantry-tenant-rolebinding-subjects
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+spec:
+  policyName: tenantry-tenant-rolebinding-subjects
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - {key: capsule.clastix.io/tenant, operator: Exists}
