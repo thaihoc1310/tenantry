@@ -547,7 +547,7 @@ flowchart TB
     D2["Worker xóa CR (Background propagation)<br/>Operation: Running"]
     D3["Finalizer: gỡ owners và RoleBinding (tenant mất quyền),<br/>gỡ cordoned khỏi Tenant"]
     D4["Xóa mọi Namespace (PVC theo Namespace),<br/>đợi biến mất"]
-    D5["Xóa TenantResource, Tenant<br/>và đợi biến mất"]
+    D5["Xóa GlobalTenantResource, Tenant<br/>và đợi biến mất"]
     D6["IPPool: đợi hết WorkloadEndpoint và địa chỉ đang cấp,<br/>xóa qua projectcalico.org/v3, đợi IPAMBlock biến mất"]
     D7["Đợi Pod rời dedicated node,<br/>gỡ membership label"]
     D8["Gỡ finalizer, CR biến mất"]

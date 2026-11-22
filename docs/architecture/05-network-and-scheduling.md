@@ -373,7 +373,7 @@ flowchart LR
   class META deny;
 ```
 
-Bộ rule replicate (kế thừa `manifests/tenant-resources.yaml`, mở rộng theo plan 7.4), tất cả qua `GlobalTenantResource`/`TenantResource` với `resyncPeriod` để controller restore khi bị xóa tay:
+Bộ rule replicate (kế thừa `manifests/tenant-resources.yaml`, mở rộng theo plan 7.4), tất cả qua `GlobalTenantResource` với `resyncPeriod` để controller restore khi bị xóa tay:
 
 | # | NetworkPolicy | Nội dung | Nguồn label |
 |---|---|---|---|

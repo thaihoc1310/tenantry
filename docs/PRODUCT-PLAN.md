@@ -468,7 +468,7 @@ Controller trong Cluster render thành:
 - **một quota chung cho mọi Namespace của Workspace**: `Tenant.spec.rules[].quota[]` của Capsule 0.15, `hard` = allocation của Workspace (requests/limits CPU/RAM, `pods`, `requests.storage`). Capsule sinh một `GlobalResourceQuota` cho Tenant và kiểm ở webhook lúc admission trên tổng của mọi Namespace, nên Namespace nào cũng dùng được phần đang trống, dù tạo bằng portal, `kubectl` hay Headlamp (4.5): Capsule áp quota cho mọi Namespace của Tenant ngay khi Namespace xuất hiện, platform không phải làm gì thêm. Không chia trước theo Namespace, để không có tài nguyên nằm không;
 - LimitRange mặc định;
 - object-count ResourceQuota nếu cần;
-- Capsule Namespace quota (`namespaceQuota`).
+- Capsule Namespace quota (`namespaceQuota`). Giới hạn đã biết (đo trên lab ở M7): Capsule đếm theo `status.size` của Tenant, cập nhật trễ khoảng 1 giây, nên hai Namespace tạo cách nhau chưa tới 1 giây có thể cùng lọt (lab: 4 trên quota 3); sau đó thì chặn đúng. Platform không chặn thêm được ở phía operator.
 
 Chọn cơ chế này sau khi đo trên Capsule 0.15.2 của lab (Tenant hard `requests.cpu: 1`, hai Namespace, bắn đồng thời 12 Pod 300m, đúng ra chỉ 3 Pod được vào): `rules[].quota` cho đúng 3 Pod ở cả 3 lần chạy, Pod thứ tư bị webhook từ chối với message nêu rõ `hard`, `projected` và `exceededBy`; còn `spec.resourceQuotas` scope `Tenant` (cách cũ, đã deprecated) chỉnh `hard` bằng controller sau khi Pod đã vào nên lọt 5–6 Pod, vượt trần 50–80%. Vì vậy quota chung không còn giới hạn "tạo đồng thời thì vượt", và cam kết giữ chỗ cứng của Dedicated (6.3) đứng được.
 
@@ -1616,7 +1616,7 @@ Chính sách dữ liệu: **delete là xóa ngay và xóa hết**, gồm Namespa
 4. gỡ owners của Tenant và các RoleBinding Developer/Viewer — tenant mất quyền trước khi dữ liệu bị xóa;
 5. bỏ `cordoned` trên Tenant nếu đang bật (ở lab cũ, cordon của Capsule chặn cả lệnh ghi của controller; kiểm lại trên Capsule 0.15.x ở M6);
 6. xóa mọi Namespace của Tenant (cả nguồn portal và kubectl) và đợi chúng biến mất; PVC bị xóa theo Namespace. Kẹt quá ngưỡng thì condition `Deleting=False` reason `BlockedByFinalizer` kèm object đang giữ, Operation `Blocked`; OrgOwner/OrgAdmin chỉ có thể chờ hoặc `:retry`, **chỉ Platform Admin được `:force`** (xóa finalizer) và hành động này được audit;
-7. xóa TenantResource và Tenant một cách tường minh rồi đợi xong — owner reference chỉ là lưới an toàn;
+7. xóa GlobalTenantResource và Tenant một cách tường minh rồi đợi xong — owner reference chỉ là lưới an toàn;
 8. (từ M9) IPPool: đợi không còn WorkloadEndpoint và không còn địa chỉ nào đang dùng trong CIDR, xóa IPPool qua API `projectcalico.org/v3`, đợi các IPAMBlock của nó biến mất;
 9. (Dedicated, từ M8) gỡ membership label `workspaces.tenantry.io/<ws-id>` khỏi node; giữ label/taint Organization và label của Workspace khác;
 10. gỡ finalizer, CR biến mất;
@@ -1643,7 +1643,7 @@ Không silently force-delete PVC/finalizer từ phía user.
 | Shared compute | Tenant nodeSelector tới shared pool (annotation `PodNodeSelector` trên Namespace) | M8 |
 | Dedicated node selection | NodeReservation + org label/taint (`PlatformNodeGrant`) + Workspace membership label + Namespace annotation `PodNodeSelector` và `PodTolerationRestriction` (`defaultTolerations`, `tolerationsWhitelist` gồm cả `node.kubernetes.io/*`); VAP chỉ cho SA `tenantry-operator` đổi label/taint `tenantry.io/*`, `workspaces.tenantry.io/*` trên Node | M8 |
 | NetworkAllocation | Calico IPPool + Namespace annotation qua `Tenant.namespaceOptions.additionalMetadata`; `forbiddenAnnotations` của Tenant cấm `cni.projectcalico.org/*` và `scheduler.alpha.kubernetes.io/{node-selector,defaultTolerations,tolerationsWhitelist}`; VAP `tenantry-tenant-pod-network` chặn Pod của tenant mang annotation Calico (`ipv4pools`, `ipv6pools`, `ipAddrs`, `ipAddrsNoIpam`, `floatingIPs`) | M9 |
-| Network baseline | TenantResource NetworkPolicy, thuộc sub-reconciler `network` | M9 |
+| Network baseline | GlobalTenantResource NetworkPolicy, thuộc sub-reconciler `network` | M9 |
 | Storage allow-list | Capsule StorageClass allowed list (`Tenant.spec.storageClasses.allowed`) | M6 |
 | Route (`spec.routes`) | Ingress do controller dựng trong Namespace của tenant; ValidatingAdmissionPolicy `tenantry-tenant-ingress-lockdown` chặn Ingress và tài nguyên cert-manager **chỉ với caller `oidc:`** (namespace controller và garbage collector vẫn xóa được Ingress khi xóa Namespace) | M11 |
 | Ingress TLS | một `Certificate` wildcard của apps domain trong namespace ingress, làm cert mặc định của Traefik | M1 |
@@ -1777,7 +1777,7 @@ Không chỉ làm happy-path UI.
 - Headlamp ServiceAccount không có workload permission;
 - custom Developer/Viewer role;
 - RoleBinding do tenant tạo chỉ được trỏ tới group của chính Organization hoặc ServiceAccount của chính Tenant (VAP, mục 18);
-- Pod Security baseline/restricted;
+- Pod Security: `enforce=baseline`, `warn` và `audit` ở `restricted`;
 - cấm privileged, hostPath, hostNetwork, hostPID/IPC và unsafe capability;
 - trusted registry allow-list;
 - requests/limits và object quota;

@@ -22,7 +22,7 @@ Tên và alias được giữ nguyên trong mọi sơ đồ; sơ đồ nào khô
 | `GS` | Group Sync Worker | Đồng bộ group/membership từ DB sang Keycloak, bảo trì group `tenantry:tenant-users` |
 | `K8S` | kube-apiserver | API server của Cluster chứa Workspace |
 | `CTRL` | Workspace Controller | controller-runtime trong Cluster, reconcile CR `tenantry.io` |
-| `CAP` | Capsule | Capsule Operator: Tenant (kèm quota chung), TenantResource, admission |
+| `CAP` | Capsule | Capsule Operator: Tenant (kèm quota chung), GlobalTenantResource, admission |
 | `CAL` | Calico | IPPool, IPAM, NetworkPolicy enforcement |
 | `PROXY` | Capsule Proxy | Endpoint `kube-a.tenantry.site`, filter cluster-scoped |
 | `HL` | Headlamp | Web console per Cluster, client OIDC `headlamp-cluster-a` |
@@ -528,7 +528,7 @@ sequenceDiagram
   CTRL->>CAP: Apply Tenant acme-solar: owners (group Owner + SA operator), additionalRoleBindings Developer/Viewer, nodeSelector pool (từ M8)
   CTRL->>CAP: Tenant rules quota (GlobalResourceQuota) 2 CPU / 4Gi, limits 4 CPU / 8Gi, 20 pods
   CTRL->>CAL: Apply IPPool acme-solar cidr 10.240.12.0/24 (từ M9)
-  CTRL->>CAP: Apply TenantResource NetworkPolicy baseline (từ M9)
+  CTRL->>CAP: Apply GlobalTenantResource NetworkPolicy baseline (từ M9)
   CTRL->>K8S: Create Namespace acme-solar-frontend theo spec.namespaces
   CTRL->>K8S: Update status phase=Ready, conditions True
   K8S->>PW: Watch status PlatformWorkspace
@@ -1106,7 +1106,7 @@ sequenceDiagram
       CTRL->>K8S: Gỡ finalizer của object kẹt
     end
   end
-  CTRL->>CAP: DELETE TenantResource, Tenant acme-water, đợi biến mất
+  CTRL->>CAP: DELETE GlobalTenantResource, Tenant acme-water, đợi biến mất
   CTRL->>CAL: Đợi không còn WorkloadEndpoint và IP trong CIDR, DELETE IPPool, đợi IPAMBlock hết (từ M9)
   CTRL->>K8S: Gỡ label workspaces.tenantry.io/ws-01jxyz trên worker-a-05
   Note over CTRL,K8S: Giữ dedicated-org label/taint và label của Green
