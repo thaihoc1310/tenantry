@@ -209,6 +209,7 @@ async function submit() {
             class="t-wstep"
             :class="cls(i)"
             :aria-current="i === w.step.value ? 'step' : undefined"
+            :disabled="loading && i !== w.step.value"
             @click="move(() => w.go(i))"
           >
             <span class="t-wstep-n">{{ mark(i) }}</span
