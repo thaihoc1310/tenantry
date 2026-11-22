@@ -719,6 +719,53 @@ export interface paths {
         patch: operations["patchWorkspace"];
         trace?: never;
     };
+    "/workspaces/{workspaceId}:cordon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Freeze a Workspace (OrgOwner or OrgAdmin)
+         * @description Tenants can change nothing in it; what runs keeps running
+         *     (PRODUCT-PLAN §17.3). From Ready or Degraded; the Workspace is
+         *     Cordoned once the `workspace.cordon` operation succeeds.
+         */
+        post: operations["cordonWorkspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces/{workspaceId}:uncordon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unfreeze a Cordoned Workspace (OrgOwner or OrgAdmin)
+         * @description The Workspace is Ready (or Degraded) again once the
+         *     `workspace.uncordon` operation succeeds.
+         */
+        post: operations["uncordonWorkspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workspaces/{workspaceId}/bindings": {
         parameters: {
             query?: never;
@@ -3550,6 +3597,94 @@ export interface operations {
              *     `WORKSPACE_QUOTA_BELOW_USAGE`: below what the Workspace uses (`details.field`, `details.used`).
              *     `CLUSTER_NOT_READY`: resizing waits for the cluster.
              */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    cordonWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Already so */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceChange"];
+                };
+            };
+            /** @description Accepted; the Workspace changes state once the cluster has done it */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceChange"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `WORKSPACE_NOT_READY`: not in a state it can cordon from, or an operation on it is under way. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    uncordonWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Already so */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceChange"];
+                };
+            };
+            /** @description Accepted; the Workspace changes state once the cluster has done it */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceChange"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `WORKSPACE_NOT_READY`: not in a state it can uncordon from, or an operation on it is under way. */
             409: {
                 headers: {
                     [name: string]: unknown;

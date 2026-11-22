@@ -306,6 +306,7 @@ type Workspace struct {
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	UsageSnapshot        []byte
+	Cordoned             bool
 }
 
 type WorkspaceGroupBinding struct {

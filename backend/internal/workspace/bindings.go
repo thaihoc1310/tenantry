@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 
@@ -138,6 +139,12 @@ func (s *Service) changeBinding(ctx context.Context, userID, wsID, groupID strin
 // lockForChange locks a Workspace that may take a change that needs a new
 // CR: Ready or Degraded, with no operation under way (04 §1.1).
 func lockForChange(ctx context.Context, q *store.Queries, wsID string) (store.Workspace, error) {
+	return lockIn(ctx, q, wsID, StateReady, StateDegraded)
+}
+
+// lockIn locks a Workspace in one of states with no operation under way;
+// otherwise WORKSPACE_NOT_READY: one operation at a time.
+func lockIn(ctx context.Context, q *store.Queries, wsID string, states ...string) (store.Workspace, error) {
 	ws, err := q.LockWorkspace(ctx, wsID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ws, ErrNotFound
@@ -145,7 +152,7 @@ func lockForChange(ctx context.Context, q *store.Queries, wsID string) (store.Wo
 	if err != nil {
 		return ws, err
 	}
-	if ws.State != StateReady && ws.State != StateDegraded {
+	if !slices.Contains(states, ws.State) {
 		return ws, ErrNotReady
 	}
 	if _, err := q.ActiveWorkspaceOperation(ctx, ws.ID); err == nil {

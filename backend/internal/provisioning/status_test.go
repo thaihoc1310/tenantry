@@ -387,3 +387,36 @@ func TestNextState(t *testing.T) {
 		}
 	}
 }
+
+// A cordon keeps the state until the controller has done it, then Cordoned;
+// an uncordon brings back what the controller reports.
+func TestCordonOperations(t *testing.T) {
+	e := newEnv(t)
+	c := e.create("solar")
+	e.report("acme-solar", v1.PhaseReady, readyConds)
+	e.sync()
+	ch, err := e.ws.Cordon(context.Background(), "usr-ann", c.Workspace.ID, "")
+	if err != nil || ch.Operation == nil {
+		t.Fatalf("cordon: %v", err)
+	}
+	e.deliver()
+	e.sync() // the status is of the older generation
+	if w := e.workspace(c.Workspace.ID); w.State != "Ready" || e.op(ch.Operation.ID).State != "Running" {
+		t.Fatalf("before the controller: %s, operation %s", w.State, e.op(ch.Operation.ID).State)
+	}
+	e.report("acme-solar", v1.PhaseReady, readyConds)
+	e.sync()
+	if w := e.workspace(c.Workspace.ID); w.State != "Cordoned" || e.op(ch.Operation.ID).State != "Succeeded" {
+		t.Fatalf("after the controller: %s, operation %s", w.State, e.op(ch.Operation.ID).State)
+	}
+	ch, err = e.ws.Uncordon(context.Background(), "usr-ann", c.Workspace.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.deliver()
+	e.report("acme-solar", v1.PhaseReady, readyConds)
+	e.sync()
+	if w := e.workspace(c.Workspace.ID); w.State != "Ready" || e.op(ch.Operation.ID).State != "Succeeded" {
+		t.Fatalf("after uncordon: %s, operation %s", w.State, e.op(ch.Operation.ID).State)
+	}
+}

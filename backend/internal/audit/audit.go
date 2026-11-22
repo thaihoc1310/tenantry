@@ -55,6 +55,8 @@ const (
 
 	WorkspaceCreate        = "workspace.create"
 	WorkspaceUpdate        = "workspace.update"
+	WorkspaceCordon        = "workspace.cordon"
+	WorkspaceUncordon      = "workspace.uncordon"
 	WorkspaceBindingUpdate = "workspace_binding.update"
 	WorkspaceBindingDelete = "workspace_binding.delete"
 	NamespaceCreate        = "namespace.create"

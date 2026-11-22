@@ -653,3 +653,57 @@ func TestPatchWorkspace(t *testing.T) {
 		t.Fatalf("audit %d events", len(trail))
 	}
 }
+
+func TestCordonWorkspace(t *testing.T) {
+	h, db, _, owner, admins, devs := workspaceOrg(t)
+	rec := createWorkspace(h, owner, "zeta", workspaceBody("solar", admins, devs, ""))
+	var created oapi.WorkspaceAccepted
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &created) != nil {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	wsID := created.Workspace.Id
+	call := func(token, verb string) *httptest.ResponseRecorder {
+		return asAdmin(h, token, http.MethodPost, "/api/v1/workspaces/"+wsID+":"+verb, "", "")
+	}
+	if rec := call(owner, "cordon"); rec.Code != 409 {
+		t.Fatalf("cordon while Provisioning: %d %s", rec.Code, rec.Body)
+	}
+	settle(t, db, wsID)
+	if rec := call(owner, "uncordon"); rec.Code != 409 || errorBody(t, rec).Code != oapi.WORKSPACENOTREADY {
+		t.Fatalf("uncordon a Ready Workspace: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(sessionOf("usr-bob"), "cordon"); rec.Code != 403 {
+		t.Fatalf("OrgMember cordons: %d", rec.Code)
+	}
+	rec = call(owner, "cordon")
+	var change oapi.WorkspaceChange
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &change) != nil || change.Operation.Type != "workspace.cordon" ||
+		change.Workspace.State != oapi.WorkspaceStateReady {
+		t.Fatalf("cordon: %d %s", rec.Code, rec.Body)
+	}
+	var cordoned bool
+	if err := db.QueryRow(context.Background(), `SELECT (payload->'spec'->>'cordoned')::bool FROM outbox_events WHERE operation_id = $1`,
+		change.Operation.Id).Scan(&cordoned); err != nil || !cordoned {
+		t.Fatalf("CR not cordoned (%v)", err)
+	}
+	// One operation at a time.
+	if rec := asAdmin(h, owner, http.MethodPatch, "/api/v1/workspaces/"+wsID, "", `{"displayName":"x"}`); rec.Code != 409 {
+		t.Fatalf("patch during a cordon: %d", rec.Code)
+	}
+	// Once the worker records it Cordoned, uncordon works; changes wait.
+	if _, err := db.Exec(context.Background(), `UPDATE operations SET state = 'Succeeded' WHERE resource_id = $1`, wsID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(context.Background(), `UPDATE workspaces SET state = 'Cordoned' WHERE id = $1`, wsID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := asAdmin(h, owner, http.MethodPatch, "/api/v1/workspaces/"+wsID, "", `{"displayName":"x"}`); rec.Code != 409 {
+		t.Fatalf("patch a Cordoned Workspace: %d", rec.Code)
+	}
+	if rec := call(owner, "uncordon"); rec.Code != 202 || !strings.Contains(rec.Body.String(), `"workspace.uncordon"`) {
+		t.Fatalf("uncordon: %d %s", rec.Code, rec.Body)
+	}
+	if n := count(t, db, `SELECT count(*) FROM audit_events WHERE action IN ('workspace.cordon', 'workspace.uncordon')`); n != 2 {
+		t.Fatalf("%d cordon audit events", n)
+	}
+}

@@ -916,6 +916,69 @@ paths:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
+  /workspaces/{workspaceId}:cordon:
+    parameters:
+      - $ref: "#/components/parameters/workspaceId"
+    post:
+      operationId: cordonWorkspace
+      security: [{ session: [], csrf: [] }]
+      summary: Freeze a Workspace (OrgOwner or OrgAdmin)
+      description: |
+        Tenants can change nothing in it; what runs keeps running
+        (PRODUCT-PLAN §17.3). From Ready or Degraded; the Workspace is
+        Cordoned once the `workspace.cordon` operation succeeds.
+      responses:
+        "200":
+          description: Already so
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceChange" }
+        "202":
+          description: Accepted; the Workspace changes state once the cluster has done it
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceChange" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`WORKSPACE_NOT_READY`: not in a state it can cordon from, or an operation on it is under way."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /workspaces/{workspaceId}:uncordon:
+    parameters:
+      - $ref: "#/components/parameters/workspaceId"
+    post:
+      operationId: uncordonWorkspace
+      security: [{ session: [], csrf: [] }]
+      summary: Unfreeze a Cordoned Workspace (OrgOwner or OrgAdmin)
+      description: |
+        The Workspace is Ready (or Degraded) again once the
+        `workspace.uncordon` operation succeeds.
+      responses:
+        "200":
+          description: Already so
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceChange" }
+        "202":
+          description: Accepted; the Workspace changes state once the cluster has done it
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceChange" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`WORKSPACE_NOT_READY`: not in a state it can uncordon from, or an operation on it is under way."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
   /workspaces/{workspaceId}/bindings:
     parameters:
       - $ref: "#/components/parameters/workspaceId"

@@ -104,7 +104,7 @@ SELECT * FROM workspaces WHERE id = $1 AND state <> 'Deleted' FOR UPDATE;
 
 -- name: ActiveWorkspaceOperation :one
 -- The operation under way on a Workspace, if any: one at a time (04 §1.1).
-SELECT id FROM operations
+SELECT id, type, state FROM operations
 WHERE resource_type = 'Workspace' AND resource_id = $1 AND state IN ('Pending', 'Running', 'Blocked')
 LIMIT 1;
 
@@ -186,5 +186,12 @@ UPDATE workspaces
 SET display_name = @display_name, requests_cpu_milli = @requests_cpu_milli, requests_memory_bytes = @requests_memory_bytes,
     limits_cpu_milli = @limits_cpu_milli, limits_memory_bytes = @limits_memory_bytes, pods = @pods,
     requests_storage_bytes = @requests_storage_bytes, namespace_quota = @namespace_quota, updated_at = now()
+WHERE id = @id
+RETURNING *;
+
+-- name: SetWorkspaceCordoned :one
+-- Cordon or uncordon: the next spec version; the state stays until the
+-- controller has done it (04-state-machines §1.1).
+UPDATE workspaces SET cordoned = @cordoned, desired_generation = desired_generation + 1, updated_at = now()
 WHERE id = @id
 RETURNING *;

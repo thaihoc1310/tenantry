@@ -144,22 +144,49 @@ func (s *Syncer) syncWorkspace(ctx context.Context, cr v1.PlatformWorkspace) err
 		}
 		current := version == ws.DesiredGeneration
 		state := nextState(ws.State, cr.Status.Phase, current)
+		op, err := q.ActiveWorkspaceOperation(ctx, ws.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			op, err = store.ActiveWorkspaceOperationRow{}, nil
+		}
+		if err != nil {
+			return err
+		}
+		// A cordon keeps the Workspace's state until it is done, then Cordoned;
+		// an uncordon leaves Cordoned for what the controller reports (04 §1.1).
+		cordonDone := current && op.State == "Running" &&
+			(op.Type == "workspace.cordon" || op.Type == "workspace.uncordon") &&
+			(cr.Status.Phase == v1.PhaseReady || cr.Status.Phase == v1.PhaseDegraded)
+		if cordonDone {
+			switch {
+			case op.Type == "workspace.cordon":
+				state = workspace.StateCordoned
+			case cr.Status.Phase == v1.PhaseReady:
+				state = workspace.StateReady
+			default:
+				state = workspace.StateDegraded
+			}
+		}
 		if _, err := q.RecordWorkspaceStatus(ctx, store.RecordWorkspaceStatusParams{
 			ID: ws.ID, Conditions: conditions, ObservedGeneration: version, State: state,
 		}); err != nil {
 			return err
 		}
-		if !current || (ws.State != workspace.StateProvisioning && ws.State != workspace.StateUpdating) {
+		if cordonDone {
+			_, _, err := operation.Move(ctx, q, op.ID, operation.Succeeded, "", "")
+			return err
+		}
+		if !current || op.ID == "" || (ws.State != workspace.StateProvisioning && ws.State != workspace.StateUpdating) {
 			return nil
 		}
 		// The operation that wrote this version ends with it.
 		switch state {
 		case workspace.StateReady:
-			return s.finish(ctx, q, ws.ID, operation.Succeeded, "", "")
+			_, _, err = operation.Move(ctx, q, op.ID, operation.Succeeded, "", "")
 		case workspace.StateFailed, workspace.StateDegraded:
-			return s.finish(ctx, q, ws.ID, operation.Failed, string(cr.Status.Phase), failedConditions(cr.Status.Conditions))
+			_, _, err = operation.Move(ctx, q, op.ID, operation.Failed,
+				"RECONCILE_"+strings.ToUpper(string(cr.Status.Phase)), failedConditions(cr.Status.Conditions))
 		}
-		return nil
+		return err
 	})
 }
 
@@ -311,22 +338,6 @@ func (s *Syncer) failTimedOut(ctx context.Context, crs []v1.PlatformWorkspace) e
 		}
 	}
 	return nil
-}
-
-// finish ends the Workspace's operation under way, if it was delivered.
-func (s *Syncer) finish(ctx context.Context, q *store.Queries, wsID string, to operation.State, code, msg string) error {
-	opID, err := q.ActiveWorkspaceOperation(ctx, wsID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if code != "" {
-		code = "RECONCILE_" + strings.ToUpper(code) // RECONCILE_FAILED, RECONCILE_DEGRADED
-	}
-	_, _, err = operation.Move(ctx, q, opID, to, code, msg)
-	return err
 }
 
 // failedConditions names the conditions that are not True, for people.

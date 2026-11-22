@@ -231,15 +231,43 @@ func (s server) PatchWorkspace(ctx context.Context, req oapi.PatchWorkspaceReque
 	if err != nil {
 		return nil, err
 	}
-	w, err := toWorkspace(c.Workspace)
+	out, err := toChange(c)
+	if err != nil || c.Operation == nil {
+		return oapi.PatchWorkspace200JSONResponse(out), err
+	}
+	return oapi.PatchWorkspace202JSONResponse(out), nil
+}
+
+func (s server) CordonWorkspace(ctx context.Context, req oapi.CordonWorkspaceRequestObject) (oapi.CordonWorkspaceResponseObject, error) {
+	c, err := s.workspaces.Cordon(ctx, userID(ctx), req.WorkspaceId, requestID(ctx))
 	if err != nil {
 		return nil, err
 	}
-	out := oapi.WorkspaceChange{Workspace: w}
-	if c.Operation == nil {
-		return oapi.PatchWorkspace200JSONResponse(out), nil
+	out, err := toChange(c)
+	if err != nil || c.Operation == nil {
+		return oapi.CordonWorkspace200JSONResponse(out), err
 	}
-	op := toOperation(*c.Operation)
-	out.Operation = &op
-	return oapi.PatchWorkspace202JSONResponse(out), nil
+	return oapi.CordonWorkspace202JSONResponse(out), nil
+}
+
+func (s server) UncordonWorkspace(ctx context.Context, req oapi.UncordonWorkspaceRequestObject) (oapi.UncordonWorkspaceResponseObject, error) {
+	c, err := s.workspaces.Uncordon(ctx, userID(ctx), req.WorkspaceId, requestID(ctx))
+	if err != nil {
+		return nil, err
+	}
+	out, err := toChange(c)
+	if err != nil || c.Operation == nil {
+		return oapi.UncordonWorkspace200JSONResponse(out), err
+	}
+	return oapi.UncordonWorkspace202JSONResponse(out), nil
+}
+
+func toChange(c workspace.Changed) (oapi.WorkspaceChange, error) {
+	w, err := toWorkspace(c.Workspace)
+	out := oapi.WorkspaceChange{Workspace: w}
+	if c.Operation != nil {
+		op := toOperation(*c.Operation)
+		out.Operation = &op
+	}
+	return out, err
 }

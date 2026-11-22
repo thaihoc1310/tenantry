@@ -79,6 +79,7 @@ func BuildCR(ctx context.Context, q *store.Queries, ws store.Workspace) (*v1.Pla
 			WorkspaceID:    ws.ID,
 			ClusterID:      ws.ClusterID,
 			DisplayName:    ws.DisplayName,
+			Cordoned:       ws.Cordoned,
 			NamespaceQuota: ws.NamespaceQuota,
 			Resources: v1.ResourceList{
 				keyRequestsCPU:     *resource.NewMilliQuantity(ws.RequestsCpuMilli, resource.DecimalSI),

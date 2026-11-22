@@ -161,7 +161,7 @@ const recordWorkspaceStatus = `-- name: RecordWorkspaceStatus :one
 UPDATE workspaces
 SET conditions = $1, observed_generation = $2, state = $3, updated_at = now()
 WHERE id = $4
-RETURNING id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at, usage_snapshot
+RETURNING id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at, usage_snapshot, cordoned
 `
 
 type RecordWorkspaceStatusParams struct {
@@ -207,6 +207,7 @@ func (q *Queries) RecordWorkspaceStatus(ctx context.Context, arg RecordWorkspace
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.UsageSnapshot,
+		&i.Cordoned,
 	)
 	return i, err
 }
