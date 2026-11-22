@@ -266,13 +266,17 @@ func Namespace(ws *v1.PlatformWorkspace, suffix string) *unstructured.Unstructur
 
 // NamespaceLabels go on every Namespace of the Tenant: the managed labels,
 // the Organization's ULID for the RoleBinding VAP, and the Pod Security
-// level (sub-reconciler policy): baseline enforced, restricted reported.
+// level (sub-reconciler policy): baseline enforced, restricted reported;
+// with a network, LabelNetwork.
 func NamespaceLabels(ws *v1.PlatformWorkspace) map[string]string {
 	l := ManagedLabels(ws)
 	l[v1.LabelOrg] = OrgULID(ws.Spec.OrganizationID)
 	l["pod-security.kubernetes.io/enforce"] = "baseline"
 	l["pod-security.kubernetes.io/warn"] = "restricted"
 	l["pod-security.kubernetes.io/audit"] = "restricted"
+	if ws.Spec.Network != nil {
+		l[LabelNetwork] = "true"
+	}
 	return l
 }
 

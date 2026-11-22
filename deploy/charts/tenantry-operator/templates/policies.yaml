@@ -168,3 +168,53 @@ spec:
     namespaceSelector:
       matchExpressions:
         - {key: capsule.clastix.io/tenant, operator: Exists}
+---
+# A Workspace's Namespace runs no Pod before its baseline NetworkPolicies
+# are there (architecture/05 §6): Capsule replicates them a few seconds
+# after a kubectl-made Namespace appears. tenant-default-deny is the
+# parameter, looked up in the Namespace of the request; none means refused.
+# Every caller is checked, the ReplicaSet controller too: it retries.
+# Only Namespaces of a Workspace with a network get the policies, so only
+# those are checked: the binding selects the label tenantry.io/network,
+# which Capsule keeps on them. Not a matchCondition: the API server looks
+# the parameter up before it evaluates matchConditions, so a missing
+# parameter would refuse Pods in every tenant Namespace. With no parameter
+# the API server answers 422 with its own message ("no params found for
+# policy binding with Deny parameterNotFoundAction"); validations never run.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: tenantry-tenant-network-ready
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+  validations:
+    - expression: 'true'
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: tenantry-tenant-network-ready
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+spec:
+  policyName: tenantry-tenant-network-ready
+  validationActions: [Deny]
+  paramRef:
+    name: tenant-default-deny
+    parameterNotFoundAction: Deny
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - {key: capsule.clastix.io/tenant, operator: Exists}
+        - {key: tenantry.io/network, operator: In, values: ["true"]}

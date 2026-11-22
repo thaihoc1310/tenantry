@@ -11,6 +11,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -213,4 +214,57 @@ func TestChartPolicies(t *testing.T) {
 	plain.SetName("plain")
 	unstructured.RemoveNestedField(plain.Object, "spec", "template", "spec", "nodeName")
 	expectAllowed(t, "a tenant Deployment without them", tenant.Create(ctx, plain))
+
+	// A Namespace of a Workspace with a network runs Pods only once its
+	// baseline NetworkPolicies are there; acme-vap-web above, without the
+	// network label, runs them with none (the Pods admitted there).
+	if err := testClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+		Name: "acme-vap-net", Labels: map[string]string{render.LabelCapsuleTenant: "acme-vap", render.LabelNetwork: "true"},
+		Annotations: map[string]string{render.AnnotationIPv4Pools: `["acme-vap"]`},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	inNet := func(name string) *corev1.Pod { p := pod(name, ""); p.Namespace = "acme-vap-net"; return p }
+	rsController := as(t, "system:serviceaccount:kube-system:replicaset-controller")
+	expectNoParam(t, "a Pod before the NetworkPolicies", func() error { return tenant.Create(ctx, inNet("early")) })
+	expectNoParam(t, "a controller's Pod before the NetworkPolicies", func() error { return rsController.Create(ctx, inNet("early-rs")) })
+	if err := testClient.Create(ctx, &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "tenant-default-deny", Namespace: "acme-vap-net"},
+		Spec:       networkingv1.NetworkPolicySpec{PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	expectAllowedEventually(t, "a Pod once the NetworkPolicies are there", func() error { return rsController.Create(ctx, inNet("ready")) })
+	if err := testClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "vap-system"}}); err != nil {
+		t.Fatal(err)
+	}
+	p := inNet("system")
+	p.Namespace = "vap-system"
+	expectAllowed(t, "a Pod outside the Workspaces", rsController.Create(ctx, p))
+}
+
+// expectNoParam: the network-ready policy refuses with the API server's
+// 422 when the Namespace has no tenant-default-deny.
+func expectNoParam(t *testing.T, what string, try func() error) {
+	t.Helper()
+	err := try()
+	if !apierrors.IsInvalid(err) || !strings.Contains(err.Error(), "tenantry-tenant-network-ready") || !strings.Contains(err.Error(), "no params found") {
+		t.Fatalf("%s: got %v, want the 422 of tenantry-tenant-network-ready", what, err)
+	}
+}
+
+// expectAllowedEventually retries while the API server sees a new parameter.
+func expectAllowedEventually(t *testing.T, what string, try func() error) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		err := try()
+		if err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: %v", what, err)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }

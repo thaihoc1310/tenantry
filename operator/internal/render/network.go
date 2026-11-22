@@ -20,6 +20,11 @@ var (
 // AnnotationIPv4Pools picks the Calico pools of a Namespace's Pods.
 const AnnotationIPv4Pools = "cni.projectcalico.org/ipv4pools"
 
+// LabelNetwork marks the Namespaces of a Workspace with a network: the
+// policy tenantry-tenant-network-ready holds their Pods until the baseline
+// NetworkPolicies are there, and a policy binding selects by label only.
+const LabelNetwork = "tenantry.io/network"
+
 // blockSize is how much of a Workspace's CIDR a node claims at a time: four
 // blocks in the default /24 (architecture/05 §5).
 const blockSize = 26
