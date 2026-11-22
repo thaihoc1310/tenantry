@@ -223,6 +223,21 @@ func (e OrganizationStatus) Valid() bool {
 	}
 }
 
+// Defines values for OwnershipTransferState.
+const (
+	Proposed OwnershipTransferState = "Proposed"
+)
+
+// Valid indicates whether the value is a known member of the OwnershipTransferState enum.
+func (e OwnershipTransferState) Valid() bool {
+	switch e {
+	case Proposed:
+		return true
+	default:
+		return false
+	}
+}
+
 // AdminOrganization defines model for AdminOrganization.
 type AdminOrganization struct {
 	CreatedAt   time.Time   `json:"createdAt"`
@@ -394,6 +409,12 @@ type GrantUsage struct {
 	Workspaces      AllocatedCount    `json:"workspaces"`
 }
 
+// GroupRef defines model for GroupRef.
+type GroupRef struct {
+	Id   string `json:"id"`
+	Name string `json:"name"`
+}
+
 // Invitation defines model for Invitation.
 type Invitation struct {
 	CreatedAt time.Time   `json:"createdAt"`
@@ -472,6 +493,34 @@ type Me struct {
 
 	// IsPlatformAdmin The Keycloak realm role `platform-admin`; every admin endpoint checks it again server-side.
 	IsPlatformAdmin bool `json:"isPlatformAdmin"`
+}
+
+// Member defines model for Member.
+type Member struct {
+	DisplayName string `json:"displayName"`
+
+	// Email Absent when Keycloak gave none
+	Email *string `json:"email,omitempty"`
+
+	// Groups Groups of this organization the member is in, by name.
+	Groups   []GroupRef `json:"groups"`
+	JoinedAt time.Time  `json:"joinedAt"`
+	Role     OrgRole    `json:"role"`
+	UserId   string     `json:"userId"`
+}
+
+// MemberList defines model for MemberList.
+type MemberList struct {
+	Items []Member `json:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"nextCursor,omitempty"`
+}
+
+// MemberPatch defines model for MemberPatch.
+type MemberPatch struct {
+	// Role Never OrgOwner; ownership is transferred.
+	Role InvitationRole `json:"role"`
 }
 
 // Operation defines model for Operation.
@@ -578,6 +627,20 @@ type OrganizationUsage struct {
 	} `json:"organization"`
 }
 
+// OwnershipTransfer defines model for OwnershipTransfer.
+type OwnershipTransfer struct {
+	CreatedAt time.Time              `json:"createdAt"`
+	ExpiresAt time.Time              `json:"expiresAt"`
+	From      UserSummary            `json:"from"`
+	Id        string                 `json:"id"`
+	OrgId     string                 `json:"orgId"`
+	State     OwnershipTransferState `json:"state"`
+	To        UserSummary            `json:"to"`
+}
+
+// OwnershipTransferState defines model for OwnershipTransfer.State.
+type OwnershipTransferState string
+
 // PoolId defines model for PoolId.
 type PoolId = string
 
@@ -589,6 +652,12 @@ type Quantity = string
 // Rejection defines model for Rejection.
 type Rejection struct {
 	Reason string `json:"reason"`
+}
+
+// TransferCreate defines model for TransferCreate.
+type TransferCreate struct {
+	// ToUserId An OrgAdmin of the organization
+	ToUserId string `json:"toUserId"`
 }
 
 // UsageCount defines model for UsageCount.
@@ -620,6 +689,9 @@ type OperationId = string
 
 // OrgId defines model for orgId.
 type OrgId = string
+
+// TransferId defines model for transferId.
+type TransferId = string
 
 // Error defines model for Error.
 type Error = ErrorResponse
@@ -714,6 +786,14 @@ type CreateInvitationParams struct {
 	IdempotencyKey IdempotencyKeyRequired `json:"Idempotency-Key"`
 }
 
+// ListMembersParams defines parameters for ListMembers.
+type ListMembersParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque; pass `nextCursor` from the previous page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // ApproveOrganizationJSONRequestBody defines body for ApproveOrganization for application/json ContentType.
 type ApproveOrganizationJSONRequestBody = Approval
 
@@ -728,6 +808,12 @@ type PatchOrganizationJSONRequestBody = OrganizationPatch
 
 // CreateInvitationJSONRequestBody defines body for CreateInvitation for application/json ContentType.
 type CreateInvitationJSONRequestBody = InvitationCreate
+
+// PatchMemberJSONRequestBody defines body for PatchMember for application/json ContentType.
+type PatchMemberJSONRequestBody = MemberPatch
+
+// TransferOwnershipJSONRequestBody defines body for TransferOwnership for application/json ContentType.
+type TransferOwnershipJSONRequestBody = TransferCreate
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -779,9 +865,33 @@ type ServerInterface interface {
 	// CreateInvitation Invite someone by email (OrgOwner or OrgAdmin)
 	// (POST /organizations/{orgId}/invitations)
 	CreateInvitation(w http.ResponseWriter, r *http.Request, orgId OrgId, params CreateInvitationParams)
+	// ListMembers Members of the organization with their groups (OrgOwner or OrgAdmin)
+	// (GET /organizations/{orgId}/members)
+	ListMembers(w http.ResponseWriter, r *http.Request, orgId OrgId, params ListMembersParams)
+	// LeaveOrganization Leave the organization (any member but the owner)
+	// (POST /organizations/{orgId}/members/me:leave)
+	LeaveOrganization(w http.ResponseWriter, r *http.Request, orgId OrgId)
+	// RemoveMember Remove a member from the organization (OrgOwner or OrgAdmin)
+	// (DELETE /organizations/{orgId}/members/{userId})
+	RemoveMember(w http.ResponseWriter, r *http.Request, orgId OrgId, userId string)
+	// PatchMember Make a member an OrgAdmin or an OrgMember (OrgOwner or OrgAdmin)
+	// (PATCH /organizations/{orgId}/members/{userId})
+	PatchMember(w http.ResponseWriter, r *http.Request, orgId OrgId, userId string)
+	// GetOwnershipTransfer The ownership transfer waiting in the organization (its owner and its recipient)
+	// (GET /organizations/{orgId}/ownership-transfer)
+	GetOwnershipTransfer(w http.ResponseWriter, r *http.Request, orgId OrgId)
 	// GetUsage What the organization uses, next to its limits (OrgOwner or OrgAdmin)
 	// (GET /organizations/{orgId}/usage)
 	GetUsage(w http.ResponseWriter, r *http.Request, orgId OrgId)
+	// TransferOwnership Offer the organization to one of its OrgAdmins (OrgOwner only)
+	// (POST /organizations/{orgId}:transfer-ownership)
+	TransferOwnership(w http.ResponseWriter, r *http.Request, orgId OrgId)
+	// CancelOwnershipTransfer Withdraw (the owner) or decline (the recipient) a waiting transfer
+	// (DELETE /ownership-transfers/{transferId})
+	CancelOwnershipTransfer(w http.ResponseWriter, r *http.Request, transferId TransferId)
+	// AcceptOwnershipTransfer Become the owner (the recipient only)
+	// (POST /ownership-transfers/{transferId}:accept)
+	AcceptOwnershipTransfer(w http.ResponseWriter, r *http.Request, transferId TransferId)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -884,9 +994,57 @@ func (_ Unimplemented) CreateInvitation(w http.ResponseWriter, r *http.Request, 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// ListMembers Members of the organization with their groups (OrgOwner or OrgAdmin)
+// (GET /organizations/{orgId}/members)
+func (_ Unimplemented) ListMembers(w http.ResponseWriter, r *http.Request, orgId OrgId, params ListMembersParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// LeaveOrganization Leave the organization (any member but the owner)
+// (POST /organizations/{orgId}/members/me:leave)
+func (_ Unimplemented) LeaveOrganization(w http.ResponseWriter, r *http.Request, orgId OrgId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RemoveMember Remove a member from the organization (OrgOwner or OrgAdmin)
+// (DELETE /organizations/{orgId}/members/{userId})
+func (_ Unimplemented) RemoveMember(w http.ResponseWriter, r *http.Request, orgId OrgId, userId string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PatchMember Make a member an OrgAdmin or an OrgMember (OrgOwner or OrgAdmin)
+// (PATCH /organizations/{orgId}/members/{userId})
+func (_ Unimplemented) PatchMember(w http.ResponseWriter, r *http.Request, orgId OrgId, userId string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetOwnershipTransfer The ownership transfer waiting in the organization (its owner and its recipient)
+// (GET /organizations/{orgId}/ownership-transfer)
+func (_ Unimplemented) GetOwnershipTransfer(w http.ResponseWriter, r *http.Request, orgId OrgId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // GetUsage What the organization uses, next to its limits (OrgOwner or OrgAdmin)
 // (GET /organizations/{orgId}/usage)
 func (_ Unimplemented) GetUsage(w http.ResponseWriter, r *http.Request, orgId OrgId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// TransferOwnership Offer the organization to one of its OrgAdmins (OrgOwner only)
+// (POST /organizations/{orgId}:transfer-ownership)
+func (_ Unimplemented) TransferOwnership(w http.ResponseWriter, r *http.Request, orgId OrgId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CancelOwnershipTransfer Withdraw (the owner) or decline (the recipient) a waiting transfer
+// (DELETE /ownership-transfers/{transferId})
+func (_ Unimplemented) CancelOwnershipTransfer(w http.ResponseWriter, r *http.Request, transferId TransferId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// AcceptOwnershipTransfer Become the owner (the recipient only)
+// (POST /ownership-transfers/{transferId}:accept)
+func (_ Unimplemented) AcceptOwnershipTransfer(w http.ResponseWriter, r *http.Request, transferId TransferId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1528,6 +1686,183 @@ func (siw *ServerInterfaceWrapper) CreateInvitation(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// ListMembers operation middleware
+func (siw *ServerInterfaceWrapper) ListMembers(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "orgId" -------------
+	var orgId OrgId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "orgId", chi.URLParam(r, "orgId"), &orgId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "orgId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListMembersParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListMembers(w, r, orgId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// LeaveOrganization operation middleware
+func (siw *ServerInterfaceWrapper) LeaveOrganization(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "orgId" -------------
+	var orgId OrgId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "orgId", chi.URLParam(r, "orgId"), &orgId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "orgId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LeaveOrganization(w, r, orgId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RemoveMember operation middleware
+func (siw *ServerInterfaceWrapper) RemoveMember(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "orgId" -------------
+	var orgId OrgId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "orgId", chi.URLParam(r, "orgId"), &orgId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "orgId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "userId" -------------
+	var userId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "userId", chi.URLParam(r, "userId"), &userId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "userId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RemoveMember(w, r, orgId, userId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PatchMember operation middleware
+func (siw *ServerInterfaceWrapper) PatchMember(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "orgId" -------------
+	var orgId OrgId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "orgId", chi.URLParam(r, "orgId"), &orgId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "orgId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "userId" -------------
+	var userId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "userId", chi.URLParam(r, "userId"), &userId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "userId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PatchMember(w, r, orgId, userId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOwnershipTransfer operation middleware
+func (siw *ServerInterfaceWrapper) GetOwnershipTransfer(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "orgId" -------------
+	var orgId OrgId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "orgId", chi.URLParam(r, "orgId"), &orgId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "orgId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOwnershipTransfer(w, r, orgId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetUsage operation middleware
 func (siw *ServerInterfaceWrapper) GetUsage(w http.ResponseWriter, r *http.Request) {
 
@@ -1545,6 +1880,84 @@ func (siw *ServerInterfaceWrapper) GetUsage(w http.ResponseWriter, r *http.Reque
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetUsage(w, r, orgId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TransferOwnership operation middleware
+func (siw *ServerInterfaceWrapper) TransferOwnership(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "orgId" -------------
+	var orgId OrgId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "orgId", chi.URLParam(r, "orgId"), &orgId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "orgId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TransferOwnership(w, r, orgId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelOwnershipTransfer operation middleware
+func (siw *ServerInterfaceWrapper) CancelOwnershipTransfer(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "transferId" -------------
+	var transferId TransferId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "transferId", chi.URLParam(r, "transferId"), &transferId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "transferId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelOwnershipTransfer(w, r, transferId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcceptOwnershipTransfer operation middleware
+func (siw *ServerInterfaceWrapper) AcceptOwnershipTransfer(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "transferId" -------------
+	var transferId TransferId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "transferId", chi.URLParam(r, "transferId"), &transferId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "transferId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcceptOwnershipTransfer(w, r, transferId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1702,6 +2115,30 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/invitations/{token}:accept", wrapper.AcceptInvitation)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/organizations/{orgId}/members", wrapper.ListMembers)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/organizations/{orgId}/members/{userId}", wrapper.RemoveMember)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/organizations/{orgId}/members/{userId}", wrapper.PatchMember)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/organizations/{orgId}/members/me:leave", wrapper.LeaveOrganization)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/organizations/{orgId}:transfer-ownership", wrapper.TransferOwnership)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/organizations/{orgId}/ownership-transfer", wrapper.GetOwnershipTransfer)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/ownership-transfers/{transferId}:accept", wrapper.AcceptOwnershipTransfer)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/ownership-transfers/{transferId}", wrapper.CancelOwnershipTransfer)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/operations/{operationId}", wrapper.GetOperation)
@@ -3115,6 +3552,419 @@ func (response CreateInvitation429JSONResponse) VisitCreateInvitationResponse(w 
 	return err
 }
 
+type ListMembersRequestObject struct {
+	OrgId  OrgId `json:"orgId"`
+	Params ListMembersParams
+}
+
+type ListMembersResponseObject interface {
+	VisitListMembersResponse(w http.ResponseWriter) error
+}
+
+type ListMembers200JSONResponse MemberList
+
+func (response ListMembers200JSONResponse) VisitListMembersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMembers400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListMembers400JSONResponse) VisitListMembersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMembers401JSONResponse ErrorResponse
+
+func (response ListMembers401JSONResponse) VisitListMembersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMembers403JSONResponse ErrorResponse
+
+func (response ListMembers403JSONResponse) VisitListMembersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMembers404JSONResponse ErrorResponse
+
+func (response ListMembers404JSONResponse) VisitListMembersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMembers409JSONResponse struct{ OrgNotActiveJSONResponse }
+
+func (response ListMembers409JSONResponse) VisitListMembersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LeaveOrganizationRequestObject struct {
+	OrgId OrgId `json:"orgId"`
+}
+
+type LeaveOrganizationResponseObject interface {
+	VisitLeaveOrganizationResponse(w http.ResponseWriter) error
+}
+
+type LeaveOrganization204Response struct {
+}
+
+func (response LeaveOrganization204Response) VisitLeaveOrganizationResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type LeaveOrganization401JSONResponse struct{ ErrorJSONResponse }
+
+func (response LeaveOrganization401JSONResponse) VisitLeaveOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LeaveOrganization404JSONResponse ErrorResponse
+
+func (response LeaveOrganization404JSONResponse) VisitLeaveOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LeaveOrganization409JSONResponse ErrorResponse
+
+func (response LeaveOrganization409JSONResponse) VisitLeaveOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LeaveOrganization429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response LeaveOrganization429JSONResponse) VisitLeaveOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveMemberRequestObject struct {
+	OrgId  OrgId  `json:"orgId"`
+	UserId string `json:"userId"`
+}
+
+type RemoveMemberResponseObject interface {
+	VisitRemoveMemberResponse(w http.ResponseWriter) error
+}
+
+type RemoveMember204Response struct {
+}
+
+func (response RemoveMember204Response) VisitRemoveMemberResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type RemoveMember401JSONResponse struct{ ErrorJSONResponse }
+
+func (response RemoveMember401JSONResponse) VisitRemoveMemberResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveMember403JSONResponse ErrorResponse
+
+func (response RemoveMember403JSONResponse) VisitRemoveMemberResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveMember404JSONResponse ErrorResponse
+
+func (response RemoveMember404JSONResponse) VisitRemoveMemberResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveMember409JSONResponse struct{ OrgNotActiveJSONResponse }
+
+func (response RemoveMember409JSONResponse) VisitRemoveMemberResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveMember429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response RemoveMember429JSONResponse) VisitRemoveMemberResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PatchMemberRequestObject struct {
+	OrgId  OrgId  `json:"orgId"`
+	UserId string `json:"userId"`
+	Body   *PatchMemberJSONRequestBody
+}
+
+type PatchMemberResponseObject interface {
+	VisitPatchMemberResponse(w http.ResponseWriter) error
+}
+
+type PatchMember200JSONResponse Member
+
+func (response PatchMember200JSONResponse) VisitPatchMemberResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PatchMember400JSONResponse struct{ ErrorJSONResponse }
+
+func (response PatchMember400JSONResponse) VisitPatchMemberResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PatchMember401JSONResponse ErrorResponse
+
+func (response PatchMember401JSONResponse) VisitPatchMemberResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PatchMember403JSONResponse ErrorResponse
+
+func (response PatchMember403JSONResponse) VisitPatchMemberResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PatchMember404JSONResponse ErrorResponse
+
+func (response PatchMember404JSONResponse) VisitPatchMemberResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PatchMember409JSONResponse struct{ OrgNotActiveJSONResponse }
+
+func (response PatchMember409JSONResponse) VisitPatchMemberResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PatchMember429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response PatchMember429JSONResponse) VisitPatchMemberResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOwnershipTransferRequestObject struct {
+	OrgId OrgId `json:"orgId"`
+}
+
+type GetOwnershipTransferResponseObject interface {
+	VisitGetOwnershipTransferResponse(w http.ResponseWriter) error
+}
+
+type GetOwnershipTransfer200JSONResponse OwnershipTransfer
+
+func (response GetOwnershipTransfer200JSONResponse) VisitGetOwnershipTransferResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOwnershipTransfer401JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetOwnershipTransfer401JSONResponse) VisitGetOwnershipTransferResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOwnershipTransfer404JSONResponse ErrorResponse
+
+func (response GetOwnershipTransfer404JSONResponse) VisitGetOwnershipTransferResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetUsageRequestObject struct {
 	OrgId OrgId `json:"orgId"`
 }
@@ -3193,6 +4043,294 @@ func (response GetUsage409JSONResponse) VisitGetUsageResponse(w http.ResponseWri
 	return err
 }
 
+type TransferOwnershipRequestObject struct {
+	OrgId OrgId `json:"orgId"`
+	Body  *TransferOwnershipJSONRequestBody
+}
+
+type TransferOwnershipResponseObject interface {
+	VisitTransferOwnershipResponse(w http.ResponseWriter) error
+}
+
+type TransferOwnership201JSONResponse OwnershipTransfer
+
+func (response TransferOwnership201JSONResponse) VisitTransferOwnershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TransferOwnership400JSONResponse struct{ ErrorJSONResponse }
+
+func (response TransferOwnership400JSONResponse) VisitTransferOwnershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TransferOwnership401JSONResponse ErrorResponse
+
+func (response TransferOwnership401JSONResponse) VisitTransferOwnershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TransferOwnership403JSONResponse ErrorResponse
+
+func (response TransferOwnership403JSONResponse) VisitTransferOwnershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TransferOwnership404JSONResponse ErrorResponse
+
+func (response TransferOwnership404JSONResponse) VisitTransferOwnershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TransferOwnership409JSONResponse struct{ OrgNotActiveJSONResponse }
+
+func (response TransferOwnership409JSONResponse) VisitTransferOwnershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TransferOwnership422JSONResponse ErrorResponse
+
+func (response TransferOwnership422JSONResponse) VisitTransferOwnershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TransferOwnership429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response TransferOwnership429JSONResponse) VisitTransferOwnershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelOwnershipTransferRequestObject struct {
+	TransferId TransferId `json:"transferId"`
+}
+
+type CancelOwnershipTransferResponseObject interface {
+	VisitCancelOwnershipTransferResponse(w http.ResponseWriter) error
+}
+
+type CancelOwnershipTransfer204Response struct {
+}
+
+func (response CancelOwnershipTransfer204Response) VisitCancelOwnershipTransferResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type CancelOwnershipTransfer401JSONResponse struct{ ErrorJSONResponse }
+
+func (response CancelOwnershipTransfer401JSONResponse) VisitCancelOwnershipTransferResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelOwnershipTransfer403JSONResponse ErrorResponse
+
+func (response CancelOwnershipTransfer403JSONResponse) VisitCancelOwnershipTransferResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelOwnershipTransfer404JSONResponse ErrorResponse
+
+func (response CancelOwnershipTransfer404JSONResponse) VisitCancelOwnershipTransferResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelOwnershipTransfer409JSONResponse ErrorResponse
+
+func (response CancelOwnershipTransfer409JSONResponse) VisitCancelOwnershipTransferResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelOwnershipTransfer429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response CancelOwnershipTransfer429JSONResponse) VisitCancelOwnershipTransferResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcceptOwnershipTransferRequestObject struct {
+	TransferId TransferId `json:"transferId"`
+}
+
+type AcceptOwnershipTransferResponseObject interface {
+	VisitAcceptOwnershipTransferResponse(w http.ResponseWriter) error
+}
+
+type AcceptOwnershipTransfer200JSONResponse Organization
+
+func (response AcceptOwnershipTransfer200JSONResponse) VisitAcceptOwnershipTransferResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcceptOwnershipTransfer401JSONResponse struct{ ErrorJSONResponse }
+
+func (response AcceptOwnershipTransfer401JSONResponse) VisitAcceptOwnershipTransferResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcceptOwnershipTransfer403JSONResponse ErrorResponse
+
+func (response AcceptOwnershipTransfer403JSONResponse) VisitAcceptOwnershipTransferResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcceptOwnershipTransfer404JSONResponse ErrorResponse
+
+func (response AcceptOwnershipTransfer404JSONResponse) VisitAcceptOwnershipTransferResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcceptOwnershipTransfer429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response AcceptOwnershipTransfer429JSONResponse) VisitAcceptOwnershipTransferResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// AdminListOrganizations Every organization with its owner, oldest first (Platform Admin)
@@ -3243,9 +4381,33 @@ type StrictServerInterface interface {
 	// CreateInvitation Invite someone by email (OrgOwner or OrgAdmin)
 	// (POST /organizations/{orgId}/invitations)
 	CreateInvitation(ctx context.Context, request CreateInvitationRequestObject) (CreateInvitationResponseObject, error)
+	// ListMembers Members of the organization with their groups (OrgOwner or OrgAdmin)
+	// (GET /organizations/{orgId}/members)
+	ListMembers(ctx context.Context, request ListMembersRequestObject) (ListMembersResponseObject, error)
+	// LeaveOrganization Leave the organization (any member but the owner)
+	// (POST /organizations/{orgId}/members/me:leave)
+	LeaveOrganization(ctx context.Context, request LeaveOrganizationRequestObject) (LeaveOrganizationResponseObject, error)
+	// RemoveMember Remove a member from the organization (OrgOwner or OrgAdmin)
+	// (DELETE /organizations/{orgId}/members/{userId})
+	RemoveMember(ctx context.Context, request RemoveMemberRequestObject) (RemoveMemberResponseObject, error)
+	// PatchMember Make a member an OrgAdmin or an OrgMember (OrgOwner or OrgAdmin)
+	// (PATCH /organizations/{orgId}/members/{userId})
+	PatchMember(ctx context.Context, request PatchMemberRequestObject) (PatchMemberResponseObject, error)
+	// GetOwnershipTransfer The ownership transfer waiting in the organization (its owner and its recipient)
+	// (GET /organizations/{orgId}/ownership-transfer)
+	GetOwnershipTransfer(ctx context.Context, request GetOwnershipTransferRequestObject) (GetOwnershipTransferResponseObject, error)
 	// GetUsage What the organization uses, next to its limits (OrgOwner or OrgAdmin)
 	// (GET /organizations/{orgId}/usage)
 	GetUsage(ctx context.Context, request GetUsageRequestObject) (GetUsageResponseObject, error)
+	// TransferOwnership Offer the organization to one of its OrgAdmins (OrgOwner only)
+	// (POST /organizations/{orgId}:transfer-ownership)
+	TransferOwnership(ctx context.Context, request TransferOwnershipRequestObject) (TransferOwnershipResponseObject, error)
+	// CancelOwnershipTransfer Withdraw (the owner) or decline (the recipient) a waiting transfer
+	// (DELETE /ownership-transfers/{transferId})
+	CancelOwnershipTransfer(ctx context.Context, request CancelOwnershipTransferRequestObject) (CancelOwnershipTransferResponseObject, error)
+	// AcceptOwnershipTransfer Become the owner (the recipient only)
+	// (POST /ownership-transfers/{transferId}:accept)
+	AcceptOwnershipTransfer(ctx context.Context, request AcceptOwnershipTransferRequestObject) (AcceptOwnershipTransferResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -3742,6 +4904,146 @@ func (sh *strictHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// ListMembers operation middleware
+func (sh *strictHandler) ListMembers(w http.ResponseWriter, r *http.Request, orgId OrgId, params ListMembersParams) {
+	var request ListMembersRequestObject
+
+	request.OrgId = orgId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListMembers(ctx, request.(ListMembersRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListMembers")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListMembersResponseObject); ok {
+		if err := validResponse.VisitListMembersResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// LeaveOrganization operation middleware
+func (sh *strictHandler) LeaveOrganization(w http.ResponseWriter, r *http.Request, orgId OrgId) {
+	var request LeaveOrganizationRequestObject
+
+	request.OrgId = orgId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.LeaveOrganization(ctx, request.(LeaveOrganizationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "LeaveOrganization")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LeaveOrganizationResponseObject); ok {
+		if err := validResponse.VisitLeaveOrganizationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RemoveMember operation middleware
+func (sh *strictHandler) RemoveMember(w http.ResponseWriter, r *http.Request, orgId OrgId, userId string) {
+	var request RemoveMemberRequestObject
+
+	request.OrgId = orgId
+	request.UserId = userId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RemoveMember(ctx, request.(RemoveMemberRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RemoveMember")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RemoveMemberResponseObject); ok {
+		if err := validResponse.VisitRemoveMemberResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PatchMember operation middleware
+func (sh *strictHandler) PatchMember(w http.ResponseWriter, r *http.Request, orgId OrgId, userId string) {
+	var request PatchMemberRequestObject
+
+	request.OrgId = orgId
+	request.UserId = userId
+
+	var body PatchMemberJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PatchMember(ctx, request.(PatchMemberRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PatchMember")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PatchMemberResponseObject); ok {
+		if err := validResponse.VisitPatchMemberResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetOwnershipTransfer operation middleware
+func (sh *strictHandler) GetOwnershipTransfer(w http.ResponseWriter, r *http.Request, orgId OrgId) {
+	var request GetOwnershipTransferRequestObject
+
+	request.OrgId = orgId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetOwnershipTransfer(ctx, request.(GetOwnershipTransferRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetOwnershipTransfer")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetOwnershipTransferResponseObject); ok {
+		if err := validResponse.VisitGetOwnershipTransferResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetUsage operation middleware
 func (sh *strictHandler) GetUsage(w http.ResponseWriter, r *http.Request, orgId OrgId) {
 	var request GetUsageRequestObject
@@ -3768,128 +5070,231 @@ func (sh *strictHandler) GetUsage(w http.ResponseWriter, r *http.Request, orgId 
 	}
 }
 
+// TransferOwnership operation middleware
+func (sh *strictHandler) TransferOwnership(w http.ResponseWriter, r *http.Request, orgId OrgId) {
+	var request TransferOwnershipRequestObject
+
+	request.OrgId = orgId
+
+	var body TransferOwnershipJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.TransferOwnership(ctx, request.(TransferOwnershipRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "TransferOwnership")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(TransferOwnershipResponseObject); ok {
+		if err := validResponse.VisitTransferOwnershipResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CancelOwnershipTransfer operation middleware
+func (sh *strictHandler) CancelOwnershipTransfer(w http.ResponseWriter, r *http.Request, transferId TransferId) {
+	var request CancelOwnershipTransferRequestObject
+
+	request.TransferId = transferId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CancelOwnershipTransfer(ctx, request.(CancelOwnershipTransferRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CancelOwnershipTransfer")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CancelOwnershipTransferResponseObject); ok {
+		if err := validResponse.VisitCancelOwnershipTransferResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AcceptOwnershipTransfer operation middleware
+func (sh *strictHandler) AcceptOwnershipTransfer(w http.ResponseWriter, r *http.Request, transferId TransferId) {
+	var request AcceptOwnershipTransferRequestObject
+
+	request.TransferId = transferId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AcceptOwnershipTransfer(ctx, request.(AcceptOwnershipTransferRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AcceptOwnershipTransfer")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AcceptOwnershipTransferResponseObject); ok {
+		if err := validResponse.VisitAcceptOwnershipTransferResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Base64 encoded, compressed with deflate, json marshaled OpenAPI spec.
 // Stored as a slice of fixed-width chunks rather than one concatenated
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"TGXknXgHNGEHD4fm3v8NAAD//w==",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

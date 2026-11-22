@@ -235,6 +235,191 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{orgId}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        /** Members of the organization with their groups (OrgOwner or OrgAdmin) */
+        get: operations["listMembers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{orgId}/members/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+                userId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a member from the organization (OrgOwner or OrgAdmin)
+         * @description Never the owner (403). Portal access ends at once; the person leaves
+         *     every group of the organization, and Kubernetes access ends within
+         *     one token lifetime (5 minutes) once the groups are synced to
+         *     Keycloak. The account itself stays: it belongs to the person.
+         */
+        delete: operations["removeMember"];
+        options?: never;
+        head?: never;
+        /**
+         * Make a member an OrgAdmin or an OrgMember (OrgOwner or OrgAdmin)
+         * @description The owner's role changes only by transferring ownership (403). A
+         *     recipient of a waiting transfer who stops being an OrgAdmin can no
+         *     longer accept it: the transfer is cancelled.
+         */
+        patch: operations["patchMember"];
+        trace?: never;
+    };
+    "/organizations/{orgId}/members/me:leave": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Leave the organization (any member but the owner)
+         * @description The owner transfers ownership first (409 `LEAVE_NOT_ALLOWED`). Same effects as removal.
+         */
+        post: operations["leaveOrganization"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{orgId}:transfer-ownership": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Offer the organization to one of its OrgAdmins (OrgOwner only)
+         * @description The recipient sees the offer in the portal and accepts it there; no
+         *     link or token (PRODUCT-PLAN §9.2). A new offer cancels the one
+         *     waiting. The offer expires after 7 days.
+         */
+        post: operations["transferOwnership"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{orgId}/ownership-transfer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The ownership transfer waiting in the organization (its owner and its recipient)
+         * @description Anyone else, and anyone when none is waiting, gets 404.
+         */
+        get: operations["getOwnershipTransfer"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ownership-transfers/{transferId}:accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transferId: components["parameters"]["transferId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Become the owner (the recipient only)
+         * @description Checked again at this moment: still waiting and not expired, the
+         *     caller is the recipient and still an OrgAdmin, the proposer still
+         *     the owner; otherwise 403 `TRANSFER_INVALID`. The old owner becomes an OrgAdmin.
+         */
+        post: operations["acceptOwnershipTransfer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ownership-transfers/{transferId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transferId: components["parameters"]["transferId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Withdraw (the owner) or decline (the recipient) a waiting transfer
+         * @description Cancelling a transfer that already ended changes nothing; an accepted one is a conflict.
+         */
+        delete: operations["cancelOwnershipTransfer"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/operations/{operationId}": {
         parameters: {
             query?: never;
@@ -628,6 +813,45 @@ export interface components {
             expiresAt: string;
             alreadyMember: boolean;
         };
+        GroupRef: {
+            id: string;
+            name: string;
+        };
+        Member: {
+            userId: string;
+            /** @description Absent when Keycloak gave none */
+            email?: string;
+            displayName: string;
+            role: components["schemas"]["OrgRole"];
+            /** Format: date-time */
+            joinedAt: string;
+            /** @description Groups of this organization the member is in, by name. */
+            groups: components["schemas"]["GroupRef"][];
+        };
+        MemberList: {
+            items: components["schemas"]["Member"][];
+            /** @description Absent on the last page */
+            nextCursor?: string;
+        };
+        MemberPatch: {
+            role: components["schemas"]["InvitationRole"];
+        };
+        TransferCreate: {
+            /** @description An OrgAdmin of the organization */
+            toUserId: string;
+        };
+        OwnershipTransfer: {
+            id: string;
+            orgId: string;
+            from: components["schemas"]["UserSummary"];
+            to: components["schemas"]["UserSummary"];
+            /** @enum {string} */
+            state: "Proposed";
+            /** Format: date-time */
+            expiresAt: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
     };
     responses: {
         /** @description Error */
@@ -681,6 +905,7 @@ export interface components {
         operationId: string;
         /** @description Organization id (`org-<ulid>`). Not a slug, which a Rejected and a Pending request may share. */
         adminOrgId: string;
+        transferId: string;
         /** @description As `Idempotency-Key`, and required here (IMPLEMENTATION-PLAN §3.4). */
         idempotencyKeyRequired: string;
         /**
@@ -1125,6 +1350,284 @@ export interface operations {
                 };
             };
             422: components["responses"]["IdempotencyKeyReused"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listMembers: {
+        parameters: {
+            query?: {
+                limit?: number;
+                /** @description Opaque; pass `nextCursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberList"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["OrgNotActive"];
+        };
+    };
+    removeMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["OrgNotActive"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    patchMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemberPatch"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Member"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["OrgNotActive"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    leaveOrganization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Left */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description The caller owns the organization (`LEAVE_NOT_ALLOWED`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    transferOwnership: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TransferCreate"];
+            };
+        };
+        responses: {
+            /** @description Offered */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnershipTransfer"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description The caller is not the owner (`TRANSFER_NOT_ALLOWED`). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["OrgNotActive"];
+            /** @description The recipient is not an OrgAdmin of the organization (`RECIPIENT_NOT_ORG_ADMIN`). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getOwnershipTransfer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnershipTransfer"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    acceptOwnershipTransfer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transferId: components["parameters"]["transferId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The organization, now owned by the caller */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Organization"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    cancelOwnershipTransfer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transferId: components["parameters"]["transferId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cancelled */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description The transfer was already accepted (`CONFLICT`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             429: components["responses"]["RateLimited"];
         };
     };

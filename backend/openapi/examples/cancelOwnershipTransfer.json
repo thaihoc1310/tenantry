@@ -1,0 +1,10 @@
+{
+  "responses": {
+    "204": null,
+    "409": {
+      "code": "CONFLICT",
+      "message": "the ownership transfer was already accepted",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K"
+    }
+  }
+}

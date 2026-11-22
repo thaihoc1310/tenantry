@@ -333,6 +333,196 @@ paths:
         "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
+  /organizations/{orgId}/members:
+    parameters:
+      - $ref: "#/components/parameters/orgId"
+    get:
+      operationId: listMembers
+      summary: Members of the organization with their groups (OrgOwner or OrgAdmin)
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          description: Opaque; pass `nextCursor` from the previous page.
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MemberList" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/OrgNotActive" }
+
+  /organizations/{orgId}/members/{userId}:
+    parameters:
+      - $ref: "#/components/parameters/orgId"
+      - name: userId
+        in: path
+        required: true
+        schema: { type: string, maxLength: 64 }
+    patch:
+      operationId: patchMember
+      security: [{ session: [], csrf: [] }]
+      summary: Make a member an OrgAdmin or an OrgMember (OrgOwner or OrgAdmin)
+      description: |
+        The owner's role changes only by transferring ownership (403). A
+        recipient of a waiting transfer who stops being an OrgAdmin can no
+        longer accept it: the transfer is cancelled.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MemberPatch" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Member" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/OrgNotActive" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    delete:
+      operationId: removeMember
+      security: [{ session: [], csrf: [] }]
+      summary: Remove a member from the organization (OrgOwner or OrgAdmin)
+      description: |
+        Never the owner (403). Portal access ends at once; the person leaves
+        every group of the organization, and Kubernetes access ends within
+        one token lifetime (5 minutes) once the groups are synced to
+        Keycloak. The account itself stays: it belongs to the person.
+      responses:
+        "204": { description: Removed }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/OrgNotActive" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /organizations/{orgId}/members/me:leave:
+    parameters:
+      - $ref: "#/components/parameters/orgId"
+    post:
+      operationId: leaveOrganization
+      security: [{ session: [], csrf: [] }]
+      summary: Leave the organization (any member but the owner)
+      description: The owner transfers ownership first (409 `LEAVE_NOT_ALLOWED`). Same effects as removal.
+      responses:
+        "204": { description: Left }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: The caller owns the organization (`LEAVE_NOT_ALLOWED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /organizations/{orgId}:transfer-ownership:
+    parameters:
+      - $ref: "#/components/parameters/orgId"
+    post:
+      operationId: transferOwnership
+      security: [{ session: [], csrf: [] }]
+      summary: Offer the organization to one of its OrgAdmins (OrgOwner only)
+      description: |
+        The recipient sees the offer in the portal and accepts it there; no
+        link or token (PRODUCT-PLAN §9.2). A new offer cancels the one
+        waiting. The offer expires after 7 days.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TransferCreate" }
+      responses:
+        "201":
+          description: Offered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OwnershipTransfer" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: The caller is not the owner (`TRANSFER_NOT_ALLOWED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/OrgNotActive" }
+        "422":
+          description: The recipient is not an OrgAdmin of the organization (`RECIPIENT_NOT_ORG_ADMIN`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /organizations/{orgId}/ownership-transfer:
+    parameters:
+      - $ref: "#/components/parameters/orgId"
+    get:
+      operationId: getOwnershipTransfer
+      summary: The ownership transfer waiting in the organization (its owner and its recipient)
+      description: Anyone else, and anyone when none is waiting, gets 404.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OwnershipTransfer" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /ownership-transfers/{transferId}:accept:
+    parameters:
+      - $ref: "#/components/parameters/transferId"
+    post:
+      operationId: acceptOwnershipTransfer
+      security: [{ session: [], csrf: [] }]
+      summary: Become the owner (the recipient only)
+      description: |
+        Checked again at this moment: still waiting and not expired, the
+        caller is the recipient and still an OrgAdmin, the proposer still
+        the owner; otherwise 403 `TRANSFER_INVALID`. The old owner becomes an OrgAdmin.
+      responses:
+        "200":
+          description: The organization, now owned by the caller
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Organization" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /ownership-transfers/{transferId}:
+    parameters:
+      - $ref: "#/components/parameters/transferId"
+    delete:
+      operationId: cancelOwnershipTransfer
+      security: [{ session: [], csrf: [] }]
+      summary: Withdraw (the owner) or decline (the recipient) a waiting transfer
+      description: Cancelling a transfer that already ended changes nothing; an accepted one is a conflict.
+      responses:
+        "204": { description: Cancelled }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: The transfer was already accepted (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
   /operations/{operationId}:
     parameters:
       - $ref: "#/components/parameters/operationId"
@@ -520,6 +710,12 @@ components:
       required: true
       description: Organization id (`org-<ulid>`). Not a slug, which a Rejected and a Pending request may share.
       schema: { type: string }
+
+    transferId:
+      name: transferId
+      in: path
+      required: true
+      schema: { type: string, maxLength: 64 }
 
     idempotencyKeyRequired:
       name: Idempotency-Key
@@ -970,3 +1166,59 @@ components:
         groupNames: { type: array, items: { type: string } }
         expiresAt: { type: string, format: date-time }
         alreadyMember: { type: boolean }
+
+    GroupRef:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+
+    Member:
+      type: object
+      required: [userId, displayName, role, joinedAt, groups]
+      properties:
+        userId: { type: string }
+        email: { type: string, description: Absent when Keycloak gave none }
+        displayName: { type: string }
+        role: { $ref: "#/components/schemas/OrgRole" }
+        joinedAt: { type: string, format: date-time }
+        groups:
+          type: array
+          description: Groups of this organization the member is in, by name.
+          items: { $ref: "#/components/schemas/GroupRef" }
+
+    MemberList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Member" }
+        nextCursor: { type: string, description: Absent on the last page }
+
+    MemberPatch:
+      type: object
+      required: [role]
+      additionalProperties: false
+      properties:
+        role: { $ref: "#/components/schemas/InvitationRole" }
+
+    TransferCreate:
+      type: object
+      required: [toUserId]
+      additionalProperties: false
+      properties:
+        toUserId: { type: string, maxLength: 64, description: An OrgAdmin of the organization }
+
+    OwnershipTransfer:
+      type: object
+      required: [id, orgId, from, to, state, expiresAt, createdAt]
+      properties:
+        id: { type: string }
+        orgId: { type: string }
+        from: { $ref: "#/components/schemas/UserSummary" }
+        to: { $ref: "#/components/schemas/UserSummary" }
+        state: { type: string, enum: [Proposed] }
+        expiresAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
