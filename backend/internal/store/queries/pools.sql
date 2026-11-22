@@ -111,3 +111,6 @@ RETURNING *;
 
 -- name: RevokeDedicatedNodeGrant :exec
 UPDATE dedicated_node_grants SET revoked_at = now(), updated_at = now() WHERE id = $1;
+
+-- name: ListLiveNodeGrantsOfCluster :many
+SELECT * FROM dedicated_node_grants WHERE cluster_id = $1 AND revoked_at IS NULL ORDER BY id;

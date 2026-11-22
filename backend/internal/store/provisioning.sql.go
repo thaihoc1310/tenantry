@@ -36,6 +36,24 @@ func (q *Queries) CreateObservedNamespace(ctx context.Context, arg CreateObserve
 	return err
 }
 
+const forgetNodesNotIn = `-- name: ForgetNodesNotIn :execrows
+DELETE FROM cluster_nodes WHERE cluster_id = $1 AND NOT (node_name = ANY($2::text[]))
+`
+
+type ForgetNodesNotInParams struct {
+	ClusterID string
+	Names     []string
+}
+
+// Nodes the cluster no longer has.
+func (q *Queries) ForgetNodesNotIn(ctx context.Context, arg ForgetNodesNotInParams) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetNodesNotIn, arg.ClusterID, arg.Names)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const recordNamespace = `-- name: RecordNamespace :exec
 UPDATE workspace_namespaces SET state = $1, usage_snapshot = $2, updated_at = now() WHERE id = $3
 `
@@ -48,6 +66,93 @@ type RecordNamespaceParams struct {
 
 func (q *Queries) RecordNamespace(ctx context.Context, arg RecordNamespaceParams) error {
 	_, err := q.db.Exec(ctx, recordNamespace, arg.State, arg.UsageSnapshot, arg.ID)
+	return err
+}
+
+const recordNodeGrantNode = `-- name: RecordNodeGrantNode :exec
+UPDATE dedicated_node_grants
+SET allocatable_cpu_milli = $1, allocatable_memory_bytes = $2,
+    allocatable_pods = $3, node_state = $4, capacity_state = $5, updated_at = now()
+WHERE id = $6
+`
+
+type RecordNodeGrantNodeParams struct {
+	AllocatableCpuMilli    int64
+	AllocatableMemoryBytes int64
+	AllocatablePods        int32
+	NodeState              string
+	CapacityState          string
+	ID                     string
+}
+
+// What the dedicated node of a grant offers and how it is (04-state-machines §5).
+func (q *Queries) RecordNodeGrantNode(ctx context.Context, arg RecordNodeGrantNodeParams) error {
+	_, err := q.db.Exec(ctx, recordNodeGrantNode,
+		arg.AllocatableCpuMilli,
+		arg.AllocatableMemoryBytes,
+		arg.AllocatablePods,
+		arg.NodeState,
+		arg.CapacityState,
+		arg.ID,
+	)
+	return err
+}
+
+const recordObservedNode = `-- name: RecordObservedNode :exec
+INSERT INTO cluster_nodes (cluster_id, node_name, kind, ready, schedulable,
+    allocatable_cpu_milli, allocatable_memory_bytes, allocatable_pods, observed_at)
+VALUES ($1, $2, $3, $4, $5,
+    $6, $7, $8, now())
+ON CONFLICT (cluster_id, node_name) DO UPDATE
+SET kind = EXCLUDED.kind, ready = EXCLUDED.ready, schedulable = EXCLUDED.schedulable,
+    allocatable_cpu_milli = EXCLUDED.allocatable_cpu_milli, allocatable_memory_bytes = EXCLUDED.allocatable_memory_bytes,
+    allocatable_pods = EXCLUDED.allocatable_pods, observed_at = now(),
+    updated_at = CASE WHEN (cluster_nodes.kind, cluster_nodes.ready, cluster_nodes.schedulable, cluster_nodes.allocatable_cpu_milli,
+                            cluster_nodes.allocatable_memory_bytes, cluster_nodes.allocatable_pods)
+                         IS DISTINCT FROM (EXCLUDED.kind, EXCLUDED.ready, EXCLUDED.schedulable, EXCLUDED.allocatable_cpu_milli,
+                            EXCLUDED.allocatable_memory_bytes, EXCLUDED.allocatable_pods)
+                      THEN now() ELSE cluster_nodes.updated_at END
+`
+
+type RecordObservedNodeParams struct {
+	ClusterID              string
+	NodeName               string
+	Kind                   string
+	Ready                  bool
+	Schedulable            bool
+	AllocatableCpuMilli    int64
+	AllocatableMemoryBytes int64
+	AllocatablePods        int32
+}
+
+// A node as the operator reports it (PlatformNodeInventory); the pool an
+// Admin put it in stays.
+func (q *Queries) RecordObservedNode(ctx context.Context, arg RecordObservedNodeParams) error {
+	_, err := q.db.Exec(ctx, recordObservedNode,
+		arg.ClusterID,
+		arg.NodeName,
+		arg.Kind,
+		arg.Ready,
+		arg.Schedulable,
+		arg.AllocatableCpuMilli,
+		arg.AllocatableMemoryBytes,
+		arg.AllocatablePods,
+	)
+	return err
+}
+
+const recordPoolSnapshot = `-- name: RecordPoolSnapshot :exec
+UPDATE shared_compute_pools SET capacity_snapshot = $1 WHERE id = $2 AND cluster_id = $3
+`
+
+type RecordPoolSnapshotParams struct {
+	CapacitySnapshot []byte
+	ID               string
+	ClusterID        string
+}
+
+func (q *Queries) RecordPoolSnapshot(ctx context.Context, arg RecordPoolSnapshotParams) error {
+	_, err := q.db.Exec(ctx, recordPoolSnapshot, arg.CapacitySnapshot, arg.ID, arg.ClusterID)
 	return err
 }
 

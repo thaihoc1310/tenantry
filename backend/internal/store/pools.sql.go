@@ -282,6 +282,46 @@ func (q *Queries) ListLiveDedicatedNodes(ctx context.Context, arg ListLiveDedica
 	return items, nil
 }
 
+const listLiveNodeGrantsOfCluster = `-- name: ListLiveNodeGrantsOfCluster :many
+SELECT id, org_id, cluster_id, node_name, allocatable_cpu_milli, allocatable_memory_bytes, allocatable_pods, system_reserve_cpu_milli, system_reserve_memory_bytes, system_reserve_pods, node_state, capacity_state, revoked_at, created_at, updated_at FROM dedicated_node_grants WHERE cluster_id = $1 AND revoked_at IS NULL ORDER BY id
+`
+
+func (q *Queries) ListLiveNodeGrantsOfCluster(ctx context.Context, clusterID string) ([]DedicatedNodeGrant, error) {
+	rows, err := q.db.Query(ctx, listLiveNodeGrantsOfCluster, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DedicatedNodeGrant
+	for rows.Next() {
+		var i DedicatedNodeGrant
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ClusterID,
+			&i.NodeName,
+			&i.AllocatableCpuMilli,
+			&i.AllocatableMemoryBytes,
+			&i.AllocatablePods,
+			&i.SystemReserveCpuMilli,
+			&i.SystemReserveMemoryBytes,
+			&i.SystemReservePods,
+			&i.NodeState,
+			&i.CapacityState,
+			&i.RevokedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listNetworkPools = `-- name: ListNetworkPools :many
 SELECT id, cluster_id, org_id, cidrs, default_prefix_length, allowed_prefix_lengths, created_at FROM network_pools WHERE cluster_id = $1 ORDER BY id
 `

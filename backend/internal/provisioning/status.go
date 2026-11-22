@@ -26,8 +26,13 @@ import (
 // finish within the timeout.
 const ReconcileTimeout = "RECONCILE_TIMEOUT"
 
-// SyncEvery is how often the watch cache is copied into the database.
-const SyncEvery = 2 * time.Second
+// SyncEvery is how often the watch cache is copied into the database;
+// RebuildEvery how often the pool and node CRs are applied from it again
+// (IMPLEMENTATION-PLAN §5.1, the 5-minute resync).
+const (
+	SyncEvery    = 2 * time.Second
+	RebuildEvery = 5 * time.Minute
+)
 
 // Syncer copies the status of its cluster's PlatformWorkspaces into the
 // database and fails operations the controller does not finish in time.
@@ -44,9 +49,18 @@ func NewSyncer(db *pgxpool.Pool, clusterID string, c Cluster, timeout time.Durat
 	return &Syncer{db: db, q: store.New(db), clusterID: clusterID, cluster: c, timeout: timeout, log: log}
 }
 
-// Run syncs until ctx ends.
+// Run syncs until ctx ends, rebuilding the pool and node CRs first and
+// every RebuildEvery.
 func (s *Syncer) Run(ctx context.Context) {
+	var rebuilt time.Time
 	for {
+		if time.Since(rebuilt) >= RebuildEvery {
+			if err := s.Rebuild(ctx); err != nil && ctx.Err() == nil {
+				s.log.Error("rebuilding pool and node CRs failed", "err", err)
+			} else {
+				rebuilt = time.Now()
+			}
+		}
 		if err := s.RunOnce(ctx); err != nil && ctx.Err() == nil {
 			s.log.Error("status sync failed", "err", err)
 		}
@@ -58,8 +72,9 @@ func (s *Syncer) Run(ctx context.Context) {
 	}
 }
 
-// RunOnce copies every PlatformWorkspace's status, then fails operations
-// past the timeout. Each Workspace is its own transaction.
+// RunOnce copies every PlatformWorkspace's status, fails operations past
+// the timeout, then copies the nodes and pools. Each Workspace is its own
+// transaction.
 func (s *Syncer) RunOnce(ctx context.Context) error {
 	crs, err := s.cluster.Workspaces()
 	if err != nil {
@@ -76,6 +91,9 @@ func (s *Syncer) RunOnce(ctx context.Context) error {
 	}
 	if err := s.failTimedOut(ctx, crs); err != nil {
 		errs = append(errs, err)
+	}
+	if err := s.syncNodes(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("nodes: %w", err))
 	}
 	return errors.Join(errs...)
 }
