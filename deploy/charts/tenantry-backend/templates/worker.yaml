@@ -1,7 +1,7 @@
 # Delivers outbox events to clusters and deletes expired rows
 # (IMPLEMENTATION-PLAN §5.3). Its ServiceAccount, with rights on the
 # tenantry.io CRDs only, comes with those CRDs (M6); the group sync loop runs
-# in a second Deployment with its own credentials (M4).
+# in a second Deployment with its own credentials, below.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -41,3 +41,58 @@ spec:
             {{- toYaml .Values.worker.provisioning.resources | nindent 12 }}
           securityContext:
             {{- include "tenantry.containerSecurity" . | nindent 12 }}
+{{- if .Values.worker.groupsync.enabled }}
+{{- $kc := .Values.worker.groupsync.keycloak }}
+---
+# Mirrors organization groups to Keycloak (IMPLEMENTATION-PLAN §5.2). The only
+# Pod that gets tenantry-sync's client secret.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tenantry-worker-groupsync
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker-groupsync
+spec:
+  replicas: {{ .Values.worker.groupsync.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: worker-groupsync
+  template:
+    metadata:
+      labels:
+        {{- include "tenantry.labels" . | nindent 8 }}
+        app.kubernetes.io/component: worker-groupsync
+    spec:
+      # Calls Keycloak, never Kubernetes.
+      automountServiceAccountToken: false
+      # On SIGTERM the worker finishes the batch in hand, for up to 2 minutes.
+      terminationGracePeriodSeconds: 150
+      {{- with include "tenantry.scheduling" . | trim }}{{ . | nindent 6 }}{{ end }}
+      securityContext:
+        {{- include "tenantry.podSecurity" . | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "tenantry.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [/usr/local/bin/tenantry-worker]
+          args: [--loops=groupsync]
+          env:
+            {{- include "tenantry.env" . | nindent 12 }}
+            - name: TENANTRY_KEYCLOAK_URL
+              value: {{ required "worker.groupsync.keycloak.url is required" $kc.url | quote }}
+            - name: TENANTRY_KEYCLOAK_REALM
+              value: {{ $kc.realm | quote }}
+            - name: TENANTRY_KEYCLOAK_CLIENT_ID
+              value: {{ $kc.clientID | quote }}
+            - name: TENANTRY_KEYCLOAK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "worker.groupsync.keycloak.existingSecret is required" $kc.existingSecret }}
+                  key: {{ $kc.clientSecretKey }}
+          resources:
+            {{- toYaml .Values.worker.groupsync.resources | nindent 12 }}
+          securityContext:
+            {{- include "tenantry.containerSecurity" . | nindent 12 }}
+{{- end }}

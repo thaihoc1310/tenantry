@@ -178,8 +178,28 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "tenantry-sync",
+      "name": "Tenantry group sync",
+      "description": "Service account of the group sync worker: mirrors organization groups and memberships (realm-management manage-users and query-groups). As strong as a Platform Admin: only the tenantry-worker-groupsync Deployment holds its secret.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "${TENANTRY_SYNC_CLIENT_SECRET}",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": false,
+      "defaultClientScopes": ["basic", "roles", "service_account", "kc-admin-api"],
+      "optionalClientScopes": []
     }
   ],
+
+  "clientScopeMappings": {
+    "realm-management": [{"client": "tenantry-sync", "roles": ["manage-users", "query-groups"]}]
+  },
 
   "users": [
     {
@@ -237,6 +257,12 @@
       "enabled": true,
       "realmRoles": ["default-roles-tenantry"],
       "serviceAccountClientId": "cluster-verify"
+    },
+    {
+      "username": "service-account-tenantry-sync",
+      "enabled": true,
+      "serviceAccountClientId": "tenantry-sync",
+      "clientRoles": {"realm-management": ["manage-users", "query-groups"]}
     }
   ]
 }

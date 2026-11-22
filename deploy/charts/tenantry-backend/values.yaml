@@ -47,6 +47,23 @@ worker:
     resources:
       requests: { cpu: 20m, memory: 64Mi }
       limits: { memory: 256Mi }
+  # Mirrors organization groups to Keycloak as the service account of the
+  # client tenantry-sync (IMPLEMENTATION-PLAN §5.2). Its own Deployment: the
+  # only Pod given that client's secret, which can manage every user.
+  groupsync:
+    enabled: true
+    replicas: 1        # more are safe (SKIP LOCKED) but not needed
+    keycloak:
+      url: ""          # required: Keycloak's base URL, e.g. http://keycloak-http.keycloak.svc
+      realm: tenantry
+      clientID: tenantry-sync
+      # Secret in the release namespace holding only the client secret. Like
+      # the database credentials, the chart never creates or holds it.
+      existingSecret: tenantry-keycloak-sync
+      clientSecretKey: client-secret
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+      limits: { memory: 128Mi }
 
 migrate:
   resources:

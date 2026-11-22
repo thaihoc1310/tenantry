@@ -9,9 +9,13 @@ ensure_namespace keycloak restricted
 # new value would no longer match what Keycloak stored).
 ensure_generated_secret keycloak keycloak-admin password
 kubectl -n keycloak patch secret keycloak-admin --type=merge -p '{"stringData":{"username":"admin"}}' >/dev/null
+# The realm's placeholders; a key added to this list later is generated on
+# the next run, the others keep their values.
+GENERATED_SECRET_CHANGED=0
 ensure_generated_secret keycloak keycloak-realm \
   PORTAL_CLIENT_SECRET HEADLAMP_CLUSTER_A_CLIENT_SECRET CLUSTER_VERIFY_CLIENT_SECRET \
-  DEMO_USER_PASSWORD PLATFORM_ADMIN_PASSWORD
+  TENANTRY_SYNC_CLIENT_SECRET DEMO_USER_PASSWORD PLATFORM_ADMIN_PASSWORD
+realm_secret_changed="${GENERATED_SECRET_CHANGED}"
 
 copy_secret_key tenantry-system postgres keycloak-password keycloak keycloak-db password
 
@@ -31,6 +35,14 @@ helm upgrade --install keycloak keycloakx \
   --wait --timeout 10m
 
 kubectl -n keycloak wait certificate/keycloak-tls --for=condition=Ready --timeout=10m
+
+# Keycloak reads keycloak-realm as environment variables, only when it starts:
+# a key added above reaches the Pod (and realm-sync.py, which creates clients
+# with it) after a restart.
+if [[ "${realm_secret_changed}" == 1 ]]; then
+  kubectl -n keycloak rollout restart statefulset/keycloak >/dev/null
+  kubectl -n keycloak rollout status statefulset/keycloak --timeout=10m
+fi
 
 # The master realm (where the Keycloak admin logs in) is not exposed, so its
 # own address is the port-forward one: without this the admin console, opened

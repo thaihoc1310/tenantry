@@ -7,11 +7,21 @@ What it changes, from the file:
   - realm settings (token lifetimes, email verification, SMTP, brute force...);
   - realm roles: created when missing, description updated;
   - clients: created when missing, otherwise their settings and protocol
-    mappers updated.
+    mappers updated;
+  - a client's default and optional client scopes, when the file lists them
+    (defaultClientScopes, optionalClientScopes): exactly those;
+  - a client's scope mappings to other clients' roles (clientScopeMappings):
+    added when missing. One left over grants nothing beyond what the user
+    holds, and the service accounts' roles below are exact;
+  - the client roles of a client's service account, when the file's users
+    list that service account (serviceAccountClientId) with clientRoles:
+    exactly those roles of those clients, added when missing, any other role
+    of the same clients taken away. Only that service account is touched.
 
 What it never touches:
   - client secrets of existing clients (the file only names a placeholder);
-  - users, groups and memberships (people's accounts and their sub);
+  - users (other than the service accounts above), groups and memberships
+    (people's accounts and their sub);
   - the realm itself: never deleted and imported again, which would change
     every user's sub and orphan the portal's users rows.
 
@@ -67,10 +77,15 @@ def main():
         '--user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD" >/dev/null',
         f'k() {{ $kcadm "$@" --config "$cfg" -r {shlex.quote(name)}; }}',
         'say() { echo "realm-sync: $*" >&2; }',
+        # has LINE TEXT: TEXT has LINE as one of its lines (no grep in the image).
+        'has() { local l; while IFS= read -r l; do [ "$l" = "$1" ] && return 0; done <<< "$2"; return 1; }',
+        # scope_id NAME: the id of the client scope NAME, from $scopes.
+        'scope_id() { local i n; while IFS=, read -r i n; do [ "$n" = "$1" ] && { echo "$i"; return 0; }; done <<< "$scopes"; say "no client scope $1"; exit 1; }',
     ]
+    service_accounts = {u["serviceAccountClientId"]: u for u in realm.get("users", []) if u.get("serviceAccountClientId")}
 
     # Realm settings: everything but the collections, handled below or not at all.
-    settings = {k: v for k, v in realm.items() if k not in ("roles", "clients", "users", "groups")}
+    settings = {k: v for k, v in realm.items() if k not in ("roles", "clients", "users", "groups", "clientScopeMappings")}
     out += [f"say update realm {name} settings", f"$kcadm update realms/{name} --config \"$cfg\" -f - {heredoc(settings)}"]
 
     for role in realm.get("roles", {}).get("realm", []):
@@ -84,7 +99,7 @@ def main():
     for client in realm.get("clients", []):
         cid = shlex.quote(client["clientId"])
         mappers = client.get("protocolMappers", [])
-        settings = {k: v for k, v in client.items() if k not in ("secret", "protocolMappers")}
+        settings = {k: v for k, v in client.items() if k not in ("secret", "protocolMappers", "defaultClientScopes", "optionalClientScopes")}
         secret = SECRET.match(client.get("secret", "") or "")
         create = f"k create clients -f - {heredoc({k: v for k, v in client.items() if k != 'secret'})}"
         if secret:  # resolved by the Pod, never written here
@@ -105,6 +120,63 @@ def main():
                 "  fi",
             ]
         out.append("fi")
+
+        # The client may have been created just above.
+        out.append(f"id=$(k get clients -q clientId={cid} --fields id --format csv --noquotes)")
+
+        kinds = [kind for kind in ("default", "optional") if f"{kind}ClientScopes" in client]
+        if kinds:
+            out.append("scopes=$(k get client-scopes --fields id,name --format csv --noquotes)")
+        for kind in kinds:  # removals first: a scope may move from one kind to the other
+            want = "\n".join(client[f"{kind}ClientScopes"])
+            out += [
+                f'have=$(k get "clients/$id/{kind}-client-scopes" --fields name --format csv --noquotes)',
+                f"want=$'{want}'",
+                'while IFS= read -r s; do [ -z "$s" ] || has "$s" "$want" || { say "remove ' + kind + ' scope $s from client ' + client["clientId"] + '"; '
+                f'k delete "clients/$id/{kind}-client-scopes/$(scope_id "$s")"; }}; done <<< "$have"',
+            ]
+        for kind in (k for k in kinds if client[f"{k}ClientScopes"]):
+            out.append(f'have=$(k get "clients/$id/{kind}-client-scopes" --fields name --format csv --noquotes)')
+            for sc in client[f"{kind}ClientScopes"]:
+                q = shlex.quote(sc)
+                out.append(f'has {q} "$have" || {{ say add {kind} scope {q} to client {cid}; '
+                           f'k update "clients/$id/{kind}-client-scopes/$(scope_id {q})" --no-merge -b "{{}}"; }}')
+
+        for owner, entries in sorted(realm.get("clientScopeMappings", {}).items()):
+            names = [r for e in entries if e["client"] == client["clientId"] for r in e["roles"]]
+            if not names:
+                continue
+            o = shlex.quote(owner)
+            out += [
+                f"oid=$(k get clients -q clientId={o} --fields id --format csv --noquotes)",
+                'have=$(k get "clients/$id/scope-mappings/clients/$oid" --fields name --format csv --noquotes)',
+            ]
+            for n in names:
+                q = shlex.quote(n)
+                out.append(f'has {q} "$have" || {{ say map {o}/{q} into the scope of client {cid}; '
+                           f'rid=$(k get "clients/$oid/roles/"{q} --fields id --format csv --noquotes); '
+                           f'k create "clients/$id/scope-mappings/clients/$oid" -b \'[{{"id":"\'"$rid"\'","name":"{n}"}}]\'; }}')
+
+        roles = service_accounts.get(client["clientId"], {}).get("clientRoles", {})
+        if roles:
+            assert client.get("serviceAccountsEnabled"), client["clientId"]
+            out += [
+                'uid=$(k get "clients/$id/service-account-user" --fields id --format csv --noquotes)',
+                '[ -n "$uid" ] || { say "client ' + client["clientId"] + ' has no service account"; exit 1; }',
+            ]
+            for owner, names in sorted(roles.items()):
+                o = shlex.quote(owner)
+                want = "\n".join(names)
+                out.append(f'have=$(k get-roles --uid "$uid" --cclientid {o} --fields name --format csv --noquotes)')
+                for n in names:
+                    q = shlex.quote(n)
+                    out.append(f'has {q} "$have" || {{ say grant {o}/{q} to the service account of {cid}; '
+                               f'k add-roles --uid "$uid" --cclientid {o} --rolename {q}; }}')
+                out += [
+                    f"want=$'{want}'",
+                    'while IFS= read -r r; do [ -z "$r" ] || has "$r" "$want" || { say "revoke ' + owner + '/$r from the service account of ' + client["clientId"] + '"; '
+                    f'k remove-roles --uid "$uid" --cclientid {o} --rolename "$r"; }}; done <<< "$have"',
+                ]
 
     print("\n".join(out))
 

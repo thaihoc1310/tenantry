@@ -67,18 +67,32 @@ ensure_namespace() {
   kubectl label namespace "$1" "pod-security.kubernetes.io/enforce=$2" --overwrite >/dev/null
 }
 
-# ensure_generated_secret NAMESPACE NAME KEY...: create the Secret with a random
-# value per key (128 bits, 32 hex characters), only if it does not exist yet; an existing one is
-# never touched, so a re-run keeps every password. Values go through printf (a
-# shell builtin) into stdin: never on a command line, never printed.
+# ensure_generated_secret NAMESPACE NAME KEY...: make the Secret hold a random
+# value (128 bits, 32 hex characters) for each key: created with every key if
+# it does not exist, otherwise only the missing keys are added. An existing
+# value is never changed, so a re-run keeps every password. Values go through
+# printf (a shell builtin) into stdin: never on a command line, never printed.
+# Sets GENERATED_SECRET_CHANGED=1 when it created or added anything, for a
+# caller whose Pods read the Secret as environment variables (only at start).
+GENERATED_SECRET_CHANGED=0
 ensure_generated_secret() {
   local ns="$1" name="$2" key
   shift 2
-  kubectl -n "${ns}" get secret "${name}" >/dev/null 2>&1 && return 0
+  if ! kubectl -n "${ns}" get secret "${name}" >/dev/null 2>&1; then
+    for key in "$@"; do
+      printf '%s=%s\n' "${key}" "$(openssl rand -hex 16)"
+    done | kubectl -n "${ns}" create secret generic "${name}" --from-env-file=/dev/stdin >/dev/null
+    echo "secret/${name} generated in ${ns}"
+    GENERATED_SECRET_CHANGED=1
+    return 0
+  fi
   for key in "$@"; do
-    printf '%s=%s\n' "${key}" "$(openssl rand -hex 16)"
-  done | kubectl -n "${ns}" create secret generic "${name}" --from-env-file=/dev/stdin >/dev/null
-  echo "secret/${name} generated in ${ns}"
+    [[ -n "$(kubectl -n "${ns}" get secret "${name}" -o "jsonpath={.data.${key}}")" ]] && continue
+    printf '{"stringData":{"%s":"%s"}}' "${key}" "$(openssl rand -hex 16)" |
+      kubectl -n "${ns}" patch secret "${name}" --type=merge --patch-file=/dev/stdin >/dev/null
+    echo "secret/${name}: ${key} generated in ${ns}"
+    GENERATED_SECRET_CHANGED=1
+  done
 }
 
 # copy_secret_key FROM_NS FROM_NAME FROM_KEY TO_NS TO_NAME TO_KEY: make TO hold

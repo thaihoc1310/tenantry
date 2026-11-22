@@ -49,6 +49,15 @@ if ! kubectl -n tenantry-system get secret tenantry-portal >/dev/null 2>&1; then
   echo "secret/tenantry-portal generated in tenantry-system"
 fi
 
+# tenantry-sync's client secret, mirrored from the realm's Secret into one
+# of its own that holds nothing else: only the group sync Deployment mounts
+# it, the API and the provisioning worker never see it (architecture/06 §7).
+if [[ -z "$(kubectl -n keycloak get secret keycloak-realm -o jsonpath='{.data.TENANTRY_SYNC_CLIENT_SECRET}')" ]]; then
+  echo "keycloak-realm has no TENANTRY_SYNC_CLIENT_SECRET: run deploy/cluster/60-keycloak.sh (make cluster-up) first" >&2
+  exit 1
+fi
+copy_secret_key keycloak keycloak-realm TENANTRY_SYNC_CLIENT_SECRET tenantry-system tenantry-keycloak-sync client-secret
+
 # ---- charts ---------------------------------------------------------------
 # The backend chart migrates before the new Pods start (pre-upgrade hook)
 # and seeds after (post-upgrade hook).
@@ -61,6 +70,7 @@ helm upgrade --install tenantry "${CLUSTER_DIR}/../charts/tenantry-backend" \
   --set seed.proxyEndpoint="https://${KUBE_HOST}" \
   --set seed.consoleURL="https://${CONSOLE_HOST}" \
   --set seed.appsDomain="${APPS_DOMAIN}" \
+  --set worker.groupsync.keycloak.url="http://keycloak-http.keycloak.svc" \
   --wait --timeout 5m
 
 helm upgrade --install tenantry-web "${CLUSTER_DIR}/../charts/tenantry-web" \

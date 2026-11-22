@@ -68,6 +68,10 @@ run-worker: ## Run the worker loops locally (outbox events are only logged; no c
 e2e: ## End-to-end tests of the portal on the lab (signs up test accounts e2e*; E2E_SLOW=1 adds the 5-minute refresh test)
 	deploy/cluster/e2e.sh
 
+.PHONY: keycloak-live-test
+keycloak-live-test: ## Check the Keycloak client against the lab's Keycloak, as tenantry-sync (after make deploy)
+	deploy/cluster/keycloak-live-test.sh
+
 .PHONY: cluster-up cluster-verify
 cluster-up: ## Build the cluster foundation on the lab (deploy/cluster); safe to re-run
 	deploy/cluster/up.sh
@@ -81,6 +85,7 @@ deploy: ## Install or upgrade the Tenantry charts on the lab (values in deploy/c
 .PHONY: image chart-lint
 # The chart's required values, with placeholders.
 CHART_LINT_SET := --set database.existingSecret=lint --set api.auth.existingSecret=lint \
+	--set worker.groupsync.keycloak.url=http://keycloak.example \
 	--set api.auth.issuer=https://auth.example.com/realms/tenantry --set api.auth.publicURL=https://portal.example.com
 IMAGE ?= tenantry/backend:dev
 WEB_LINT_SET := --set ingress.host=portal.example.com --set ingress.clusterIssuer=lint
@@ -90,6 +95,10 @@ image: ## Build the backend and portal images (make deploy builds and loads them
 chart-lint: ## Lint and render the charts
 	helm lint deploy/charts/tenantry-backend $(CHART_LINT_SET)
 	helm template tenantry deploy/charts/tenantry-backend $(CHART_LINT_SET) >/dev/null
+	@# tenantry-sync's secret manages every Keycloak user: only the group sync Deployment may get it.
+	helm template tenantry deploy/charts/tenantry-backend $(CHART_LINT_SET) | python3 -c 'import sys; \
+		docs = [d for d in sys.stdin.read().split("\n---") if "tenantry-keycloak-sync" in d]; \
+		sys.exit(None if len(docs) == 1 and "name: tenantry-worker-groupsync" in docs[0] else "only tenantry-worker-groupsync may get the Keycloak sync secret")'
 	helm template tenantry deploy/charts/tenantry-backend $(CHART_LINT_SET) --set seed.enabled=true \
 		--set seed.proxyEndpoint=https://kube.example.com --set seed.consoleURL=https://console.example.com --set seed.appsDomain=apps.example.com >/dev/null
 	helm lint deploy/charts/tenantry-web $(WEB_LINT_SET)
