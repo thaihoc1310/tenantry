@@ -2,8 +2,8 @@
 // One Workspace (docs/design/mockups: Workspace): Overview with its
 // conditions and recent changes followed live, Resources with what its Pods
 // use and a resize, Compute, Network, Namespaces, Access roles, Danger zone
-// with cordon and delete (IMPLEMENTATION-PLAN M7 step 10, M10). Routes and
-// Connect come with M11.
+// with cordon and delete (IMPLEMENTATION-PLAN M7 step 10, M10), Connect
+// (M11). Routes come with M11 too.
 import { ElMessage } from 'element-plus'
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -15,6 +15,8 @@ import { when } from '@/app/format'
 import ConditionTimeline from '@/components/ConditionTimeline.vue'
 import AccessRolesTab from './AccessRolesTab.vue'
 import ComputeDetail from './ComputeDetail.vue'
+import ConnectTab from './ConnectTab.vue'
+import { kubeconfigURL, openConsole } from './connect'
 import NamespacesTab from './NamespacesTab.vue'
 import NetworkDetail from './NetworkDetail.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -62,6 +64,7 @@ const tabs = [
   ['network', 'Network'],
   ['namespaces', 'Namespaces'],
   ['members', 'Access roles'],
+  ['access', 'Connect'],
   ['danger', 'Danger zone'],
 ] as const
 const tab = computed(() => (route.query.tab as string) || 'overview')
@@ -69,6 +72,11 @@ const tabTo = (t: string) => ({ query: { tab: t } })
 
 // Owners create Namespaces; the OrgOwner and OrgAdmins also change roles.
 const ownsTenant = computed(() => manages.value || !!ws.value?.myRoles?.includes('TenantOwner'))
+// kubectl and the console are of use once the cluster side exists.
+const reachable = computed(() => !!ws.value && ['Ready', 'Degraded', 'Cordoned'].includes(ws.value.state))
+const whyNot = computed(() =>
+  ws.value?.state === 'Deleting' ? 'This Workspace is being deleted.' : 'Available when the Workspace is Ready.',
+)
 // Why a Namespace or role cannot change now; '' when it can (409 WORKSPACE_NOT_READY otherwise).
 const busy = computed(() => {
   if (!ws.value) return ''
@@ -203,6 +211,25 @@ const usable = computed(() => ['Ready', 'Degraded'].includes(ws.value?.state ?? 
           ><code>{{ ws.k8sName }}</code
           ><StatusTag :value="ws.state"
         /></template>
+        <template #actions>
+          <el-tooltip :content="whyNot" :disabled="reachable">
+            <span>
+              <el-button v-if="reachable" tag="a" :href="kubeconfigURL(ws.id)" download
+                ><el-icon><Download /></el-icon>&nbsp;Kubeconfig</el-button
+              >
+              <el-button v-else disabled
+                ><el-icon><Download /></el-icon>&nbsp;Kubeconfig</el-button
+              >
+            </span>
+          </el-tooltip>
+          <el-tooltip :content="whyNot" :disabled="reachable">
+            <span
+              ><el-button type="primary" :disabled="!reachable" @click="openConsole(ws.id)"
+                ><el-icon><Monitor /></el-icon>&nbsp;Open web console</el-button
+              ></span
+            >
+          </el-tooltip>
+        </template>
       </PageHeader>
 
       <nav class="t-tabs" aria-label="Workspace sections">
@@ -394,6 +421,11 @@ const usable = computed(() => ['Ready', 'Degraded'].includes(ws.value?.state ?? 
       <!-- Access roles -->
       <template v-else-if="tab === 'members'">
         <AccessRolesTab :org-slug="orgSlug" :ws="ws" :manages="manages" :busy="busy" />
+      </template>
+
+      <!-- Connect -->
+      <template v-else-if="tab === 'access'">
+        <ConnectTab :ws="ws" :manages="manages" :usable="reachable" :why="whyNot" />
       </template>
 
       <!-- Danger zone -->

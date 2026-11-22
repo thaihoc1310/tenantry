@@ -12,7 +12,13 @@ export default defineConfigWithVueTs(
       // router and the icons of src/app/icons.ts are registered globally.
       'vue/no-undef-components': [
         'error',
-        { ignorePatterns: ['^el-', '^Router(Link|View)$', '^(ArrowDown|OfficeBuilding|Odometer|Plus|Refresh)$'] },
+        {
+          ignorePatterns: [
+            '^el-',
+            '^Router(Link|View)$',
+            '^(ArrowDown|Download|Monitor|OfficeBuilding|Odometer|Plus|Refresh)$',
+          ],
+        },
       ],
     },
   },

@@ -903,6 +903,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workspaces/{workspaceId}/kubeconfig": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * A kubeconfig for the Workspace's cluster (anyone who sees the Workspace)
+         * @description No credential in it (PRODUCT-PLAN §11.2): the server is the cluster's
+         *     Capsule Proxy, and kubectl gets a token from Keycloak through
+         *     kubelogin (`kubectl oidc-login`, client `kubectl`) with the user's own
+         *     login. Removing someone from a group needs nothing done to the file
+         *     (§9.3). The context is named after the Workspace (`k8sName`) and
+         *     starts in its first Namespace. Each download is audited.
+         */
+        get: operations["getWorkspaceKubeconfig"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces/{workspaceId}/console-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The web console (Headlamp) of the Workspace's cluster (anyone who sees the Workspace)
+         * @description Headlamp signs in with the same Keycloak session as the portal and
+         *     sees what the user's groups may see (PRODUCT-PLAN §12). 409
+         *     `CLUSTER_NOT_READY` while the cluster is Unavailable.
+         */
+        get: operations["getWorkspaceConsoleLink"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workspaces/{workspaceId}/bindings": {
         parameters: {
             query?: never;
@@ -1832,6 +1883,10 @@ export interface components {
             groupId: string;
             groupName: string;
             role: components["schemas"]["WorkspaceRole"];
+        };
+        ConsoleLink: {
+            /** @description The cluster's Headlamp, opened in the Workspace's first Namespace when it has one */
+            url: string;
         };
         WorkspaceBindingList: {
             items: components["schemas"]["WorkspaceBinding"][];
@@ -4214,6 +4269,64 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    getWorkspaceKubeconfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The kubeconfig, as a file to save */
+            200: {
+                headers: {
+                    "Content-Disposition": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/yaml": string;
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    getWorkspaceConsoleLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsoleLink"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `CLUSTER_NOT_READY`: the cluster is Unavailable. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     listWorkspaceBindings: {
