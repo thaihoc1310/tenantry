@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"html"
 	"io"
 	"net/http"
@@ -169,9 +170,23 @@ func (s *session) call(method, path string, body any) (int, []byte) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", s.csrf())
 	if method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch {
-		req.Header.Set("Idempotency-Key", alnum(16))
+		req.Header.Set("Idempotency-Key", uuid())
 	}
-	resp, err := s.http.Do(req)
+	// A slow answer or a dropped connection is tried again, twice.
+	var resp *http.Response
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(2 * time.Second)
+			if body != nil {
+				b, _ := json.Marshal(body)
+				req.Body = io.NopCloser(bytes.NewReader(b))
+			}
+		}
+		if resp, err = s.http.Do(req); err == nil {
+			break
+		}
+	}
 	if err != nil {
 		return 0, []byte(err.Error())
 	}
@@ -333,4 +348,13 @@ func firstLine(s string) string {
 		s = s[:300]
 	}
 	return strings.SplitN(s, "\n", 2)[0]
+}
+
+// uuid is a random UUID (version 4), the form the API wants for Idempotency-Key.
+func uuid() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }

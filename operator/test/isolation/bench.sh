@@ -24,13 +24,20 @@ trap cleanup EXIT
 token="$(k -n default create token optest-bench-scraper --duration=2h)"
 k -n tenantry-operator port-forward svc/tenantry-operator-metrics 18443:8443 >/dev/null 2>&1 &
 pf=$!
-sleep 3
 
 sum() { awk '/^rest_client_requests_total\{/ {s += $NF} END {printf "%d", s}'; }
 operator_requests() { curl -sk -H "Authorization: Bearer ${token}" https://127.0.0.1:18443/metrics | sum; }
 capsule_requests() {
   k get --raw "/api/v1/namespaces/capsule-system/services/http:capsule-controller-manager-metrics-service:8080/proxy/metrics" | sum
 }
+
+# The port-forward takes a few seconds; a count of 0 would be a lie.
+for _ in $(seq 30); do
+  curl -sfk -o /dev/null -H "Authorization: Bearer ${token}" https://127.0.0.1:18443/metrics && break
+  sleep 1
+done
+curl -sfk -o /dev/null -H "Authorization: Bearer ${token}" https://127.0.0.1:18443/metrics ||
+  { echo "cannot read the operator's metrics through the port-forward" >&2; exit 1; }
 
 echo "n,ready_p50,ready_p95,ready_max,all_ready,all_deleted,apiserver_requests_all,operator_requests,capsule_requests,operator_cpu_peak,operator_mem_peak,capsule_cpu_peak,capsule_mem_peak"
 for n in "$@"; do

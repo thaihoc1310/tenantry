@@ -21,6 +21,15 @@ import (
 func TestTokenSize(t *testing.T) {
 	adm := adminPortal(t)
 	owner := signUp(t)
+	t.Cleanup(func() {
+		var users struct {
+			Items []struct{ ID string } `json:"items"`
+		}
+		adm.api(t, http.MethodGet, "/admin/users?q="+owner.Email, nil, &users)
+		if len(users.Items) == 1 {
+			adm.api(t, http.MethodPost, "/admin/users/"+users.Items[0].ID+":disable", nil, nil)
+		}
+	})
 	slug := "optest" + strings.ToLower(strings.NewReplacer("-", "", "_", "").Replace(randomString(4)))
 	var org struct {
 		Organization struct{ ID string } `json:"organization"`
@@ -36,15 +45,6 @@ func TestTokenSize(t *testing.T) {
 	}, &org); code != http.StatusCreated {
 		t.Fatalf("create Organization: %d", code)
 	}
-	t.Cleanup(func() {
-		var users struct {
-			Items []struct{ ID string } `json:"items"`
-		}
-		adm.api(t, http.MethodGet, "/admin/users?q="+owner.Email, nil, &users)
-		if len(users.Items) == 1 {
-			adm.api(t, http.MethodPost, "/admin/users/"+users.Items[0].ID+":disable", nil, nil)
-		}
-	})
 	t.Cleanup(func() { owner.api(t, http.MethodDelete, "/organizations/"+org.Organization.ID, nil, nil) })
 
 	var me struct{ ID string }

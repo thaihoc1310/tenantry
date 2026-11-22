@@ -1,6 +1,6 @@
 # Observability
 
-`tenantry-operator-dashboard.json` is a Grafana dashboard of the Workspace Operator's metrics. Import it in
+`tenantry-operator-dashboard.json` is a Grafana dashboard of Tenantry: the Workspace Operator and the Platform API and workers. Import it in
 Grafana and pick the Prometheus data source. It shows:
 - Workspaces by phase;
 - provision duration;

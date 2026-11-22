@@ -85,4 +85,10 @@ serverFiles:
           - source_labels: [__name__]
             regex: apiserver_request_total|apiserver_request_duration_seconds_(bucket|sum|count)
             action: keep
-      # The backend's API and worker join here once they serve /metrics.
+      # The backend's API and workers (plain HTTP on port 9090).
+      - job_name: tenantry-backend
+        static_configs:
+          - targets:
+              - tenantry-api-metrics.tenantry-system.svc:9090
+              - tenantry-worker-provisioning-metrics.tenantry-system.svc:9090
+              - tenantry-worker-groupsync-metrics.tenantry-system.svc:9090

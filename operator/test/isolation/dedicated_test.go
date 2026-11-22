@@ -64,6 +64,15 @@ func setPoolNodes(t *testing.T, admin *portal, nodes func([]string) []string) {
 func TestIsolationDedicated(t *testing.T) {
 	adm := adminPortal(t)
 	owner := signUp(t)
+	t.Cleanup(func() {
+		var users struct {
+			Items []struct{ ID string } `json:"items"`
+		}
+		adm.api(t, http.MethodGet, "/admin/users?q="+owner.Email, nil, &users)
+		if len(users.Items) == 1 {
+			adm.api(t, http.MethodPost, "/admin/users/"+users.Items[0].ID+":disable", nil, nil)
+		}
+	})
 	slug := "optest" + strings.ToLower(strings.NewReplacer("-", "", "_", "").Replace(randomString(4)))
 	var org struct {
 		Organization struct{ ID string } `json:"organization"`
@@ -81,16 +90,17 @@ func TestIsolationDedicated(t *testing.T) {
 	}
 	orgID := org.Organization.ID
 	// Undo in reverse order, whatever happened.
+	// A deleted Workspace keeps its row while its CIDR is in quarantine
+	// (10 minutes), and the Organization cannot go before: try again.
 	t.Cleanup(func() {
-		var users struct {
-			Items []struct{ ID string } `json:"items"`
+		for end := time.Now().Add(20 * time.Minute); time.Now().Before(end); time.Sleep(15 * time.Second) {
+			if code := owner.api(t, http.MethodDelete, "/organizations/"+orgID, nil, nil); code == http.StatusNoContent || code == http.StatusNotFound {
+				t.Logf("Organization %s deleted", slug)
+				return
+			}
 		}
-		adm.api(t, http.MethodGet, "/admin/users?q="+owner.Email, nil, &users)
-		if len(users.Items) == 1 {
-			adm.api(t, http.MethodPost, "/admin/users/"+users.Items[0].ID+":disable", nil, nil)
-		}
+		t.Errorf("Organization %s not deleted after 20 minutes", slug)
 	})
-	t.Cleanup(func() { owner.api(t, http.MethodDelete, "/organizations/"+orgID, nil, nil) })
 	t.Cleanup(func() { setPoolNodes(t, adm, func(n []string) []string { return appendMissing(n, dedicatedNode) }) })
 	t.Cleanup(func() {
 		var out struct {
@@ -152,14 +162,18 @@ func TestIsolationDedicated(t *testing.T) {
 		if owner.api(t, http.MethodDelete, "/workspaces/"+ws.Workspace.ID+"?confirmName=water", nil, &del) == http.StatusAccepted {
 			owner.operation(t, del.Operation.ID)
 		}
+
 	})
 	owner.operation(t, ws.Operation.ID)
 	ns := slug + "-water-app"
 	tenantOwner := tenantAs(t, "oidc:optest-dedicated", "oidc:"+admins.MachineName)
 	guaranteed := func(name string, mutate ...func(*corev1.Pod)) *corev1.Pod {
 		return pod(ns, name, append([]func(*corev1.Pod){func(p *corev1.Pod) {
-			q := corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("64Mi")}
-			p.Spec.Containers[0].Resources = corev1.ResourceRequirements{Requests: q, Limits: q}
+			q := func() corev1.ResourceList {
+				return corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("64Mi")}
+			}
+			// Two maps: a test that raises the limit must not raise the request with it.
+			p.Spec.Containers[0].Resources = corev1.ResourceRequirements{Requests: q(), Limits: q()}
 		}}, mutate...)...)
 	}
 	waitFor(t, "the Namespace's NetworkPolicies", 2*time.Minute, func() (bool, error) {
