@@ -50,3 +50,8 @@ tolerations:
   {{- toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
+
+{{/* Where a process serves /metrics: its own port, or "off". */}}
+{{- define "tenantry.metricsAddr" -}}
+{{- if .Values.metrics.enabled }}:{{ .Values.metrics.port }}{{ else }}off{{ end -}}
+{{- end }}

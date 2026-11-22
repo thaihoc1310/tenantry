@@ -80,6 +80,13 @@ spec:
               value: {{ required "worker.provisioning.clusterId or seed.clusterId is required" (.Values.worker.provisioning.clusterId | default .Values.seed.clusterId) | quote }}
             - name: TENANTRY_OPERATION_TIMEOUT
               value: {{ .Values.worker.provisioning.operationTimeout | quote }}
+            - name: TENANTRY_METRICS_ADDR
+              value: {{ include "tenantry.metricsAddr" . | quote }}
+          {{- if .Values.metrics.enabled }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+          {{- end }}
           resources:
             {{- toYaml .Values.worker.provisioning.resources | nindent 12 }}
           securityContext:
@@ -134,6 +141,13 @@ spec:
                 secretKeyRef:
                   name: {{ required "worker.groupsync.keycloak.existingSecret is required" $kc.existingSecret }}
                   key: {{ $kc.clientSecretKey }}
+            - name: TENANTRY_METRICS_ADDR
+              value: {{ include "tenantry.metricsAddr" . | quote }}
+          {{- if .Values.metrics.enabled }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+          {{- end }}
           resources:
             {{- toYaml .Values.worker.groupsync.resources | nindent 12 }}
           securityContext:

@@ -17,6 +17,7 @@ import (
 	"github.com/thaihoc1310/tenantry/backend/internal/apperr"
 	"github.com/thaihoc1310/tenantry/backend/internal/audit"
 	"github.com/thaihoc1310/tenantry/backend/internal/id"
+	"github.com/thaihoc1310/tenantry/backend/internal/metrics"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
 )
 
@@ -90,6 +91,9 @@ func Move(ctx context.Context, q *store.Queries, opID string, to State, errCode,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return store.Operation{}, false, nil
+	}
+	if err == nil && op.FinishedAt != nil {
+		metrics.ObserveOperation(op.Type, op.State, op.CreatedAt, *op.FinishedAt)
 	}
 	return op, err == nil, err
 }

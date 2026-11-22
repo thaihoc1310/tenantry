@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/netip"
 	"net/url"
 	"os"
@@ -15,8 +16,11 @@ import (
 )
 
 type Config struct {
-	DatabaseURL string     // DATABASE_URL, required
-	Addr        string     // TENANTRY_ADDR, API listen address; default :8080
+	DatabaseURL string // DATABASE_URL, required
+	Addr        string // TENANTRY_ADDR, API listen address; default :8080
+	// TENANTRY_METRICS_ADDR: where /metrics is served, apart from the API so
+	// no Ingress reaches it; default :9090, "off" serves none.
+	MetricsAddr string
 	LogLevel    slog.Level // TENANTRY_LOG_LEVEL: debug, info (default), warn, error
 	LogFormat   string     // TENANTRY_LOG_FORMAT: json (default) or text
 	// TENANTRY_TRUSTED_PROXIES: comma-separated CIDRs or addresses of the
@@ -38,6 +42,16 @@ func Load() (Config, error) {
 	}
 	if c.Addr == "" {
 		c.Addr = ":8080"
+	}
+	switch c.MetricsAddr = os.Getenv("TENANTRY_METRICS_ADDR"); c.MetricsAddr {
+	case "":
+		c.MetricsAddr = ":9090"
+	case "off":
+		c.MetricsAddr = ""
+	default:
+		if _, _, err := net.SplitHostPort(c.MetricsAddr); err != nil {
+			errs = append(errs, fmt.Errorf("TENANTRY_METRICS_ADDR=%q: want host:port such as :9090, or off", c.MetricsAddr))
+		}
 	}
 	if v := os.Getenv("TENANTRY_LOG_LEVEL"); v != "" {
 		if err := c.LogLevel.UnmarshalText([]byte(v)); err != nil {

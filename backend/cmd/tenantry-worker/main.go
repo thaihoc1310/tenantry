@@ -27,6 +27,8 @@ import (
 	"github.com/thaihoc1310/tenantry/backend/internal/housekeeping"
 	"github.com/thaihoc1310/tenantry/backend/internal/k8s"
 	"github.com/thaihoc1310/tenantry/backend/internal/keycloak"
+	"github.com/thaihoc1310/tenantry/backend/internal/metrics"
+	"github.com/thaihoc1310/tenantry/backend/internal/metrics/gauges"
 	"github.com/thaihoc1310/tenantry/backend/internal/outbox"
 	"github.com/thaihoc1310/tenantry/backend/internal/provisioning"
 )
@@ -94,6 +96,15 @@ func run(args []string) error {
 	// SIGTERM lets each loop finish what it has in hand, then exit.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
+
+	// Each loop's numbers, on the port no Ingress reaches.
+	if slices.Contains(loops, "provisioning") {
+		gauges.Provisioning(pool, prov.ClusterID, log)
+	}
+	if slices.Contains(loops, "groupsync") {
+		gauges.GroupSync(pool, log)
+	}
+	go metrics.Serve(ctx, cfg.MetricsAddr, log)
 
 	var wg sync.WaitGroup
 	for _, l := range loops {

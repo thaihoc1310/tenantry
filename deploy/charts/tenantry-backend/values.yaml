@@ -93,3 +93,9 @@ seed:
   # ready=,schedulable=,pool= (deploy/cluster/deploy.sh reads them from the
   # cluster).
   nodes: []
+
+# /metrics of the API and the workers, on a port of their own (PRODUCT-PLAN
+# §21.2), behind the Services tenantry-<component>-metrics.
+metrics:
+  enabled: true
+  port: 9090

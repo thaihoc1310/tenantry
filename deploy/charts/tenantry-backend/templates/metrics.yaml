@@ -1,0 +1,26 @@
+{{- if .Values.metrics.enabled }}
+# Prometheus scrapes each process on its metrics port (PRODUCT-PLAN §21.2).
+# These Services are cluster-internal: no Ingress routes to them, and the
+# API's own Service does not expose the port. One Service per Deployment, so
+# each scrape target is one kind of process.
+{{- range $component := list "api" "worker-provisioning" (ternary "worker-groupsync" "" $.Values.worker.groupsync.enabled) }}
+{{- if $component }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tenantry-{{ $component }}-metrics
+  labels:
+    {{- include "tenantry.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/component: {{ $component }}
+  ports:
+    - name: metrics
+      port: {{ $.Values.metrics.port }}
+      targetPort: metrics
+{{- end }}
+{{- end }}
+{{- end }}

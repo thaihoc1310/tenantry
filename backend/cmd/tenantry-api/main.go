@@ -19,6 +19,7 @@ import (
 	"github.com/thaihoc1310/tenantry/backend/internal/auth"
 	"github.com/thaihoc1310/tenantry/backend/internal/config"
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi"
+	"github.com/thaihoc1310/tenantry/backend/internal/metrics"
 )
 
 func main() {
@@ -73,6 +74,8 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
 
+	go metrics.Serve(ctx, cfg.MetricsAddr, log)
+
 	serveErr := make(chan error, 1)
 	go func() {
 		log.Info("listening", "addr", cfg.Addr)
@@ -99,7 +102,7 @@ const maxBodyBytes = 1 << 20
 
 func routes(db *pgxpool.Pool, a *auth.Service, trustedProxies []netip.Prefix, log *slog.Logger) http.Handler {
 	r := chi.NewRouter()
-	r.Use(httpapi.WithRequestID, httpapi.LogRequests(log), httpapi.Recover)
+	r.Use(metrics.HTTP, httpapi.WithRequestID, httpapi.LogRequests(log), httpapi.Recover)
 	// Liveness: the process answers. It never touches the database, so an
 	// outage of PostgreSQL does not make Kubernetes restart every API pod.
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {

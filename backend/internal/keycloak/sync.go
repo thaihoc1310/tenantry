@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/backoff"
+	"github.com/thaihoc1310/tenantry/backend/internal/metrics"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
 )
 
@@ -93,6 +94,7 @@ func (w *Worker) syncUsers(ctx context.Context) (int, error) {
 		n = len(rows)
 		for _, u := range rows {
 			if kerr := w.kc.SetUserEnabled(ctx, u.Subject, u.Status == "Active"); kerr != nil {
+				metrics.SyncFailures.WithLabelValues("user").Inc()
 				w.log.Warn("user sync failed", "user_id", u.ID, "attempts", u.SyncAttempts+1, "err", kerr)
 				err = q.MarkUserFailed(ctx, store.MarkUserFailedParams{
 					ID: u.ID, LastError: truncate(kerr.Error()), RetryInSeconds: backoff.After(u.SyncAttempts + 1).Seconds(),
@@ -125,6 +127,7 @@ func (w *Worker) syncGroups(ctx context.Context) (int, error) {
 			kcID, kerr := w.reconcileGroup(ctx, g)
 			switch {
 			case kerr != nil:
+				metrics.SyncFailures.WithLabelValues("group").Inc()
 				w.log.Warn("group sync failed", "group_id", g.ID, "attempts", g.SyncAttempts+1, "err", kerr)
 				err = q.MarkGroupFailed(ctx, store.MarkGroupFailedParams{
 					ID: g.ID, LastError: truncate(kerr.Error()), RetryInSeconds: backoff.After(g.SyncAttempts + 1).Seconds(),
@@ -180,6 +183,7 @@ func (w *Worker) syncMembers(ctx context.Context) (int, error) {
 			kerr := w.reconcileMember(ctx, q, m)
 			switch {
 			case kerr != nil:
+				metrics.SyncFailures.WithLabelValues("member").Inc()
 				w.log.Warn("group member sync failed", "group_id", m.GroupID, "user_id", m.UserID, "attempts", m.SyncAttempts+1, "err", kerr)
 				err = q.MarkMemberFailed(ctx, store.MarkMemberFailedParams{
 					GroupID: m.GroupID, UserID: m.UserID, LastError: truncate(kerr.Error()),

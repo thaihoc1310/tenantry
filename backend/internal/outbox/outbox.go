@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/backoff"
+	"github.com/thaihoc1310/tenantry/backend/internal/metrics"
 	"github.com/thaihoc1310/tenantry/backend/internal/operation"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
 )
@@ -157,6 +158,7 @@ func (w *Worker) deliver(ctx context.Context, q *store.Queries, e store.OutboxEv
 			return err
 		}
 		log.Warn("outbox delivery failed", "err", herr, "attempts", attempts)
+		metrics.Deliveries.WithLabelValues(e.Type, "failed").Inc()
 		if attempts >= FailAfter || IsPermanent(herr) {
 			if _, _, err := operation.Move(ctx, q, e.OperationID, operation.Failed, operation.ApplyFailed, herr.Error()); err != nil {
 				return err
@@ -168,6 +170,7 @@ func (w *Worker) deliver(ctx context.Context, q *store.Queries, e store.OutboxEv
 	if err := q.MarkEventDelivered(ctx, e.ID); err != nil {
 		return err
 	}
+	metrics.Deliveries.WithLabelValues(e.Type, "delivered").Inc()
 	// Not allowed (already Running, or further along) is fine: an operation
 	// with several events moves on the first delivery.
 	_, _, err := operation.Move(ctx, q, e.OperationID, operation.Running, "", "")

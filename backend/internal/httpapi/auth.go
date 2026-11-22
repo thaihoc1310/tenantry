@@ -12,6 +12,7 @@ import (
 	"github.com/thaihoc1310/tenantry/backend/internal/apperr"
 	"github.com/thaihoc1310/tenantry/backend/internal/auth"
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi/oapi"
+	"github.com/thaihoc1310/tenantry/backend/internal/metrics"
 )
 
 // Cookie names carry the __Host- prefix: the browser then only accepts them
@@ -65,9 +66,16 @@ func callback(a *auth.Service) http.HandlerFunc {
 		}
 		l, err := a.FinishLogin(r.Context(), c.Value, q.Get("state"), q.Get("code"))
 		if err != nil {
+			// refused: the person's side (expired, unverified email, disabled); error: ours or Keycloak's.
+			if _, ok := apperr.As(err); ok {
+				metrics.Logins.WithLabelValues("refused").Inc()
+			} else {
+				metrics.Logins.WithLabelValues("error").Inc()
+			}
 			loginFailed(w, r, err)
 			return
 		}
+		metrics.Logins.WithLabelValues("ok").Inc()
 		noteUser(r.Context(), l.UserID)
 		setCookie(w, SessionCookie, l.Token, auth.MaxSession, true)
 		setCookie(w, CSRFCookie, rand.Text(), auth.MaxSession, false)

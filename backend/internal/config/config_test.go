@@ -13,7 +13,7 @@ import (
 
 func setEnv(t *testing.T, env map[string]string) {
 	t.Helper()
-	for _, k := range []string{"DATABASE_URL", "TENANTRY_ADDR", "TENANTRY_LOG_LEVEL", "TENANTRY_LOG_FORMAT", "TENANTRY_TRUSTED_PROXIES"} {
+	for _, k := range []string{"DATABASE_URL", "TENANTRY_ADDR", "TENANTRY_LOG_LEVEL", "TENANTRY_LOG_FORMAT", "TENANTRY_TRUSTED_PROXIES", "TENANTRY_METRICS_ADDR"} {
 		t.Setenv(k, env[k])
 	}
 }
@@ -24,7 +24,7 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := config.Config{DatabaseURL: "postgres://x", Addr: ":8080", LogLevel: slog.LevelInfo, LogFormat: "json"}
+	want := config.Config{DatabaseURL: "postgres://x", Addr: ":8080", MetricsAddr: ":9090", LogLevel: slog.LevelInfo, LogFormat: "json"}
 	if !reflect.DeepEqual(c, want) {
 		t.Fatalf("got %+v, want %+v", c, want)
 	}
@@ -52,12 +52,12 @@ func TestExplicitValues(t *testing.T) {
 // Every bad variable is reported, not only the first, and a typo never falls
 // back to a default (e.g. "verbose" must not quietly mean info).
 func TestInvalidValuesAreAllReported(t *testing.T) {
-	setEnv(t, map[string]string{"TENANTRY_LOG_LEVEL": "verbose", "TENANTRY_LOG_FORMAT": "xml", "TENANTRY_TRUSTED_PROXIES": "traefik"})
+	setEnv(t, map[string]string{"TENANTRY_LOG_LEVEL": "verbose", "TENANTRY_LOG_FORMAT": "xml", "TENANTRY_TRUSTED_PROXIES": "traefik", "TENANTRY_METRICS_ADDR": "9090"})
 	_, err := config.Load()
 	if err == nil {
 		t.Fatal("no error")
 	}
-	for _, want := range []string{"DATABASE_URL", "TENANTRY_LOG_LEVEL", "TENANTRY_LOG_FORMAT", "TENANTRY_TRUSTED_PROXIES"} {
+	for _, want := range []string{"DATABASE_URL", "TENANTRY_LOG_LEVEL", "TENANTRY_LOG_FORMAT", "TENANTRY_TRUSTED_PROXIES", "TENANTRY_METRICS_ADDR"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %s: %v", want, err)
 		}
@@ -150,5 +150,12 @@ func TestLoadKeycloakSync(t *testing.T) {
 	t.Setenv("TENANTRY_KEYCLOAK_CLIENT_SECRET", "")
 	if _, err := config.LoadKeycloakSync(); err == nil {
 		t.Error("missing client secret accepted")
+	}
+}
+
+func TestMetricsOff(t *testing.T) {
+	setEnv(t, map[string]string{"DATABASE_URL": "postgres://x", "TENANTRY_METRICS_ADDR": "off"})
+	if c, err := config.Load(); err != nil || c.MetricsAddr != "" {
+		t.Fatalf("off: %q %v", c.MetricsAddr, err)
 	}
 }

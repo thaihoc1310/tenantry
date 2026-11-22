@@ -71,9 +71,15 @@ spec:
                   name: {{ .existingSecret }}
                   key: {{ .sessionKeyKey }}
             {{- end }}
+            - name: TENANTRY_METRICS_ADDR
+              value: {{ include "tenantry.metricsAddr" . | quote }}
           ports:
             - name: http
               containerPort: 8080
+            {{- if .Values.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+            {{- end }}
           # Liveness never touches the database: a PostgreSQL outage must not
           # restart every API pod. Readiness takes the pod out of the Service instead.
           livenessProbe:
