@@ -930,6 +930,9 @@ components:
         - RECIPIENT_NOT_ORG_ADMIN
         - TRANSFER_INVALID
         - LEAVE_NOT_ALLOWED
+        - OWNER_USER_NOT_FOUND
+        - ENTITLEMENT_BELOW_USAGE
+        - CIDR_OVERLAP
         - INTERNAL
 
     ErrorResponse:

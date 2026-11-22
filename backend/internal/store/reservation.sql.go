@@ -234,7 +234,7 @@ func (q *Queries) ListClusterGrants(ctx context.Context, orgID string) ([]ListCl
 }
 
 const shareLockCluster = `-- name: ShareLockCluster :one
-SELECT id, display_name, status, proxy_endpoint, console_url, apps_domain, capabilities, last_health_check, created_at, updated_at FROM clusters WHERE id = $1 FOR SHARE
+SELECT id, display_name, status, proxy_endpoint, console_url, apps_domain, capabilities, last_health_check, created_at, updated_at, reserved_cidrs FROM clusters WHERE id = $1 FOR SHARE
 `
 
 // Held while a grant on the cluster is written, so the cluster cannot leave
@@ -253,6 +253,7 @@ func (q *Queries) ShareLockCluster(ctx context.Context, id string) (Cluster, err
 		&i.LastHealthCheck,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReservedCidrs,
 	)
 	return i, err
 }

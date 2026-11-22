@@ -34,6 +34,7 @@ type Cluster struct {
 	LastHealthCheck *time.Time
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+	ReservedCidrs   []netip.Prefix
 }
 
 type ClusterGrantNetworkPool struct {
@@ -44,6 +45,39 @@ type ClusterGrantNetworkPool struct {
 type ClusterGrantSharedPool struct {
 	GrantID string
 	PoolID  string
+}
+
+type ClusterNode struct {
+	ClusterID              string
+	NodeName               string
+	Kind                   string
+	Ready                  bool
+	Schedulable            bool
+	AllocatableCpuMilli    int64
+	AllocatableMemoryBytes int64
+	AllocatablePods        int32
+	SharedPoolID           *string
+	ObservedAt             time.Time
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+}
+
+type DedicatedNodeGrant struct {
+	ID                       string
+	OrgID                    string
+	ClusterID                string
+	NodeName                 string
+	AllocatableCpuMilli      int64
+	AllocatableMemoryBytes   int64
+	AllocatablePods          int32
+	SystemReserveCpuMilli    int64
+	SystemReserveMemoryBytes int64
+	SystemReservePods        int32
+	NodeState                string
+	CapacityState            string
+	RevokedAt                *time.Time
+	CreatedAt                time.Time
+	UpdatedAt                time.Time
 }
 
 type Group struct {
@@ -224,19 +258,25 @@ type SharedComputePool struct {
 	ClusterID                 string
 	Name                      string
 	AllocationOvercommitRatio pgtype.Numeric
-	SystemReserve             []byte
 	CapacitySnapshot          []byte
 	CreatedAt                 time.Time
 	UpdatedAt                 time.Time
+	SystemReserveCpuMilli     int64
+	SystemReserveMemoryBytes  int64
+	SystemReservePods         int32
 }
 
 type User struct {
-	ID          string
-	Issuer      string
-	Subject     string
-	Email       *string
-	DisplayName string
-	Status      string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID           string
+	Issuer       string
+	Subject      string
+	Email        *string
+	DisplayName  string
+	Status       string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	SyncStatus   string
+	SyncAttempts int32
+	NextSyncAt   time.Time
+	LastError    string
 }

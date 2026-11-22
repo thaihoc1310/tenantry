@@ -75,7 +75,7 @@ func (q *Queries) EndSession(ctx context.Context, idHash []byte) (EndSessionRow,
 }
 
 const getSession = `-- name: GetSession :one
-SELECT sessions.id_hash, sessions.user_id, sessions.realm_roles, sessions.refresh_token_enc, sessions.access_expires_at, sessions.expires_at, sessions.created_at, users.id, users.issuer, users.subject, users.email, users.display_name, users.status, users.created_at, users.updated_at
+SELECT sessions.id_hash, sessions.user_id, sessions.realm_roles, sessions.refresh_token_enc, sessions.access_expires_at, sessions.expires_at, sessions.created_at, users.id, users.issuer, users.subject, users.email, users.display_name, users.status, users.created_at, users.updated_at, users.sync_status, users.sync_attempts, users.next_sync_at, users.last_error
 FROM sessions JOIN users ON users.id = sessions.user_id
 WHERE sessions.id_hash = $1 AND sessions.expires_at > now()
 `
@@ -105,6 +105,10 @@ func (q *Queries) GetSession(ctx context.Context, idHash []byte) (GetSessionRow,
 		&i.User.Status,
 		&i.User.CreatedAt,
 		&i.User.UpdatedAt,
+		&i.User.SyncStatus,
+		&i.User.SyncAttempts,
+		&i.User.NextSyncAt,
+		&i.User.LastError,
 	)
 	return i, err
 }

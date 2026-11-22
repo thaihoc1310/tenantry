@@ -14,7 +14,7 @@ INSERT INTO users (id, issuer, subject, email, display_name)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (issuer, subject) DO UPDATE
 SET email = EXCLUDED.email, display_name = EXCLUDED.display_name, updated_at = now()
-RETURNING id, issuer, subject, email, display_name, status, created_at, updated_at
+RETURNING id, issuer, subject, email, display_name, status, created_at, updated_at, sync_status, sync_attempts, next_sync_at, last_error
 `
 
 type UpsertUserByIdentityParams struct {
@@ -47,6 +47,10 @@ func (q *Queries) UpsertUserByIdentity(ctx context.Context, arg UpsertUserByIden
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SyncStatus,
+		&i.SyncAttempts,
+		&i.NextSyncAt,
+		&i.LastError,
 	)
 	return i, err
 }

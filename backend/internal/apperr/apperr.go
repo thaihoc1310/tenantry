@@ -41,6 +41,11 @@ const (
 	RecipientNotOrgAdmin Code = "RECIPIENT_NOT_ORG_ADMIN" // only to one of its OrgAdmins
 	TransferInvalid      Code = "TRANSFER_INVALID"        // no longer acceptable by this caller
 	LeaveNotAllowed      Code = "LEAVE_NOT_ALLOWED"       // the OrgOwner transfers first
+
+	// Platform Admin (PRODUCT-PLAN §16.5).
+	OwnerUserNotFound     Code = "OWNER_USER_NOT_FOUND"    // the owner of a new organization never logged in
+	EntitlementBelowUsage Code = "ENTITLEMENT_BELOW_USAGE" // a limit below what is used, or maxGroups < 3
+	CIDROverlap           Code = "CIDR_OVERLAP"            // a range overlapping another pool or the cluster's own
 )
 
 type Error struct {

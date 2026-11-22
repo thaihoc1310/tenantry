@@ -188,7 +188,7 @@ func (q *Queries) GetOrganizationForMember(ctx context.Context, arg GetOrganizat
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, issuer, subject, email, display_name, status, created_at, updated_at FROM users WHERE id = $1
+SELECT id, issuer, subject, email, display_name, status, created_at, updated_at, sync_status, sync_attempts, next_sync_at, last_error FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id string) (User, error) {
@@ -203,6 +203,10 @@ func (q *Queries) GetUser(ctx context.Context, id string) (User, error) {
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SyncStatus,
+		&i.SyncAttempts,
+		&i.NextSyncAt,
+		&i.LastError,
 	)
 	return i, err
 }

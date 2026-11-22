@@ -78,6 +78,16 @@ func TestConstraints(t *testing.T) {
 	mustExec(t, db, invite("inv-1", "dave@example.com", "OrgMember", "Pending"))
 	mustExec(t, db, `INSERT INTO ownership_transfers (id, org_id, from_user_id, to_user_id, expires_at)
 		VALUES ('ot-1', 'org-acme', 'usr-alice', 'usr-bob', now() + interval '7 days')`)
+	mustExec(t, db, `INSERT INTO clusters (id, display_name, proxy_endpoint, console_url, apps_domain) VALUES
+		('cluster-a', 'A', 'https://k', 'https://c', 'apps.test'), ('cluster-b', 'B', 'https://k', 'https://c', 'apps.test')`)
+	mustExec(t, db, `INSERT INTO shared_compute_pools (id, cluster_id, name, allocation_overcommit_ratio) VALUES
+		('pool-a', 'cluster-a', 'A', 2), ('pool-b', 'cluster-b', 'B', 2)`)
+	mustExec(t, db, `INSERT INTO cluster_nodes (cluster_id, node_name, kind, shared_pool_id) VALUES
+		('cluster-a', 'wk1', 'Worker', 'pool-a'), ('cluster-a', 'wk2', 'Worker', NULL), ('cluster-a', 'cp1', 'ControlPlane', NULL)`)
+	mustExec(t, db, `INSERT INTO organization_cluster_grants (id, org_id, cluster_id, max_workspaces, max_namespaces_total,
+		requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes)
+		VALUES ('grant-1', 'org-acme', 'cluster-a', 1, 1, 0, 0, 0, 0, 0, 0)`)
+	mustExec(t, db, `INSERT INTO dedicated_node_grants (id, org_id, cluster_id, node_name) VALUES ('dng-1', 'org-acme', 'cluster-a', 'wk2')`)
 
 	const unique, check, foreignKey = "23505", "23514", "23503"
 	cases := []struct {
@@ -106,6 +116,14 @@ func TestConstraints(t *testing.T) {
 			VALUES ('ot-x', 'org-acme', 'usr-alice', 'usr-alice', now() + interval '7 days')`, check},
 		{"second waiting transfer in one org", `INSERT INTO ownership_transfers (id, org_id, from_user_id, to_user_id, expires_at)
 			VALUES ('ot-x', 'org-acme', 'usr-alice', 'usr-bob', now() + interval '7 days')`, unique},
+		{"node in a pool of another cluster", `UPDATE cluster_nodes SET shared_pool_id = 'pool-b' WHERE node_name = 'wk2'`, foreignKey},
+		{"control-plane node in a pool", `UPDATE cluster_nodes SET shared_pool_id = 'pool-a' WHERE node_name = 'cp1'`, check},
+		{"node kind outside enum", `INSERT INTO cluster_nodes (cluster_id, node_name, kind) VALUES ('cluster-a', 'x', 'Edge')`, check},
+		{"node dedicated twice", `INSERT INTO dedicated_node_grants (id, org_id, cluster_id, node_name) VALUES ('dng-x', 'org-acme', 'cluster-a', 'wk2')`, unique},
+		{"dedicated node without a grant on its cluster", `INSERT INTO dedicated_node_grants (id, org_id, cluster_id, node_name)
+			VALUES ('dng-x', 'org-acme', 'cluster-b', 'wk9')`, foreignKey},
+		{"negative system reserve", `UPDATE shared_compute_pools SET system_reserve_cpu_milli = -1 WHERE id = 'pool-a'`, check},
+		{"user sync status outside enum", `UPDATE users SET sync_status = 'Done' WHERE id = 'usr-bob'`, check},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) { expectCode(t, db, c.sql, c.code) })
@@ -117,6 +135,10 @@ func TestConstraints(t *testing.T) {
 		expectCode(t, db, orgInsert("org-p2", "secondreq", "usr-bob", "Pending"), unique)
 		mustExec(t, db, `UPDATE organizations SET status = 'Rejected' WHERE id = 'org-p1'`)
 		mustExec(t, db, orgInsert("org-p3", "firstreq", "usr-bob", "Pending"))
+	})
+	t.Run("a revoked node grant frees the node", func(t *testing.T) {
+		mustExec(t, db, `UPDATE dedicated_node_grants SET revoked_at = now() WHERE id = 'dng-1'`)
+		mustExec(t, db, `INSERT INTO dedicated_node_grants (id, org_id, cluster_id, node_name) VALUES ('dng-2', 'org-acme', 'cluster-a', 'wk2')`)
 	})
 }
 

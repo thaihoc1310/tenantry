@@ -33,6 +33,10 @@ var statusOf = map[apperr.Code]int{
 	apperr.RecipientNotOrgAdmin:    http.StatusUnprocessableEntity,
 	apperr.TransferInvalid:         http.StatusForbidden,
 	apperr.LeaveNotAllowed:         http.StatusConflict,
+
+	apperr.OwnerUserNotFound:     http.StatusUnprocessableEntity,
+	apperr.EntitlementBelowUsage: http.StatusConflict,
+	apperr.CIDROverlap:           http.StatusConflict,
 }
 
 // writeError answers with an ErrorResponse.

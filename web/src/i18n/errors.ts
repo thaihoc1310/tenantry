@@ -68,6 +68,18 @@ export const errorText: Record<ErrorCode | 'NETWORK', Text> = {
     en: 'The owner cannot leave. Hand the Organization over first.',
     vi: 'Owner không thể rời đi. Hãy chuyển giao Organization trước.',
   },
+  OWNER_USER_NOT_FOUND: {
+    en: 'The owner has never logged in to the portal. Ask them to log in once, then try again.',
+    vi: 'Người làm owner chưa từng đăng nhập portal. Nhờ họ đăng nhập một lần rồi thử lại.',
+  },
+  ENTITLEMENT_BELOW_USAGE: {
+    en: 'A limit cannot go below what the Organization already uses, and it keeps at least 3 groups.',
+    vi: 'Giới hạn không thể thấp hơn mức Organization đang dùng, và phải có ít nhất 3 group.',
+  },
+  CIDR_OVERLAP: {
+    en: 'This address range overlaps a range already in use.',
+    vi: 'Dải địa chỉ này trùng với một dải đang được dùng.',
+  },
   INTERNAL: {
     en: 'Something went wrong on our side. Your data is safe; try again in a moment.',
     vi: 'Hệ thống gặp lỗi. Dữ liệu của bạn vẫn an toàn; thử lại sau ít phút.',
