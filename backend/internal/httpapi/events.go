@@ -90,7 +90,7 @@ func (e operationEvents) VisitGetOperationEventsResponse(w http.ResponseWriter) 
 			if err != nil {
 				return nil // gone, or the database: the client reconnects or polls
 			}
-			if op.UpdatedAt.Equal(last.UpdatedAt) && op.State == last.State {
+			if op.UpdatedAt.Equal(last.UpdatedAt) && op.State == last.State && op.Message == last.Message {
 				continue
 			}
 			last = op

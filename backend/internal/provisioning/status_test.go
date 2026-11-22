@@ -141,8 +141,8 @@ func (e *env) workspace(id string) store.Workspace {
 func (e *env) op(id string) store.Operation {
 	e.t.Helper()
 	var o store.Operation
-	if err := e.db.QueryRow(context.Background(), `SELECT state, error_code, error_message FROM operations WHERE id = $1`, id).
-		Scan(&o.State, &o.ErrorCode, &o.ErrorMessage); err != nil {
+	if err := e.db.QueryRow(context.Background(), `SELECT state, error_code, error_message, message FROM operations WHERE id = $1`, id).
+		Scan(&o.State, &o.ErrorCode, &o.ErrorMessage, &o.Message); err != nil {
 		e.t.Fatal(err)
 	}
 	return o
@@ -364,6 +364,63 @@ func TestTimeoutThenRetry(t *testing.T) {
 	}
 }
 
+// A Degraded CR during an update is Capsule retrying (04 §1.1): the
+// operation runs on and says why; Ready ends it Succeeded. A Degraded CR
+// that lasts past the timeout fails it with the Condition's words.
+func TestDegradedWhileUpdating(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	c := e.create("solar")
+	e.report("acme-solar", v1.PhaseReady, readyConds)
+	e.sync()
+	replication := []metav1.Condition{cond(v1.ConditionCapsuleTenantReady, false, "CapsuleNotReady", "LimitRange replication failed")}
+
+	ch, err := e.ws.CreateNamespace(ctx, "usr-ann", c.Workspace.ID, "backend", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.deliver()
+	e.report("acme-solar", v1.PhaseDegraded, replication)
+	e.sync()
+	o := e.op(ch.Operation.ID)
+	if w := e.workspace(c.Workspace.ID); w.State != "Updating" || o.State != "Running" || !strings.Contains(o.Message, "LimitRange replication failed") {
+		t.Fatalf("a passing Degraded: %s, operation %+v", w.State, o)
+	}
+	e.report("acme-solar", v1.PhaseReady, readyConds)
+	e.sync()
+	if o := e.op(ch.Operation.ID); o.State != "Succeeded" || o.ErrorCode != "" || o.Message != "" || e.workspace(c.Workspace.ID).State != "Ready" {
+		t.Fatalf("after Ready: %+v, workspace %s", o, e.workspace(c.Workspace.ID).State)
+	}
+
+	ch, err = e.ws.CreateNamespace(ctx, "usr-ann", c.Workspace.ID, "jobs", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.deliver()
+	e.report("acme-solar", v1.PhaseDegraded, replication)
+	e.sync()
+	if _, err := e.db.Exec(ctx, `UPDATE operations SET updated_at = now() - interval '11 minutes' WHERE id = $1`, ch.Operation.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.sync()
+	o = e.op(ch.Operation.ID)
+	if o.State != "Failed" || o.ErrorCode != ReconcileTimeout || !strings.Contains(o.ErrorMessage, "LimitRange replication failed") ||
+		e.workspace(c.Workspace.ID).State != "Degraded" {
+		t.Fatalf("a lasting Degraded: %+v, workspace %s", o, e.workspace(c.Workspace.ID).State)
+	}
+
+	// A Failed CR ends an update at once.
+	if _, err := e.ops.Retry(ctx, "usr-ann", false, ch.Operation.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.deliver()
+	e.report("acme-solar", v1.PhaseFailed, replication)
+	e.sync()
+	if o := e.op(ch.Operation.ID); o.State != "Failed" || o.ErrorCode != "RECONCILE_FAILED" || e.workspace(c.Workspace.ID).State != "Degraded" {
+		t.Fatalf("a Failed CR: %+v, workspace %s", o, e.workspace(c.Workspace.ID).State)
+	}
+}
+
 func unstructuredString(obj map[string]any, path ...string) (string, bool, error) {
 	cur := any(obj)
 	for _, p := range path {
@@ -389,7 +446,9 @@ func TestNextState(t *testing.T) {
 		{"Provisioning", v1.PhaseProvisioning, true, "Provisioning"},
 		{"Provisioning", v1.PhaseFailed, true, "Failed"},
 		{"Updating", v1.PhaseReady, true, "Ready"},
-		{"Updating", v1.PhaseDegraded, true, "Degraded"},
+		{"Provisioning", v1.PhaseDegraded, true, "Provisioning"},
+		{"Updating", v1.PhaseDegraded, true, "Updating"}, // Capsule retries; only Failed or the timeout end it
+		{"Updating", v1.PhaseFailed, true, "Degraded"},
 		{"Updating", v1.PhaseUpdating, true, "Updating"},
 		{"Ready", v1.PhaseDegraded, true, "Degraded"},
 		{"Degraded", v1.PhaseReady, true, "Ready"},

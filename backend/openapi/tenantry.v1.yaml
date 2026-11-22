@@ -2413,6 +2413,12 @@ components:
             Pending: waiting to reach the cluster. Running: the cluster is working on it.
             Failed can be retried; Blocked needs a Platform Admin.
         progress: { type: integer, minimum: 0, maximum: 100 }
+        message:
+          type: string
+          description: |
+            While Running, what the cluster reports is not done yet (its
+            Conditions not True), e.g. a Capsule replication retried. Absent
+            when there is nothing to say.
         errorCode: { type: string, description: "Set when Failed or Blocked, e.g. APPLY_FAILED" }
         errorMessage: { type: string }
         correlationId: { type: string, description: "Request id of the call that started it, for support" }

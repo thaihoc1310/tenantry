@@ -881,7 +881,7 @@ func (q *Queries) ListWorkspaceNamespaces(ctx context.Context, workspaceID strin
 }
 
 const listWorkspaceOperations = `-- name: ListWorkspaceOperations :many
-SELECT id, org_id, resource_type, resource_id, type, state, progress, error_code, error_message, correlation_id, created_by, created_at, updated_at, finished_at FROM operations
+SELECT id, org_id, resource_type, resource_id, type, state, progress, error_code, error_message, correlation_id, created_by, created_at, updated_at, finished_at, message FROM operations
 WHERE resource_type = 'Workspace' AND resource_id = $1
   AND ($2::text IS NULL OR id < $2)
 ORDER BY id DESC
@@ -919,6 +919,7 @@ func (q *Queries) ListWorkspaceOperations(ctx context.Context, arg ListWorkspace
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FinishedAt,
+			&i.Message,
 		); err != nil {
 			return nil, err
 		}

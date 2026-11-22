@@ -254,6 +254,31 @@ const usable = computed(() => ['Ready', 'Degraded'].includes(ws.value?.state ?? 
           >
         </el-alert>
         <el-alert
+          v-if="current?.state === 'Running' && current.message"
+          type="warning"
+          :closable="false"
+          show-icon
+          :title="`Still working on ${current.type}`"
+        >
+          <div>The cluster reports: {{ current.message }}</div>
+          <div style="margin-top: 6px">
+            This usually clears by itself within a minute. After 10 minutes the change fails and can be retried.
+          </div>
+        </el-alert>
+        <el-alert
+          v-if="ws.state === 'Degraded' && current?.state === 'Failed'"
+          type="error"
+          :closable="false"
+          show-icon
+          title="The last change did not finish"
+        >
+          <div>{{ current.errorMessage }}</div>
+          <div class="t-errcode" style="margin: 6px 0 10px">{{ current.errorCode }} · operation {{ current.id }}</div>
+          <el-button v-if="manages" type="danger" size="small" :loading="useRetryRun.isPending.value" @click="retry"
+            >Retry</el-button
+          >
+        </el-alert>
+        <el-alert
           v-if="ws.state === 'Cordoned'"
           type="warning"
           :closable="false"

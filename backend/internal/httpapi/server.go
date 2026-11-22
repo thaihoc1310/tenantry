@@ -251,6 +251,9 @@ func toOperation(op store.Operation) oapi.Operation {
 	if op.ErrorCode != "" {
 		o.ErrorCode, o.ErrorMessage = &op.ErrorCode, &op.ErrorMessage
 	}
+	if op.Message != "" {
+		o.Message = &op.Message
+	}
 	return o
 }
 

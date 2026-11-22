@@ -12,7 +12,7 @@ import (
 const createOperation = `-- name: CreateOperation :one
 INSERT INTO operations (id, org_id, resource_type, resource_id, type, correlation_id, created_by)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, org_id, resource_type, resource_id, type, state, progress, error_code, error_message, correlation_id, created_by, created_at, updated_at, finished_at
+RETURNING id, org_id, resource_type, resource_id, type, state, progress, error_code, error_message, correlation_id, created_by, created_at, updated_at, finished_at, message
 `
 
 type CreateOperationParams struct {
@@ -51,12 +51,13 @@ func (q *Queries) CreateOperation(ctx context.Context, arg CreateOperationParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.Message,
 	)
 	return i, err
 }
 
 const getOperation = `-- name: GetOperation :one
-SELECT id, org_id, resource_type, resource_id, type, state, progress, error_code, error_message, correlation_id, created_by, created_at, updated_at, finished_at FROM operations WHERE id = $1
+SELECT id, org_id, resource_type, resource_id, type, state, progress, error_code, error_message, correlation_id, created_by, created_at, updated_at, finished_at, message FROM operations WHERE id = $1
 `
 
 func (q *Queries) GetOperation(ctx context.Context, id string) (Operation, error) {
@@ -77,12 +78,13 @@ func (q *Queries) GetOperation(ctx context.Context, id string) (Operation, error
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.Message,
 	)
 	return i, err
 }
 
 const getOperationForCaller = `-- name: GetOperationForCaller :one
-SELECT op.id, op.org_id, op.resource_type, op.resource_id, op.type, op.state, op.progress, op.error_code, op.error_message, op.correlation_id, op.created_by, op.created_at, op.updated_at, op.finished_at, m.role
+SELECT op.id, op.org_id, op.resource_type, op.resource_id, op.type, op.state, op.progress, op.error_code, op.error_message, op.correlation_id, op.created_by, op.created_at, op.updated_at, op.finished_at, op.message, m.role
 FROM operations op
 LEFT JOIN organization_members m ON m.org_id = op.org_id AND m.user_id = $1
 WHERE op.id = $2
@@ -121,13 +123,14 @@ func (q *Queries) GetOperationForCaller(ctx context.Context, arg GetOperationFor
 		&i.Operation.CreatedAt,
 		&i.Operation.UpdatedAt,
 		&i.Operation.FinishedAt,
+		&i.Operation.Message,
 		&i.Role,
 	)
 	return i, err
 }
 
 const lockOperation = `-- name: LockOperation :one
-SELECT id, org_id, resource_type, resource_id, type, state, progress, error_code, error_message, correlation_id, created_by, created_at, updated_at, finished_at FROM operations WHERE id = $1 FOR UPDATE
+SELECT id, org_id, resource_type, resource_id, type, state, progress, error_code, error_message, correlation_id, created_by, created_at, updated_at, finished_at, message FROM operations WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockOperation(ctx context.Context, id string) (Operation, error) {
@@ -148,6 +151,7 @@ func (q *Queries) LockOperation(ctx context.Context, id string) (Operation, erro
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.Message,
 	)
 	return i, err
 }
@@ -157,10 +161,11 @@ UPDATE operations
 SET state         = $1::text,
     error_code    = $2::text,
     error_message = $3::text,
+    message       = '',
     finished_at   = CASE WHEN $1::text IN ('Succeeded', 'Failed', 'Blocked') THEN now() END,
     updated_at    = now()
 WHERE id = $4 AND state = ANY($5::text[])
-RETURNING id, org_id, resource_type, resource_id, type, state, progress, error_code, error_message, correlation_id, created_by, created_at, updated_at, finished_at
+RETURNING id, org_id, resource_type, resource_id, type, state, progress, error_code, error_message, correlation_id, created_by, created_at, updated_at, finished_at, message
 `
 
 type MoveOperationParams struct {
@@ -197,6 +202,24 @@ func (q *Queries) MoveOperation(ctx context.Context, arg MoveOperationParams) (O
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.Message,
 	)
 	return i, err
+}
+
+const setOperationMessage = `-- name: SetOperationMessage :exec
+UPDATE operations SET message = $2
+WHERE id = $1 AND state = 'Running' AND message <> $2
+`
+
+type SetOperationMessageParams struct {
+	ID      string
+	Message string
+}
+
+// What the cluster says while the operation runs; unchanged values write
+// nothing. updated_at stays: the timeout counts from delivery (TimedOutOperations).
+func (q *Queries) SetOperationMessage(ctx context.Context, arg SetOperationMessageParams) error {
+	_, err := q.db.Exec(ctx, setOperationMessage, arg.ID, arg.Message)
+	return err
 }

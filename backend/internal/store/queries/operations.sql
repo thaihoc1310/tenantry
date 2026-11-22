@@ -20,6 +20,7 @@ UPDATE operations
 SET state         = sqlc.arg(to_state)::text,
     error_code    = sqlc.arg(error_code)::text,
     error_message = sqlc.arg(error_message)::text,
+    message       = '',
     finished_at   = CASE WHEN sqlc.arg(to_state)::text IN ('Succeeded', 'Failed', 'Blocked') THEN now() END,
     updated_at    = now()
 WHERE id = @id AND state = ANY(sqlc.arg(from_states)::text[])
@@ -30,3 +31,9 @@ SELECT * FROM operations WHERE id = $1 FOR UPDATE;
 
 -- name: GetOperation :one
 SELECT * FROM operations WHERE id = $1;
+
+-- name: SetOperationMessage :exec
+-- What the cluster says while the operation runs; unchanged values write
+-- nothing. updated_at stays: the timeout counts from delivery (TimedOutOperations).
+UPDATE operations SET message = $2
+WHERE id = $1 AND state = 'Running' AND message <> $2;

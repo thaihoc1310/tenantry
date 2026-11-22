@@ -235,7 +235,7 @@ func (q *Queries) ListClusters(ctx context.Context) ([]Cluster, error) {
 }
 
 const listOperationsForAdmin = `-- name: ListOperationsForAdmin :many
-SELECT id, org_id, resource_type, resource_id, type, state, progress, error_code, error_message, correlation_id, created_by, created_at, updated_at, finished_at FROM operations
+SELECT id, org_id, resource_type, resource_id, type, state, progress, error_code, error_message, correlation_id, created_by, created_at, updated_at, finished_at, message FROM operations
 WHERE ($1::text IS NULL OR state = $1)
   AND ($2::text IS NULL OR id < $2)
 ORDER BY id DESC
@@ -273,6 +273,7 @@ func (q *Queries) ListOperationsForAdmin(ctx context.Context, arg ListOperations
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FinishedAt,
+			&i.Message,
 		); err != nil {
 			return nil, err
 		}

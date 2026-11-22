@@ -227,7 +227,7 @@ func (q *Queries) RecordWorkspaceUsage(ctx context.Context, arg RecordWorkspaceU
 }
 
 const runningOperationsOf = `-- name: RunningOperationsOf :many
-SELECT op.id, op.org_id, op.resource_type, op.resource_id, op.type, op.state, op.progress, op.error_code, op.error_message, op.correlation_id, op.created_by, op.created_at, op.updated_at, op.finished_at FROM operations op
+SELECT op.id, op.org_id, op.resource_type, op.resource_id, op.type, op.state, op.progress, op.error_code, op.error_message, op.correlation_id, op.created_by, op.created_at, op.updated_at, op.finished_at, op.message FROM operations op
 WHERE op.state = 'Running' AND op.resource_type = ANY($1::text[])
   AND EXISTS (SELECT 1 FROM outbox_events e WHERE e.operation_id = op.id AND e.target_cluster_id = $2)
 ORDER BY op.id
@@ -263,6 +263,7 @@ func (q *Queries) RunningOperationsOf(ctx context.Context, arg RunningOperations
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FinishedAt,
+			&i.Message,
 		); err != nil {
 			return nil, err
 		}
@@ -275,7 +276,7 @@ func (q *Queries) RunningOperationsOf(ctx context.Context, arg RunningOperations
 }
 
 const timedOutOperations = `-- name: TimedOutOperations :many
-SELECT op.id, op.org_id, op.resource_type, op.resource_id, op.type, op.state, op.progress, op.error_code, op.error_message, op.correlation_id, op.created_by, op.created_at, op.updated_at, op.finished_at FROM operations op
+SELECT op.id, op.org_id, op.resource_type, op.resource_id, op.type, op.state, op.progress, op.error_code, op.error_message, op.correlation_id, op.created_by, op.created_at, op.updated_at, op.finished_at, op.message FROM operations op
 JOIN clusters c ON c.id = $1
 WHERE op.state = 'Running' AND c.status <> 'Unavailable'
   AND op.updated_at < now() - make_interval(secs => $2::float8)
@@ -315,6 +316,7 @@ func (q *Queries) TimedOutOperations(ctx context.Context, arg TimedOutOperations
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FinishedAt,
+			&i.Message,
 		); err != nil {
 			return nil, err
 		}

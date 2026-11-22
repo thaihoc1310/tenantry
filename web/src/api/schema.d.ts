@@ -1716,6 +1716,12 @@ export interface components {
              */
             state: "Pending" | "Running" | "Succeeded" | "Failed" | "Blocked";
             progress: number;
+            /**
+             * @description While Running, what the cluster reports is not done yet (its
+             *     Conditions not True), e.g. a Capsule replication retried. Absent
+             *     when there is nothing to say.
+             */
+            message?: string;
             /** @description Set when Failed or Blocked, e.g. APPLY_FAILED */
             errorCode?: string;
             errorMessage?: string;

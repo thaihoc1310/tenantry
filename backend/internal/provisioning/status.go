@@ -209,6 +209,11 @@ func (s *Syncer) syncWorkspace(ctx context.Context, cr v1.PlatformWorkspace) err
 		case workspace.StateFailed, workspace.StateDegraded:
 			_, _, err = operation.Move(ctx, q, op.ID, operation.Failed,
 				"RECONCILE_"+strings.ToUpper(string(cr.Status.Phase)), failedConditions(cr.Status.Conditions))
+		default:
+			// Still at it: say what is not done, so a real error shows before the timeout.
+			if op.State == "Running" {
+				err = q.SetOperationMessage(ctx, store.SetOperationMessageParams{ID: op.ID, Message: failedConditions(cr.Status.Conditions)})
+			}
 		}
 		return err
 	})
@@ -229,10 +234,13 @@ func nextState(state string, phase v1.WorkspacePhase, current bool) string {
 			return workspace.StateFailed
 		}
 	case workspace.StateUpdating:
+		// A Degraded CR is not the end of an update: Capsule retries a
+		// failed replication by itself within seconds. Only a Failed CR, or
+		// the timeout (failTimedOut), ends it (04 §1.1).
 		switch phase {
 		case v1.PhaseReady:
 			return workspace.StateReady
-		case v1.PhaseFailed, v1.PhaseDegraded:
+		case v1.PhaseFailed:
 			return workspace.StateDegraded
 		}
 	case workspace.StateReady:

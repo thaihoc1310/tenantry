@@ -181,6 +181,7 @@ type Operation struct {
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	FinishedAt    *time.Time
+	Message       string
 }
 
 type Organization struct {
