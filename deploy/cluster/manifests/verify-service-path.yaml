@@ -1,0 +1,86 @@
+# Used by verify.sh (M9): a Pod with an address outside kube-proxy's
+# clusterCIDR, like every tenant Pod, calls a Service whose only backend runs
+# on another node, and must see itself as the caller. If kube-proxy took it
+# for an outside client it would SNAT the call to the node's address, and the
+# "same Workspace" NetworkPolicy would refuse it (architecture/05 §5).
+# __SERVER_NODE__ and __CLIENT_NODE__ are filled in by verify.sh. The pool
+# exists only while the check runs; its CIDR is outside the tenant supernet
+# 10.240.0.0/16, the Service CIDR and the Pod CIDR.
+apiVersion: projectcalico.org/v3
+kind: IPPool
+metadata:
+  name: cluster-verify-service-path
+spec:
+  cidr: 10.255.255.192/26
+  blockSize: 26
+  assignmentMode: Manual
+  allowedUses: [Workload]
+  ipipMode: Never
+  vxlanMode: CrossSubnet
+  natOutgoing: true
+  nodeSelector: all()
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cluster-verify-service-path
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+  annotations:
+    cni.projectcalico.org/ipv4pools: '["cluster-verify-service-path"]'
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: server
+  namespace: cluster-verify-service-path
+  labels: {app: server}
+spec:
+  nodeName: __SERVER_NODE__
+  automountServiceAccountToken: false
+  securityContext: {runAsNonRoot: true, runAsUser: 65532, seccompProfile: {type: RuntimeDefault}}
+  containers:
+    - name: netexec
+      image: registry.k8s.io/e2e-test-images/agnhost:2.53
+      args: [netexec, --http-port=8080]
+      securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: server
+  namespace: cluster-verify-service-path
+spec:
+  selector: {app: server}
+  ports: [{port: 80, targetPort: 8080}]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: client
+  namespace: cluster-verify-service-path
+spec:
+  nodeName: __CLIENT_NODE__
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext: {runAsNonRoot: true, runAsUser: 65532, seccompProfile: {type: RuntimeDefault}}
+  containers:
+    - name: probe
+      image: busybox:1.37.0
+      env:
+        - name: MY_IP
+          valueFrom: {fieldRef: {fieldPath: status.podIP}}
+      # netexec answers /clientip with host:port of the caller as it saw it.
+      command:
+        - sh
+        - -c
+        - |
+          for i in $(seq 60); do
+            seen="$(wget -qO- -T 2 http://server/clientip 2>/dev/null)" && break
+            sleep 1
+          done
+          case "${seen}" in
+            "${MY_IP}":*) echo ok ;;
+            *) echo "server saw '${seen}', I am ${MY_IP}" ;;
+          esac
+      securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
