@@ -33,6 +33,7 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 101
+        runAsGroup: 101
         fsGroup: 101
         seccompProfile: {type: RuntimeDefault}
       # Each start adds a line to a page on the volume: after a restart the
