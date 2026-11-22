@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# End-to-end tests of the portal on this cluster (IMPLEMENTATION-PLAN M3.8):
+# Playwright in web/e2e against https://PORTAL_HOST, the real Keycloak, and
+# Mailpit through a port-forward for the verification mail. Each run signs up
+# new test accounts named e2e<random>, and leaves them and their
+# Organizations behind. Extra arguments go to `playwright test`.
+source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+
+port=18025
+command kubectl --context "${KUBE_CONTEXT}" -n keycloak port-forward svc/mailpit "${port}:8025" >/dev/null 2>&1 &
+forward=$!
+trap 'kill "${forward}" 2>/dev/null' EXIT
+for _ in $(seq 30); do curl -fsS "http://127.0.0.1:${port}/readyz" >/dev/null 2>&1 && break; sleep 0.5; done
+
+cd "${CLUSTER_DIR}/../../web"
+E2E_PORTAL="https://${PORTAL_HOST}" \
+E2E_MAILPIT="http://127.0.0.1:${port}" \
+E2E_ADMIN_PASSWORD="$(kubectl -n keycloak get secret keycloak-realm -o jsonpath='{.data.PLATFORM_ADMIN_PASSWORD}' | base64 -d)" \
+  npx playwright test "$@"

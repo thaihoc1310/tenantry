@@ -62,6 +62,10 @@ run-api: ## Run the Platform API locally (secrets from DEV_SECRETS)
 run-worker: ## Run every worker loop locally (outbox events are only logged; no cluster yet)
 	cd $(BACKEND) && go run ./cmd/tenantry-worker --loops=all
 
+.PHONY: e2e
+e2e: ## End-to-end tests of the portal on the lab (signs up test accounts e2e*; E2E_SLOW=1 adds the 5-minute refresh test)
+	deploy/cluster/e2e.sh
+
 .PHONY: cluster-up cluster-verify
 cluster-up: ## Build the cluster foundation on the lab (deploy/cluster); safe to re-run
 	deploy/cluster/up.sh
