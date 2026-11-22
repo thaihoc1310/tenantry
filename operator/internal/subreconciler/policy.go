@@ -57,6 +57,11 @@ func Policy(ctx context.Context, c client.Client, scheme *runtime.Scheme, ws *v1
 	return ok(t), quota
 }
 
+// capsuleReconciling is the reason Capsule gives Ready=False while it is
+// still working on an object, which under load can last a minute: under
+// way, not a failure.
+const capsuleReconciling = "Reconciling"
+
 // capsuleReady reads the Ready condition Capsule keeps on its objects, for
 // the object's current generation when Capsule reports one.
 func capsuleReady(t string, obj *unstructured.Unstructured, what string) (Result, bool) {
@@ -71,6 +76,9 @@ func capsuleReady(t string, obj *unstructured.Unstructured, what string) (Result
 		}
 		if cond["status"] == "True" {
 			return Result{}, true
+		}
+		if cond["reason"] == capsuleReconciling {
+			return waiting(t, "waiting for Capsule to reconcile "+what), false
 		}
 		return failed(t, ReasonCapsuleNotReady, fmt.Sprintf("Capsule: %s: %v: %v", what, cond["reason"], cond["message"])), false
 	}
