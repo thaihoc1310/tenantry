@@ -149,8 +149,11 @@ func (s *Syncer) recordInventory(ctx context.Context, nodes []v1.InventoryNode) 
 				alloc = capacityOf(n.Allocatable)
 			}
 			reserve := reservation.Capacity{CPUMilli: g.SystemReserveCpuMilli, MemoryBytes: g.SystemReserveMemoryBytes, Pods: int64(g.SystemReservePods)}
-			// ponytail: nothing is reserved on a dedicated node before node reservations (M8).
-			capacity := reservation.CapacityState(reservation.Reservable(alloc, reserve), reservation.Capacity{})
+			reserved, err := reservation.NodeReserved(ctx, q, g.ID)
+			if err != nil {
+				return err
+			}
+			capacity := reservation.CapacityState(reservation.Reservable(alloc, reserve), reserved)
 			if state == g.NodeState && capacity == g.CapacityState && alloc.CPUMilli == g.AllocatableCpuMilli &&
 				alloc.MemoryBytes == g.AllocatableMemoryBytes && alloc.Pods == int64(g.AllocatablePods) {
 				continue

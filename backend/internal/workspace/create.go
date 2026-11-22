@@ -66,7 +66,8 @@ type New struct {
 	DisplayName   string
 	ClusterID     string
 	ComputeMode   string
-	SharedPoolID  string
+	SharedPoolID  string // Shared
+	NodeGrantID   string // Dedicated: the organization's node grant
 	Resources     Resources
 	Namespaces    []string // suffixes
 	Bindings      []Binding
@@ -146,19 +147,34 @@ func (s *Service) Create(ctx context.Context, userID, orgIDOrSlug string, n New)
 		if err := reservation.GrantFits(reservation.FromRow(grant, nil, nil).GrantSpec, holds, share); err != nil {
 			return err
 		}
-		if ok, err := q.GrantHasSharedPool(ctx, store.GrantHasSharedPoolParams{GrantID: grant.ID, PoolID: n.SharedPoolID}); err != nil {
-			return err
-		} else if !ok {
-			return apperr.Invalid("compute.sharedPoolId", "is not a shared pool of the organization's grant on this cluster")
-		}
-		// The pool is shared between organizations: always locked, so two
-		// creates on it cannot both pass its ceiling (02-data-model §4).
-		pv, err := reservation.LockedPool(ctx, q, n.SharedPoolID)
-		if err != nil {
-			return err
-		}
-		if err := reservation.PoolFits(pv, n.Resources.onNodes()); err != nil {
-			return err
+		var nodeGrant store.DedicatedNodeGrant
+		if n.ComputeMode == ComputeShared {
+			if ok, err := q.GrantHasSharedPool(ctx, store.GrantHasSharedPoolParams{GrantID: grant.ID, PoolID: n.SharedPoolID}); err != nil {
+				return err
+			} else if !ok {
+				return apperr.Invalid("compute.sharedPoolId", "is not a shared pool of the organization's grant on this cluster")
+			}
+			// The pool is shared between organizations: always locked, so two
+			// creates on it cannot both pass its ceiling (02-data-model §4).
+			pv, err := reservation.LockedPool(ctx, q, n.SharedPoolID)
+			if err != nil {
+				return err
+			}
+			if err := reservation.PoolFits(pv, n.Resources.onNodes()); err != nil {
+				return err
+			}
+		} else {
+			// The node grant's lock queues every reservation on the node: two
+			// Workspaces cannot both take its last room (PRODUCT-PLAN §6.3).
+			if nodeGrant, err = q.LockNodeGrant(ctx, store.LockNodeGrantParams{ID: n.NodeGrantID, OrgID: o.ID, ClusterID: n.ClusterID}); errors.Is(err, pgx.ErrNoRows) {
+				return &apperr.Error{Code: apperr.DedicatedNodeNotGranted, Message: "not a dedicated node of the organization on this cluster",
+					Details: map[string]any{"field": "compute.dedicatedNodeGrantId"}}
+			} else if err != nil {
+				return err
+			}
+			if err := reservation.ReserveOnNode(ctx, q, nodeGrant, n.Resources.onNodes()); err != nil {
+				return err
+			}
 		}
 
 		groupIDs, err := s.lockBoundGroups(ctx, q, o.ID, n.Bindings)
@@ -166,17 +182,31 @@ func (s *Service) Create(ctx context.Context, userID, orgIDOrSlug string, n New)
 			return err
 		}
 
-		pool := n.SharedPoolID
+		var pool *string
+		if n.ComputeMode == ComputeShared {
+			pool = &n.SharedPoolID
+		}
 		ws, err := q.CreateWorkspace(ctx, store.CreateWorkspaceParams{
 			ID: id.New(id.Workspace), OrgID: o.ID, ClusterID: n.ClusterID, ClusterGrantID: grant.ID,
 			Slug: n.Slug, K8sName: o.Slug + "-" + n.Slug, DisplayName: n.DisplayName,
 			RequestsCpuMilli: n.Resources.RequestsCPUMilli, RequestsMemoryBytes: n.Resources.RequestsMemoryBytes,
 			LimitsCpuMilli: n.Resources.LimitsCPUMilli, LimitsMemoryBytes: n.Resources.LimitsMemoryBytes,
 			Pods: n.Resources.Pods, RequestsStorageBytes: n.Resources.RequestsStorageBytes,
-			NamespaceQuota: n.Resources.NamespaceQuota, ComputeMode: n.ComputeMode, SharedPoolID: &pool,
+			NamespaceQuota: n.Resources.NamespaceQuota, ComputeMode: n.ComputeMode, SharedPoolID: pool,
 		})
 		if err != nil {
 			return err
+		}
+		if n.ComputeMode == ComputeDedicated {
+			if err := q.CreateNodeReservation(ctx, store.CreateNodeReservationParams{
+				ID: id.New(id.NodeReservation), WorkspaceID: ws.ID, OrgID: o.ID, ClusterID: ws.ClusterID, NodeGrantID: nodeGrant.ID,
+				ReservedCpuMilli: n.Resources.RequestsCPUMilli, ReservedMemoryBytes: n.Resources.RequestsMemoryBytes, ReservedPods: n.Resources.Pods,
+			}); err != nil {
+				return err
+			}
+			if err := reservation.RefreshNodeCapacity(ctx, q, nodeGrant.ID); err != nil {
+				return err
+			}
 		}
 		for _, b := range n.Bindings {
 			if err := q.CreateWorkspaceBinding(ctx, store.CreateWorkspaceBindingParams{
@@ -207,7 +237,7 @@ func (s *Service) Create(ctx context.Context, userID, orgIDOrSlug string, n New)
 		return audit.Record(ctx, q, audit.Event{
 			Actor: userID, OrgID: o.ID, Action: audit.WorkspaceCreate, TargetType: "Workspace", TargetID: ws.ID,
 			Detail: map[string]any{
-				"slug": ws.Slug, "clusterId": ws.ClusterID, "computeMode": ws.ComputeMode, "sharedPoolId": pool,
+				"slug": ws.Slug, "clusterId": ws.ClusterID, "computeMode": ws.ComputeMode, "sharedPoolId": pool, "nodeGrantId": n.NodeGrantID,
 				"namespaces": n.Namespaces, "bindings": bindingDetail(n.Bindings), "operationId": op.ID,
 			},
 		})
@@ -266,8 +296,9 @@ func (n *New) check(orgSlug string) error {
 			return apperr.Invalid("compute.sharedPoolId", "is required in Shared mode")
 		}
 	case ComputeDedicated:
-		// ponytail: Dedicated needs node reservations (M8); refused until then.
-		return apperr.Invalid("compute.mode", "Dedicated Workspaces are not available yet")
+		if n.NodeGrantID == "" {
+			return apperr.Invalid("compute.dedicatedNodeGrantId", "is required in Dedicated mode")
+		}
 	default:
 		return apperr.Invalid("compute.mode", "must be Shared or Dedicated")
 	}

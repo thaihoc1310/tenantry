@@ -536,16 +536,76 @@ func networkDetail(p store.NetworkPool) map[string]any {
 type DedicatedNode struct {
 	store.DedicatedNodeGrant
 	Allocatable, SystemReserve, Reservable, Reserved, Remaining Capacity
+	Workspaces                                                  []string // slugs of the Workspaces holding a reservation
 }
 
-func dedicatedView(g store.DedicatedNodeGrant) DedicatedNode {
+func dedicatedView(ctx context.Context, q *store.Queries, g store.DedicatedNodeGrant) (DedicatedNode, error) {
 	alloc := Capacity{CPUMilli: g.AllocatableCpuMilli, MemoryBytes: g.AllocatableMemoryBytes, Pods: int64(g.AllocatablePods)}
 	res := Capacity{CPUMilli: g.SystemReserveCpuMilli, MemoryBytes: g.SystemReserveMemoryBytes, Pods: int64(g.SystemReservePods)}
 	r := Reservable(alloc, res)
-	// ponytail: nothing is reserved before Dedicated Workspaces exist (M8);
-	// then the sum of their NodeReservations goes here.
-	var reserved Capacity
-	return DedicatedNode{DedicatedNodeGrant: g, Allocatable: alloc, SystemReserve: res, Reservable: r, Reserved: reserved, Remaining: Remaining(r, reserved)}
+	reserved, err := NodeReserved(ctx, q, g.ID)
+	if err != nil {
+		return DedicatedNode{}, err
+	}
+	rows, err := q.NodeGrantWorkspaces(ctx, []string{g.ID})
+	if err != nil {
+		return DedicatedNode{}, err
+	}
+	slugs := []string{}
+	for _, w := range rows {
+		slugs = append(slugs, w.Slug)
+	}
+	return DedicatedNode{DedicatedNodeGrant: g, Allocatable: alloc, SystemReserve: res, Reservable: r, Reserved: reserved,
+		Remaining: Remaining(r, reserved), Workspaces: slugs}, nil
+}
+
+// NodeReserved is what the Workspaces on a node grant hold of it.
+func NodeReserved(ctx context.Context, q *store.Queries, grantID string) (Capacity, error) {
+	s, err := q.NodeReserved(ctx, grantID)
+	return Capacity{CPUMilli: s.CpuMilli, MemoryBytes: s.MemoryBytes, Pods: s.Pods}, err
+}
+
+// ReserveOnNode checks that more fits on a locked node grant
+// (PRODUCT-PLAN §6.3): the node Ready, not Overcommitted, and what its
+// Workspaces hold plus more within reservable. Hard: no overcommit.
+func ReserveOnNode(ctx context.Context, q *store.Queries, g store.DedicatedNodeGrant, more Capacity) error {
+	if g.NodeState != "Ready" {
+		return &apperr.Error{Code: apperr.DedicatedNodeNotReady, Message: fmt.Sprintf("node %s is %s", g.NodeName, g.NodeState),
+			Details: map[string]any{"node": g.NodeName, "nodeState": g.NodeState}}
+	}
+	v, err := dedicatedView(ctx, q, g)
+	if err != nil {
+		return err
+	}
+	have, want, room := v.Reserved.dims(), more.dims(), v.Reservable.dims()
+	names := [3]string{"requestsCpu", "requestsMemory", "pods"}
+	formats := [3]func(int64) string{cpuQ, bytesQ, count}
+	for i := range have {
+		if want[i] > 0 && have[i]+want[i] > room[i] {
+			return &apperr.Error{
+				Code: apperr.DedicatedNodeInsufficientCapacity,
+				Message: fmt.Sprintf("node %s can hold %s %s; its Workspaces hold %s and this asks %s more",
+					g.NodeName, formats[i](room[i]), names[i], formats[i](have[i]), formats[i](want[i])),
+				Details: map[string]any{"node": g.NodeName, "resource": names[i], "reservable": formats[i](room[i]),
+					"reserved": formats[i](have[i]), "requested": formats[i](want[i])},
+			}
+		}
+	}
+	return nil
+}
+
+// RefreshNodeCapacity records a node grant's capacity state from what is
+// reserved on it (04-state-machines §5.1).
+func RefreshNodeCapacity(ctx context.Context, q *store.Queries, grantID string) error {
+	g, err := q.GetNodeGrant(ctx, grantID)
+	if err != nil {
+		return err
+	}
+	v, err := dedicatedView(ctx, q, g)
+	if err != nil {
+		return err
+	}
+	return q.SetNodeCapacityState(ctx, store.SetNodeCapacityStateParams{ID: g.ID, CapacityState: CapacityState(v.Reservable, v.Reserved)})
 }
 
 // NodeRequest is one node an Admin dedicates, with its system reserve.
@@ -567,7 +627,9 @@ func DedicatedNodesOf(ctx context.Context, q *store.Queries, orgID, clusterID st
 	}
 	out := make([]DedicatedNode, len(rows))
 	for i, r := range rows {
-		out[i] = dedicatedView(r)
+		if out[i], err = dedicatedView(ctx, q, r); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }
@@ -638,9 +700,15 @@ func (s *Service) SetDedicatedNodes(ctx context.Context, adminID, correlationID,
 			r := n.SystemReserve
 			if g, ok := held[n.Name]; ok {
 				alloc := Capacity{CPUMilli: g.AllocatableCpuMilli, MemoryBytes: g.AllocatableMemoryBytes, Pods: int64(g.AllocatablePods)}
+				reserved, err := NodeReserved(ctx, q, g.ID)
+				if err != nil {
+					return err
+				}
+				// A larger system reserve may leave the node Overcommitted: its
+				// Workspaces run on, it takes no new reservation (04 §5.3).
 				if _, err := q.UpdateDedicatedNodeReserve(ctx, store.UpdateDedicatedNodeReserveParams{
 					ID: g.ID, SystemReserveCpuMilli: r.CPUMilli, SystemReserveMemoryBytes: r.MemoryBytes, SystemReservePods: int32(r.Pods),
-					CapacityState: CapacityState(Reservable(alloc, r), Capacity{}),
+					CapacityState: CapacityState(Reservable(alloc, r), reserved),
 				}); err != nil {
 					return err
 				}
@@ -676,6 +744,15 @@ func (s *Service) SetDedicatedNodes(ctx context.Context, adminID, correlationID,
 		}
 		for _, g := range current {
 			if !slices.Contains(names, g.NodeName) {
+				held, err := q.NodeGrantWorkspaces(ctx, []string{g.ID})
+				if err != nil {
+					return err
+				}
+				if len(held) > 0 {
+					return &apperr.Error{Code: apperr.Conflict,
+						Message: fmt.Sprintf("Workspaces of the organization run on %s: they go before the node does", g.NodeName),
+						Details: map[string]any{"node": g.NodeName, "workspaces": len(held)}}
+				}
 				if err := q.RevokeDedicatedNodeGrant(ctx, g.ID); err != nil {
 					return err
 				}
@@ -693,7 +770,9 @@ func (s *Service) SetDedicatedNodes(ctx context.Context, adminID, correlationID,
 		out = make([]DedicatedNode, len(rows))
 		after := make([]map[string]any, len(rows))
 		for i, r := range rows {
-			out[i] = dedicatedView(r)
+			if out[i], err = dedicatedView(ctx, q, r); err != nil {
+				return err
+			}
 			after[i] = map[string]any{"node": r.NodeName, "systemReserve": out[i].SystemReserve}
 		}
 		return audit.Record(ctx, q, audit.Event{

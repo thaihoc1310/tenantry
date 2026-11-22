@@ -116,6 +116,18 @@ export const errorText: Record<ErrorCode | 'NETWORK', Text> = {
     en: 'The shared pool has no room for this. Ask less, or ask a Platform Admin for more nodes.',
     vi: 'Shared pool không còn đủ chỗ. Hãy xin ít hơn, hoặc nhờ Platform Admin thêm node.',
   },
+  DEDICATED_NODE_NOT_GRANTED: {
+    en: 'This node is not one of the Organization’s dedicated nodes on the cluster.',
+    vi: 'Node này không phải node dedicated của Organization trên cluster.',
+  },
+  DEDICATED_NODE_NOT_READY: {
+    en: 'The dedicated node is not Ready. Ask a Platform Admin.',
+    vi: 'Node dedicated đang không Ready. Hãy hỏi Platform Admin.',
+  },
+  DEDICATED_NODE_INSUFFICIENT_CAPACITY: {
+    en: 'The dedicated node has not enough room left for this.',
+    vi: 'Node dedicated không còn đủ chỗ cho yêu cầu này.',
+  },
   INTERNAL: {
     en: 'Something went wrong on our side. Your data is safe; try again in a moment.',
     vi: 'Hệ thống gặp lỗi. Dữ liệu của bạn vẫn an toàn; thử lại sau ít phút.',

@@ -224,3 +224,29 @@ WHERE resource_type = 'Workspace' AND resource_id = @workspace_id
   AND (sqlc.narg(cursor)::text IS NULL OR id < sqlc.narg(cursor))
 ORDER BY id DESC
 LIMIT @page_size;
+
+-- name: CreateNodeReservation :exec
+INSERT INTO workspace_node_reservations (id, workspace_id, org_id, cluster_id, node_grant_id,
+    reserved_cpu_milli, reserved_memory_bytes, reserved_pods)
+VALUES (@id, @workspace_id, @org_id, @cluster_id, @node_grant_id, @reserved_cpu_milli, @reserved_memory_bytes, @reserved_pods);
+
+-- name: GetNodeReservation :one
+-- A Workspace's reservation with the node it is on.
+SELECT r.*, g.node_name FROM workspace_node_reservations r JOIN dedicated_node_grants g ON g.id = r.node_grant_id
+WHERE r.workspace_id = $1;
+
+-- name: SetReservationAmount :exec
+UPDATE workspace_node_reservations
+SET reserved_cpu_milli = @reserved_cpu_milli, reserved_memory_bytes = @reserved_memory_bytes, reserved_pods = @reserved_pods, updated_at = now()
+WHERE workspace_id = @workspace_id;
+
+-- name: SetReservationState :exec
+UPDATE workspace_node_reservations SET state = @state, updated_at = now() WHERE workspace_id = @workspace_id AND state <> @state;
+
+-- name: WorkspaceNodeOvercommitted :one
+-- Whether a Dedicated Workspace's node holds more than it can (drift: a
+-- larger system reserve, a smaller node; 04-state-machines §5.3).
+SELECT EXISTS (
+    SELECT 1 FROM workspace_node_reservations r JOIN dedicated_node_grants g ON g.id = r.node_grant_id
+    WHERE r.workspace_id = $1 AND g.capacity_state = 'Overcommitted'
+);

@@ -35,6 +35,9 @@ func (s server) CreateWorkspace(ctx context.Context, req oapi.CreateWorkspaceReq
 	if b.Compute.SharedPoolId != nil {
 		n.SharedPoolID = *b.Compute.SharedPoolId
 	}
+	if b.Compute.DedicatedNodeGrantId != nil {
+		n.NodeGrantID = *b.Compute.DedicatedNodeGrantId
+	}
 	var err error
 	if n.Resources, err = toWorkspaceResources(b.Resources); err != nil {
 		return nil, err

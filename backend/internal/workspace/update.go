@@ -134,6 +134,39 @@ func checkResize(ctx context.Context, q *store.Queries, grant store.Organization
 	if err := reservation.GrantFits(reservation.FromRow(grant, nil, nil).GrantSpec, holds, positive(more)); err != nil {
 		return err
 	}
+	if !shared {
+		// A larger reservation is taken now, under the node grant's lock; a
+		// smaller one keeps the old numbers until the cluster has the new
+		// quota, so the database never says less than the node enforces
+		// (IMPLEMENTATION-PLAN §3.2).
+		res, err := q.GetNodeReservation(ctx, ws.ID)
+		if err != nil {
+			return err
+		}
+		g, err := q.LockNodeGrant(ctx, store.LockNodeGrantParams{ID: res.NodeGrantID, OrgID: ws.OrgID, ClusterID: ws.ClusterID})
+		if err != nil {
+			return err
+		}
+		held := reservation.Capacity{CPUMilli: res.ReservedCpuMilli, MemoryBytes: res.ReservedMemoryBytes, Pods: int64(res.ReservedPods)}
+		next := r.onNodes()
+		grow := reservation.Capacity{
+			CPUMilli: max(next.CPUMilli-held.CPUMilli, 0), MemoryBytes: max(next.MemoryBytes-held.MemoryBytes, 0), Pods: max(next.Pods-held.Pods, 0),
+		}
+		if grow != (reservation.Capacity{}) {
+			if err := reservation.ReserveOnNode(ctx, q, g, grow); err != nil {
+				return err
+			}
+		}
+		if err := q.SetReservationAmount(ctx, store.SetReservationAmountParams{
+			WorkspaceID: ws.ID, ReservedCpuMilli: max(held.CPUMilli, next.CPUMilli),
+			ReservedMemoryBytes: max(held.MemoryBytes, next.MemoryBytes), ReservedPods: int32(max(held.Pods, next.Pods)),
+		}); err != nil {
+			return err
+		}
+		if err := reservation.RefreshNodeCapacity(ctx, q, g.ID); err != nil {
+			return err
+		}
+	}
 	if shared && ws.SharedPoolID != nil {
 		pool, err := reservation.LockedPool(ctx, q, *ws.SharedPoolID)
 		if err != nil {

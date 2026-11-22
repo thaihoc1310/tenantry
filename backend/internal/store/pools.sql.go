@@ -151,6 +151,33 @@ func (q *Queries) CreateSharedPool(ctx context.Context, arg CreateSharedPoolPara
 	return i, err
 }
 
+const getNodeGrant = `-- name: GetNodeGrant :one
+SELECT id, org_id, cluster_id, node_name, allocatable_cpu_milli, allocatable_memory_bytes, allocatable_pods, system_reserve_cpu_milli, system_reserve_memory_bytes, system_reserve_pods, node_state, capacity_state, revoked_at, created_at, updated_at FROM dedicated_node_grants WHERE id = $1
+`
+
+func (q *Queries) GetNodeGrant(ctx context.Context, id string) (DedicatedNodeGrant, error) {
+	row := q.db.QueryRow(ctx, getNodeGrant, id)
+	var i DedicatedNodeGrant
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ClusterID,
+		&i.NodeName,
+		&i.AllocatableCpuMilli,
+		&i.AllocatableMemoryBytes,
+		&i.AllocatablePods,
+		&i.SystemReserveCpuMilli,
+		&i.SystemReserveMemoryBytes,
+		&i.SystemReservePods,
+		&i.NodeState,
+		&i.CapacityState,
+		&i.RevokedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const joinPool = `-- name: JoinPool :exec
 UPDATE cluster_nodes SET shared_pool_id = $1, updated_at = now()
 WHERE cluster_id = $2 AND node_name = ANY($3::text[])
@@ -476,6 +503,43 @@ func (q *Queries) LockNetworkPool(ctx context.Context, id string) (NetworkPool, 
 	return i, err
 }
 
+const lockNodeGrant = `-- name: LockNodeGrant :one
+SELECT id, org_id, cluster_id, node_name, allocatable_cpu_milli, allocatable_memory_bytes, allocatable_pods, system_reserve_cpu_milli, system_reserve_memory_bytes, system_reserve_pods, node_state, capacity_state, revoked_at, created_at, updated_at FROM dedicated_node_grants
+WHERE id = $1 AND org_id = $2 AND cluster_id = $3 AND revoked_at IS NULL
+FOR UPDATE
+`
+
+type LockNodeGrantParams struct {
+	ID        string
+	OrgID     string
+	ClusterID string
+}
+
+// A live node grant of the organization on the cluster, held while a
+// Workspace reserves on it (02-data-model §4: after the cluster grant).
+func (q *Queries) LockNodeGrant(ctx context.Context, arg LockNodeGrantParams) (DedicatedNodeGrant, error) {
+	row := q.db.QueryRow(ctx, lockNodeGrant, arg.ID, arg.OrgID, arg.ClusterID)
+	var i DedicatedNodeGrant
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ClusterID,
+		&i.NodeName,
+		&i.AllocatableCpuMilli,
+		&i.AllocatableMemoryBytes,
+		&i.AllocatablePods,
+		&i.SystemReserveCpuMilli,
+		&i.SystemReserveMemoryBytes,
+		&i.SystemReservePods,
+		&i.NodeState,
+		&i.CapacityState,
+		&i.RevokedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const lockSharedPool = `-- name: LockSharedPool :one
 SELECT id, cluster_id, name, allocation_overcommit_ratio, capacity_snapshot, created_at, updated_at, system_reserve_cpu_milli, system_reserve_memory_bytes, system_reserve_pods FROM shared_compute_pools WHERE id = $1 FOR UPDATE
 `
@@ -495,6 +559,59 @@ func (q *Queries) LockSharedPool(ctx context.Context, id string) (SharedComputeP
 		&i.SystemReserveMemoryBytes,
 		&i.SystemReservePods,
 	)
+	return i, err
+}
+
+const nodeGrantWorkspaces = `-- name: NodeGrantWorkspaces :many
+SELECT r.node_grant_id, w.slug FROM workspace_node_reservations r JOIN workspaces w ON w.id = r.workspace_id
+WHERE r.node_grant_id = ANY($1::text[]) AND r.state <> 'Released'
+ORDER BY w.slug
+`
+
+type NodeGrantWorkspacesRow struct {
+	NodeGrantID string
+	Slug        string
+}
+
+// The Workspaces holding a reservation on each node grant, for the catalog.
+func (q *Queries) NodeGrantWorkspaces(ctx context.Context, ids []string) ([]NodeGrantWorkspacesRow, error) {
+	rows, err := q.db.Query(ctx, nodeGrantWorkspaces, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []NodeGrantWorkspacesRow
+	for rows.Next() {
+		var i NodeGrantWorkspacesRow
+		if err := rows.Scan(&i.NodeGrantID, &i.Slug); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const nodeReserved = `-- name: NodeReserved :one
+SELECT coalesce(sum(reserved_cpu_milli), 0)::bigint AS cpu_milli,
+       coalesce(sum(reserved_memory_bytes), 0)::bigint AS memory_bytes,
+       coalesce(sum(reserved_pods), 0)::bigint AS pods
+FROM workspace_node_reservations WHERE node_grant_id = $1 AND state <> 'Released'
+`
+
+type NodeReservedRow struct {
+	CpuMilli    int64
+	MemoryBytes int64
+	Pods        int64
+}
+
+// What the Workspaces on a node hold of it: reservations not Released.
+func (q *Queries) NodeReserved(ctx context.Context, nodeGrantID string) (NodeReservedRow, error) {
+	row := q.db.QueryRow(ctx, nodeReserved, nodeGrantID)
+	var i NodeReservedRow
+	err := row.Scan(&i.CpuMilli, &i.MemoryBytes, &i.Pods)
 	return i, err
 }
 
@@ -648,6 +765,20 @@ func (q *Queries) SeedReservedCIDRs(ctx context.Context, arg SeedReservedCIDRsPa
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setNodeCapacityState = `-- name: SetNodeCapacityState :exec
+UPDATE dedicated_node_grants SET capacity_state = $2, updated_at = now() WHERE id = $1 AND capacity_state <> $2
+`
+
+type SetNodeCapacityStateParams struct {
+	ID            string
+	CapacityState string
+}
+
+func (q *Queries) SetNodeCapacityState(ctx context.Context, arg SetNodeCapacityStateParams) error {
+	_, err := q.db.Exec(ctx, setNodeCapacityState, arg.ID, arg.CapacityState)
+	return err
 }
 
 const updateDedicatedNodeReserve = `-- name: UpdateDedicatedNodeReserve :one

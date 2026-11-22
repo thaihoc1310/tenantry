@@ -123,3 +123,29 @@ SELECT coalesce(sum(requests_cpu_milli), 0)::bigint AS cpu_milli,
        coalesce(sum(pods), 0)::bigint AS pods
 FROM workspaces
 WHERE shared_pool_id = $1 AND compute_mode = 'Shared' AND state <> 'Deleted';
+
+-- name: LockNodeGrant :one
+-- A live node grant of the organization on the cluster, held while a
+-- Workspace reserves on it (02-data-model §4: after the cluster grant).
+SELECT * FROM dedicated_node_grants
+WHERE id = @id AND org_id = @org_id AND cluster_id = @cluster_id AND revoked_at IS NULL
+FOR UPDATE;
+
+-- name: NodeReserved :one
+-- What the Workspaces on a node hold of it: reservations not Released.
+SELECT coalesce(sum(reserved_cpu_milli), 0)::bigint AS cpu_milli,
+       coalesce(sum(reserved_memory_bytes), 0)::bigint AS memory_bytes,
+       coalesce(sum(reserved_pods), 0)::bigint AS pods
+FROM workspace_node_reservations WHERE node_grant_id = $1 AND state <> 'Released';
+
+-- name: SetNodeCapacityState :exec
+UPDATE dedicated_node_grants SET capacity_state = $2, updated_at = now() WHERE id = $1 AND capacity_state <> $2;
+
+-- name: NodeGrantWorkspaces :many
+-- The Workspaces holding a reservation on each node grant, for the catalog.
+SELECT r.node_grant_id, w.slug FROM workspace_node_reservations r JOIN workspaces w ON w.id = r.workspace_id
+WHERE r.node_grant_id = ANY(@ids::text[]) AND r.state <> 'Released'
+ORDER BY w.slug;
+
+-- name: GetNodeGrant :one
+SELECT * FROM dedicated_node_grants WHERE id = $1;

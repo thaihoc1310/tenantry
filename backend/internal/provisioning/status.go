@@ -148,6 +148,17 @@ func (s *Syncer) syncWorkspace(ctx context.Context, cr v1.PlatformWorkspace) err
 		}
 		current := version == ws.DesiredGeneration
 		state := nextState(ws.State, cr.Status.Phase, current)
+		// A node holding more than it can is drift too: the Workspace runs on,
+		// Degraded, until an Admin fixes the node (04-state-machines §5.3).
+		if state == workspace.StateReady && ws.ComputeMode == workspace.ComputeDedicated && (ws.State == workspace.StateReady || ws.State == workspace.StateDegraded) {
+			over, err := q.WorkspaceNodeOvercommitted(ctx, ws.ID)
+			if err != nil {
+				return err
+			}
+			if over {
+				state = workspace.StateDegraded
+			}
+		}
 		op, err := q.ActiveWorkspaceOperation(ctx, ws.ID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			op, err = store.ActiveWorkspaceOperationRow{}, nil
@@ -191,6 +202,9 @@ func (s *Syncer) syncWorkspace(ctx context.Context, cr v1.PlatformWorkspace) err
 		// The operation that wrote this version ends with it.
 		switch state {
 		case workspace.StateReady:
+			if err := workspace.Settled(ctx, q, ws); err != nil {
+				return err
+			}
 			_, _, err = operation.Move(ctx, q, op.ID, operation.Succeeded, "", "")
 		case workspace.StateFailed, workspace.StateDegraded:
 			_, _, err = operation.Move(ctx, q, op.ID, operation.Failed,

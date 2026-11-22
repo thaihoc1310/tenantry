@@ -83,7 +83,7 @@ func (s server) ListOrgDedicatedNodes(ctx context.Context, req oapi.ListOrgDedic
 			Id: d.ID, Name: d.NodeName,
 			NodeState: oapi.OrgDedicatedNodeNodeState(d.NodeState), CapacityState: oapi.OrgDedicatedNodeCapacityState(d.CapacityState),
 			Reservable: fromCapacity(d.Reservable), Reserved: fromCapacity(d.Reserved), Remaining: fromCapacity(d.Remaining),
-			Workspaces: []string{},
+			Workspaces: d.Workspaces,
 		})
 	}
 	return oapi.ListOrgDedicatedNodes200JSONResponse(resp), nil

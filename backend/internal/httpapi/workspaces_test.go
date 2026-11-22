@@ -976,3 +976,112 @@ func TestSharedPoolCeiling(t *testing.T) {
 		t.Fatalf("empty a pool in use: %d %s", rec.Code, rec.Body)
 	}
 }
+
+// Dedicated Workspaces reserve on the organization's node under its lock:
+// the M8 demo, wk3 with 2.5 CPU / 10Gi reservable (IMPLEMENTATION-PLAN M8).
+func TestDedicatedWorkspaces(t *testing.T) {
+	h, db, orgID, owner, admins, devs := workspaceOrg(t)
+	ctx := context.Background()
+	for _, q := range []string{
+		`UPDATE cluster_nodes SET shared_pool_id = NULL WHERE node_name = 'wk3'`,
+		`INSERT INTO dedicated_node_grants (id, org_id, cluster_id, node_name, allocatable_cpu_milli, allocatable_memory_bytes, allocatable_pods,
+			system_reserve_cpu_milli, system_reserve_memory_bytes, system_reserve_pods, node_state)
+			VALUES ('nodegrant-wk3', '` + orgID + `', 'cluster-a', 'wk3', 3000, 12348030976, 110, 500, 1610612736, 10, 'Ready')`,
+		`UPDATE organization_cluster_grants SET max_workspaces = 5 WHERE org_id = '` + orgID + `'`,
+		`UPDATE organization_entitlements SET max_workspaces_total = 5 WHERE org_id = '` + orgID + `'`,
+	} {
+		if _, err := db.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A whole body: JSON decoding merges a repeated "resources" into the first.
+	dedicated := func(slug, cpu, extra string) string {
+		return `{"slug":"` + slug + `","displayName":"` + slug + `","clusterId":"cluster-a",
+"compute":{"mode":"Dedicated","dedicatedNodeGrantId":"nodegrant-wk3"},
+"resources":{"requestsCpu":"` + cpu + `","requestsMemory":"3Gi","pods":10,"requestsStorage":"1Gi","namespaceQuota":1` + extra + `},
+"bindings":[{"groupId":"` + admins + `","role":"TenantOwner"},{"groupId":"` + devs + `","role":"Developer"}]}`
+	}
+	ids := map[string]string{}
+	for _, slug := range []string{"water", "green"} {
+		rec := createWorkspace(h, owner, "zeta", dedicated(slug, "1", ""))
+		var c oapi.WorkspaceAccepted
+		if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &c) != nil {
+			t.Fatalf("create %s: %d %s", slug, rec.Code, rec.Body)
+		}
+		ids[slug] = c.Workspace.Id
+		if *c.Workspace.Resources.LimitsCpu != "1" || *c.Workspace.Resources.LimitsMemory != "3Gi" {
+			t.Fatalf("Dedicated limits not the requests: %+v", c.Workspace.Resources)
+		}
+	}
+	var compute string
+	if err := db.QueryRow(ctx, `SELECT payload->'spec'->>'compute' FROM outbox_events e JOIN operations o ON o.id = e.operation_id WHERE o.resource_id = $1`,
+		ids["water"]).Scan(&compute); err != nil || compute != `{"mode": "Dedicated", "nodeName": "wk3", "dedicatedNodeGrantId": "nodegrant-wk3"}` {
+		t.Fatalf("CR compute %s (%v)", compute, err)
+	}
+	// 0.5 CPU left: a third of 1 CPU does not fit.
+	rec := createWorkspace(h, owner, "zeta", dedicated("earth", "1", ""))
+	if e := errorBody(t, rec); rec.Code != 409 || e.Code != oapi.DEDICATEDNODEINSUFFICIENTCAPACITY || (*e.Details)["reservable"] != "2500m" ||
+		(*e.Details)["reserved"] != "2" || (*e.Details)["requested"] != "1" {
+		t.Fatalf("a third: %d %s", rec.Code, rec.Body)
+	}
+	for name, c := range map[string]struct {
+		body   string
+		status int
+		code   oapi.ErrorCode
+	}{
+		"limits not the requests": {dedicated("earth", "100m", `,"limitsCpu":"200m"`), 400, oapi.VALIDATIONFAILED},
+		"someone else's node":     {strings.Replace(dedicated("earth", "100m", ""), "nodegrant-wk3", "nodegrant-nope", 1), 409, oapi.DEDICATEDNODENOTGRANTED},
+	} {
+		if rec := createWorkspace(h, owner, "zeta", c.body); rec.Code != c.status || errorBody(t, rec).Code != c.code {
+			t.Errorf("%s: %d %s", name, rec.Code, rec.Body)
+		}
+	}
+	// Two creates for the last 0.5 CPU: exactly one wins.
+	codes := make(chan int, 2)
+	var wg sync.WaitGroup
+	for _, slug := range []string{"earth", "fire"} {
+		wg.Go(func() { codes <- createWorkspace(h, owner, "zeta", dedicated(slug, "500m", "")).Code })
+	}
+	wg.Wait()
+	close(codes)
+	var got []int
+	for c := range codes {
+		got = append(got, c)
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, []int{202, 409}) {
+		t.Fatalf("two creates for the last room: %v", got)
+	}
+
+	// The catalog shows what is held, by whom; the grant gave no CPU.
+	rec = asAdmin(h, owner, http.MethodGet, "/api/v1/organizations/zeta/clusters/cluster-a/dedicated-nodes", "", "")
+	var nodes oapi.OrgDedicatedNodeList
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &nodes) != nil || len(nodes.Items) != 1 || nodes.Items[0].Reserved.Cpu != "2500m" ||
+		nodes.Items[0].Remaining.Cpu != "0" || len(nodes.Items[0].Workspaces) != 3 || nodes.Items[0].CapacityState != "FullyAllocated" {
+		t.Fatalf("dedicated nodes: %d %s", rec.Code, rec.Body)
+	}
+	if rec := asAdmin(h, owner, http.MethodGet, "/api/v1/organizations/zeta/usage", "", ""); !strings.Contains(rec.Body.String(), `"requestsCpu":{"allocated":"0"`) {
+		t.Fatalf("Dedicated took grant CPU: %s", rec.Body)
+	}
+	// The node is not taken back from under them.
+	admin := newSession(t, db, "usr-alice", "platform-admin")
+	if rec := asAdmin(h, admin, http.MethodPut, "/api/v1/admin/organizations/"+orgID+"/cluster-grants/cluster-a/dedicated-nodes", "", `{"nodes":[]}`); rec.Code != 409 {
+		t.Fatalf("revoke a node in use: %d %s", rec.Code, rec.Body)
+	}
+
+	// Resize: up does not fit; down keeps the reservation until the cluster has it.
+	settle(t, db, ids["water"])
+	resize := func(cpu string) *httptest.ResponseRecorder {
+		return asAdmin(h, owner, http.MethodPatch, "/api/v1/workspaces/"+ids["water"], "",
+			`{"resources":{"requestsCpu":"`+cpu+`","requestsMemory":"3Gi","pods":10,"requestsStorage":"1Gi","namespaceQuota":1}}`)
+	}
+	if rec := resize("1500m"); errorBody(t, rec).Code != oapi.DEDICATEDNODEINSUFFICIENTCAPACITY {
+		t.Fatalf("grow on a full node: %d %s", rec.Code, rec.Body)
+	}
+	if rec := resize("500m"); rec.Code != 202 {
+		t.Fatalf("shrink: %d %s", rec.Code, rec.Body)
+	}
+	if n := count(t, db, `SELECT count(*) FROM workspace_node_reservations WHERE workspace_id = $1 AND reserved_cpu_milli = 1000`, ids["water"]); n != 1 {
+		t.Fatal("a smaller reservation before the cluster has it")
+	}
+}

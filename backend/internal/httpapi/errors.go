@@ -43,11 +43,14 @@ var statusOf = map[apperr.Code]int{
 	apperr.GroupSyncPending:  http.StatusConflict,
 	apperr.WorkspaceNotReady: http.StatusConflict,
 
-	apperr.ClusterGrantQuotaExceeded:   http.StatusConflict,
-	apperr.ClusterGrantBelowAllocation: http.StatusConflict,
-	apperr.WorkspaceQuotaBelowUsage:    http.StatusConflict,
-	apperr.OrganizationNotEmpty:        http.StatusConflict,
-	apperr.ComputePoolCapacityExceeded: http.StatusConflict,
+	apperr.ClusterGrantQuotaExceeded:         http.StatusConflict,
+	apperr.ClusterGrantBelowAllocation:       http.StatusConflict,
+	apperr.WorkspaceQuotaBelowUsage:          http.StatusConflict,
+	apperr.OrganizationNotEmpty:              http.StatusConflict,
+	apperr.ComputePoolCapacityExceeded:       http.StatusConflict,
+	apperr.DedicatedNodeNotGranted:           http.StatusConflict,
+	apperr.DedicatedNodeNotReady:             http.StatusConflict,
+	apperr.DedicatedNodeInsufficientCapacity: http.StatusConflict,
 }
 
 // writeError answers with an ErrorResponse.

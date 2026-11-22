@@ -498,3 +498,70 @@ func TestDeleteRelease(t *testing.T) {
 	// The slug is free again (no CIDR to quarantine before M9).
 	e.create("solar")
 }
+
+// A Dedicated reservation is Active once the Workspace is Ready, comes down
+// after a smaller resize only once the cluster has it, and frees the node
+// when the Workspace is deleted.
+func TestDedicatedReservationLifecycle(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if _, err := e.db.Exec(ctx, `INSERT INTO cluster_nodes (cluster_id, node_name, kind, ready, schedulable, allocatable_cpu_milli, allocatable_memory_bytes, allocatable_pods)
+		VALUES ('cluster-a', 'wk3', 'Worker', true, true, 3000, 12348030976, 110);
+		INSERT INTO dedicated_node_grants (id, org_id, cluster_id, node_name, allocatable_cpu_milli, allocatable_memory_bytes, allocatable_pods,
+			system_reserve_cpu_milli, system_reserve_memory_bytes, system_reserve_pods, node_state)
+		VALUES ('nodegrant-wk3', 'org-01', 'cluster-a', 'wk3', 3000, 12348030976, 110, 500, 1610612736, 10, 'Ready')`); err != nil {
+		t.Fatal(err)
+	}
+	reservation := func() (string, int64, string) {
+		var state, capacity string
+		var cpu int64
+		if err := e.db.QueryRow(ctx, `SELECT coalesce((SELECT state FROM workspace_node_reservations), 'none'),
+			coalesce((SELECT reserved_cpu_milli FROM workspace_node_reservations), 0),
+			(SELECT capacity_state FROM dedicated_node_grants WHERE id = 'nodegrant-wk3')`).Scan(&state, &cpu, &capacity); err != nil {
+			t.Fatal(err)
+		}
+		return state, cpu, capacity
+	}
+	c, err := e.ws.Create(ctx, "usr-ann", "acme", workspace.New{
+		Slug: "water", DisplayName: "Water", ClusterID: "cluster-a", ComputeMode: workspace.ComputeDedicated, NodeGrantID: "nodegrant-wk3",
+		Resources: workspace.Resources{RequestsCPUMilli: 1000, RequestsMemoryBytes: 1 << 30, Pods: 10, RequestsStorageBytes: 1 << 30, NamespaceQuota: 1},
+		Bindings:  []workspace.Binding{{GroupID: "grp-a", Role: workspace.RoleTenantOwner}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, cpu, cap := reservation(); s != "Pending" || cpu != 1000 || cap != "PartiallyAllocated" {
+		t.Fatalf("after create: %s %d %s", s, cpu, cap)
+	}
+	e.deliver()
+	e.report("acme-water", v1.PhaseReady, readyConds)
+	e.sync()
+	if s, _, _ := reservation(); s != "Active" {
+		t.Fatalf("after Ready: %s", s)
+	}
+	small := workspace.Resources{RequestsCPUMilli: 500, RequestsMemoryBytes: 1 << 30, Pods: 10, RequestsStorageBytes: 1 << 30, NamespaceQuota: 1}
+	if _, err := e.ws.Update(ctx, "usr-ann", c.Workspace.ID, workspace.Patch{Resources: &small}); err != nil {
+		t.Fatal(err)
+	}
+	if _, cpu, _ := reservation(); cpu != 1000 {
+		t.Fatalf("lowered before the cluster has it: %d", cpu)
+	}
+	e.deliver()
+	e.report("acme-water", v1.PhaseReady, readyConds)
+	e.sync()
+	if _, cpu, _ := reservation(); cpu != 500 {
+		t.Fatalf("after the smaller quota is Ready: %d", cpu)
+	}
+	del, err := e.ws.Delete(ctx, "usr-ann", c.Workspace.ID, "water", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, _, _ := reservation(); s != "Releasing" {
+		t.Fatalf("while deleting: %s", s)
+	}
+	e.deliver() // the fake deletes the CR at once
+	e.sync()
+	if s, _, cap := reservation(); s != "none" || cap != "Available" || e.op(del.Operation.ID).State != "Succeeded" {
+		t.Fatalf("after delete: %s %s", s, cap)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"github.com/thaihoc1310/tenantry/backend/internal/audit"
 	"github.com/thaihoc1310/tenantry/backend/internal/operation"
 	"github.com/thaihoc1310/tenantry/backend/internal/outbox"
+	"github.com/thaihoc1310/tenantry/backend/internal/reservation"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
 )
 
@@ -38,6 +39,10 @@ func (s *Service) Delete(ctx context.Context, userID, wsID, confirm, correlation
 			return err
 		}
 		if ws, err = q.SetWorkspaceState(ctx, store.SetWorkspaceStateParams{ID: ws.ID, State: StateDeleting}); err != nil {
+			return err
+		}
+		// Still held, and counted, until the cluster is clean (04 §3).
+		if err := q.SetReservationState(ctx, store.SetReservationStateParams{WorkspaceID: ws.ID, State: "Releasing"}); err != nil {
 			return err
 		}
 		op, err := newOperation(ctx, q, ws, "workspace.delete", userID, correlationID)
@@ -83,9 +88,21 @@ func Release(ctx context.Context, q *store.Queries, ws store.Workspace, opID str
 	}); err != nil {
 		return err
 	}
+	res, err := q.GetNodeReservation(ctx, ws.ID)
+	dedicated := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
 	// ponytail: deleted at once while Workspaces have no CIDR; from M9 the
 	// row stays Deleted until its CIDR leaves quarantine (housekeeping).
-	return q.DeleteWorkspaceRow(ctx, ws.ID)
+	// Its node reservation goes with it: the node has the room back.
+	if err := q.DeleteWorkspaceRow(ctx, ws.ID); err != nil {
+		return err
+	}
+	if dedicated {
+		return reservation.RefreshNodeCapacity(ctx, q, res.NodeGrantID)
+	}
+	return nil
 }
 
 var (
@@ -133,4 +150,30 @@ func (s *Service) Force(ctx context.Context, adminID string, platformAdmin bool,
 		})
 	})
 	return out, err
+}
+
+// Settled records that the cluster has a Dedicated Workspace's quota: its
+// reservation is Active (from Pending, the first time) and, after a
+// smaller resize, down to the new numbers (04-state-machines §3). A Shared
+// Workspace has nothing to settle.
+func Settled(ctx context.Context, q *store.Queries, ws store.Workspace) error {
+	if ws.ComputeMode != ComputeDedicated {
+		return nil
+	}
+	res, err := q.GetNodeReservation(ctx, ws.ID)
+	if err != nil {
+		return err
+	}
+	if err := q.SetReservationState(ctx, store.SetReservationStateParams{WorkspaceID: ws.ID, State: "Active"}); err != nil {
+		return err
+	}
+	if res.ReservedCpuMilli == ws.RequestsCpuMilli && res.ReservedMemoryBytes == ws.RequestsMemoryBytes && res.ReservedPods == ws.Pods {
+		return nil
+	}
+	if err := q.SetReservationAmount(ctx, store.SetReservationAmountParams{
+		WorkspaceID: ws.ID, ReservedCpuMilli: ws.RequestsCpuMilli, ReservedMemoryBytes: ws.RequestsMemoryBytes, ReservedPods: ws.Pods,
+	}); err != nil {
+		return err
+	}
+	return reservation.RefreshNodeCapacity(ctx, q, res.NodeGrantID)
 }

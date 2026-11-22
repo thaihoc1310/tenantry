@@ -61,7 +61,10 @@ const (
 	OrganizationNotEmpty Code = "ORGANIZATION_NOT_EMPTY" // Workspaces or dedicated nodes left (04-state-machines §11)
 
 	// Compute (PRODUCT-PLAN §6).
-	ComputePoolCapacityExceeded Code = "COMPUTE_POOL_CAPACITY_EXCEEDED" // over a shared pool's ratio × reservable
+	ComputePoolCapacityExceeded       Code = "COMPUTE_POOL_CAPACITY_EXCEEDED"       // over a shared pool's ratio × reservable
+	DedicatedNodeNotGranted           Code = "DEDICATED_NODE_NOT_GRANTED"           // not a live node grant of the organization there
+	DedicatedNodeNotReady             Code = "DEDICATED_NODE_NOT_READY"             // the node is NotReady or cordoned
+	DedicatedNodeInsufficientCapacity Code = "DEDICATED_NODE_INSUFFICIENT_CAPACITY" // the node cannot hold it
 )
 
 type Error struct {

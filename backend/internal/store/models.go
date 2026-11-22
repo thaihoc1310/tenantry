@@ -329,3 +329,17 @@ type WorkspaceNamespace struct {
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }
+
+type WorkspaceNodeReservation struct {
+	ID                  string
+	WorkspaceID         string
+	OrgID               string
+	ClusterID           string
+	NodeGrantID         string
+	ReservedCpuMilli    int64
+	ReservedMemoryBytes int64
+	ReservedPods        int32
+	State               string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}

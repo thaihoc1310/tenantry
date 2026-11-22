@@ -97,6 +97,13 @@ func BuildCR(ctx context.Context, q *store.Queries, ws store.Workspace) (*v1.Pla
 	if ws.SharedPoolID != nil {
 		cr.Spec.Compute.SharedPoolID = *ws.SharedPoolID
 	}
+	if ws.ComputeMode == ComputeDedicated {
+		r, err := q.GetNodeReservation(ctx, ws.ID)
+		if err != nil {
+			return nil, err
+		}
+		cr.Spec.Compute.DedicatedNodeGrantID, cr.Spec.Compute.NodeName = r.NodeGrantID, r.NodeName
+	}
 	for _, b := range bindings {
 		cr.Spec.AccessBindings = append(cr.Spec.AccessBindings, v1.AccessBinding{
 			GroupSubject: GroupSubjectPrefix + b.MachineName, Role: v1.WorkspaceRole(b.Role),

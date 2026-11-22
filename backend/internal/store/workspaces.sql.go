@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"time"
 )
 
 const activeWorkspaceOperation = `-- name: ActiveWorkspaceOperation :one
@@ -167,6 +168,37 @@ func (q *Queries) CountWorkspaces(ctx context.Context, orgID string) (int32, err
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const createNodeReservation = `-- name: CreateNodeReservation :exec
+INSERT INTO workspace_node_reservations (id, workspace_id, org_id, cluster_id, node_grant_id,
+    reserved_cpu_milli, reserved_memory_bytes, reserved_pods)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+`
+
+type CreateNodeReservationParams struct {
+	ID                  string
+	WorkspaceID         string
+	OrgID               string
+	ClusterID           string
+	NodeGrantID         string
+	ReservedCpuMilli    int64
+	ReservedMemoryBytes int64
+	ReservedPods        int32
+}
+
+func (q *Queries) CreateNodeReservation(ctx context.Context, arg CreateNodeReservationParams) error {
+	_, err := q.db.Exec(ctx, createNodeReservation,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.OrgID,
+		arg.ClusterID,
+		arg.NodeGrantID,
+		arg.ReservedCpuMilli,
+		arg.ReservedMemoryBytes,
+		arg.ReservedPods,
+	)
+	return err
 }
 
 const createWorkspace = `-- name: CreateWorkspace :one
@@ -344,6 +376,47 @@ func (q *Queries) GetGrantStorageClasses(ctx context.Context, id string) ([]stri
 	var allowed_storage_classes []string
 	err := row.Scan(&allowed_storage_classes)
 	return allowed_storage_classes, err
+}
+
+const getNodeReservation = `-- name: GetNodeReservation :one
+SELECT r.id, r.workspace_id, r.org_id, r.cluster_id, r.node_grant_id, r.reserved_cpu_milli, r.reserved_memory_bytes, r.reserved_pods, r.state, r.created_at, r.updated_at, g.node_name FROM workspace_node_reservations r JOIN dedicated_node_grants g ON g.id = r.node_grant_id
+WHERE r.workspace_id = $1
+`
+
+type GetNodeReservationRow struct {
+	ID                  string
+	WorkspaceID         string
+	OrgID               string
+	ClusterID           string
+	NodeGrantID         string
+	ReservedCpuMilli    int64
+	ReservedMemoryBytes int64
+	ReservedPods        int32
+	State               string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	NodeName            string
+}
+
+// A Workspace's reservation with the node it is on.
+func (q *Queries) GetNodeReservation(ctx context.Context, workspaceID string) (GetNodeReservationRow, error) {
+	row := q.db.QueryRow(ctx, getNodeReservation, workspaceID)
+	var i GetNodeReservationRow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.OrgID,
+		&i.ClusterID,
+		&i.NodeGrantID,
+		&i.ReservedCpuMilli,
+		&i.ReservedMemoryBytes,
+		&i.ReservedPods,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.NodeName,
+	)
+	return i, err
 }
 
 const getWorkspace = `-- name: GetWorkspace :one
@@ -965,6 +1038,43 @@ func (q *Queries) SetNamespaceState(ctx context.Context, arg SetNamespaceStatePa
 	return i, err
 }
 
+const setReservationAmount = `-- name: SetReservationAmount :exec
+UPDATE workspace_node_reservations
+SET reserved_cpu_milli = $1, reserved_memory_bytes = $2, reserved_pods = $3, updated_at = now()
+WHERE workspace_id = $4
+`
+
+type SetReservationAmountParams struct {
+	ReservedCpuMilli    int64
+	ReservedMemoryBytes int64
+	ReservedPods        int32
+	WorkspaceID         string
+}
+
+func (q *Queries) SetReservationAmount(ctx context.Context, arg SetReservationAmountParams) error {
+	_, err := q.db.Exec(ctx, setReservationAmount,
+		arg.ReservedCpuMilli,
+		arg.ReservedMemoryBytes,
+		arg.ReservedPods,
+		arg.WorkspaceID,
+	)
+	return err
+}
+
+const setReservationState = `-- name: SetReservationState :exec
+UPDATE workspace_node_reservations SET state = $1, updated_at = now() WHERE workspace_id = $2 AND state <> $1
+`
+
+type SetReservationStateParams struct {
+	State       string
+	WorkspaceID string
+}
+
+func (q *Queries) SetReservationState(ctx context.Context, arg SetReservationStateParams) error {
+	_, err := q.db.Exec(ctx, setReservationState, arg.State, arg.WorkspaceID)
+	return err
+}
+
 const setWorkspaceCordoned = `-- name: SetWorkspaceCordoned :one
 UPDATE workspaces SET cordoned = $1, desired_generation = desired_generation + 1, updated_at = now()
 WHERE id = $2
@@ -1228,6 +1338,22 @@ SELECT EXISTS (
 // group bound to a Workspace not Deleted (PRODUCT-PLAN §9.3).
 func (q *Queries) UserHasWorkspaceBinding(ctx context.Context, userID string) (bool, error) {
 	row := q.db.QueryRow(ctx, userHasWorkspaceBinding, userID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const workspaceNodeOvercommitted = `-- name: WorkspaceNodeOvercommitted :one
+SELECT EXISTS (
+    SELECT 1 FROM workspace_node_reservations r JOIN dedicated_node_grants g ON g.id = r.node_grant_id
+    WHERE r.workspace_id = $1 AND g.capacity_state = 'Overcommitted'
+)
+`
+
+// Whether a Dedicated Workspace's node holds more than it can (drift: a
+// larger system reserve, a smaller node; 04-state-machines §5.3).
+func (q *Queries) WorkspaceNodeOvercommitted(ctx context.Context, workspaceID string) (bool, error) {
+	row := q.db.QueryRow(ctx, workspaceNodeOvercommitted, workspaceID)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err

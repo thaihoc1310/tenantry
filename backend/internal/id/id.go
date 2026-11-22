@@ -10,16 +10,17 @@ import (
 )
 
 const (
-	Organization = "org"
-	Operation    = "op"
-	User         = "usr"
-	Group        = "grp"
-	Invitation   = "inv"
-	Transfer     = "transfer"
-	ClusterGrant = "grant"
-	NodeGrant    = "nodegrant"
-	Workspace    = "ws"
-	Namespace    = "ns"
+	Organization    = "org"
+	Operation       = "op"
+	User            = "usr"
+	Group           = "grp"
+	Invitation      = "inv"
+	Transfer        = "transfer"
+	ClusterGrant    = "grant"
+	NodeGrant       = "nodegrant"
+	Workspace       = "ws"
+	Namespace       = "ns"
+	NodeReservation = "noderes"
 )
 
 // ULID returns the ULID part of an id made by New.
