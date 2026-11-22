@@ -456,7 +456,7 @@ Trong một feature: trang (`*Page.vue`), component riêng của feature, và m�
   3. **Idempotency-Key, audit, rate limit**: migrations `idempotency_keys`, `audit_events`; rate limit theo `architecture/06-security-and-identity.md` mục 6 bằng `golang.org/x/time/rate`.
   4. **Duyệt Organization**:
      - Migrations cho mọi bảng mà bước duyệt ghi vào: `clusters`, `onboarding_policies`, `organization_entitlements`, `organization_cluster_grants`, `shared_compute_pools`, `network_pools`, `cluster_grant_shared_pools`, `cluster_grant_network_pools`, `groups`, `group_members` (đủ cột sync và tombstone).
-     - `tenantry-seed`: `cluster-a`, onboarding policy theo spec §5.2.1, shared pool `shared-general`, NetworkPool `onboarding-pod-network`.
+     - `tenantry-seed`: `cluster-a` ở trạng thái `Ready` (bước kiểm bootstrap chuyển Cluster sang `Ready` thuộc M5, mà duyệt bắt buộc Cluster `Ready`), onboarding policy gồm mẫu entitlement theo spec §5.1 và mẫu grant theo §5.2.1, shared pool `shared-general`, NetworkPool `onboarding-pod-network`.
      - `RequirePlatformAdmin`; `GET /admin/organizations?status=Pending` trả kèm grant điền sẵn từ policy; `POST /admin/organizations/{id}:approve|reject`.
      - Duyệt là một transaction: `Active`, entitlement, ClusterGrant đầy đủ (quota, shared pool, NetworkPool), 3 group mặc định `admins/developers/viewers`, Owner vào `admins`, audit. Từ chối: `Rejected` + `review_note`, nhả slug.
      - Ranh giới với milestone sau: group nằm ở `sync_status=Pending` cho tới khi Group Sync Worker có ở M4. Pool ở M3 chỉ có bảng và dữ liệu seed; API và UI quản lý pool, capacity math thuộc M5.
@@ -765,7 +765,7 @@ make realm-export / realm-import
   - Từ M3, mỗi lần chạy script cài Keycloak có thêm một bước đồng bộ chạy lại được nhiều lần: cài đặt realm và client theo đúng file; user, group, membership và client secret đang có giữ nguyên.
   - Không bao giờ xóa realm rồi nạp lại: làm vậy `sub` của mọi user đổi, và row `users` của portal (khóa theo `(issuer, subject)`) mồ côi.
   - `make realm-export` kéo thay đổi làm trên UI về file để commit. Realm chứa user demo `alice/joe/bob/mallory` + `admin` có realm role `platform-admin`.
-- **Seed**: `tenantry-seed` idempotent: insert `clusters` (cluster-a, endpoints proxy/console/ingress domain), `onboarding_policies` theo mẫu spec §5.2.1, `shared_compute_pools` (`shared-general`, ratio 3.0; bảng không có cột selector, node của pool mang label `tenantry.io/compute-pool=<pool-id>` do operator gắn từ M5), `network_pools` (`onboarding-pod-network` 10.240.0.0/16 org null), Organization demo `acme` + grant nếu flag `--demo`.
+- **Seed**: `tenantry-seed` idempotent: insert `clusters` (cluster-a, endpoints proxy/console/ingress domain), `onboarding_policies` (mẫu entitlement theo spec §5.1, mẫu grant theo §5.2.1), `shared_compute_pools` (`shared-general`, ratio 3.0; bảng không có cột selector, node của pool mang label `tenantry.io/compute-pool=<pool-id>` do operator gắn từ M5), `network_pools` (`onboarding-pod-network` 10.240.0.0/16 org null). Seed chỉ insert khi chưa có, không ghi đè row đang tồn tại.
 - **Pre-commit**: gofmt/golangci-lint, eslint/prettier, `make generate` diff check.
 
 ---

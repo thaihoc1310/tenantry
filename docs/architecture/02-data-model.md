@@ -202,6 +202,7 @@ erDiagram
   onboarding_policies {
     text id PK
     text default_cluster_id FK
+    jsonb entitlement_template
     jsonb grant_template
     bool active
   }
@@ -227,7 +228,6 @@ erDiagram
     numeric allocation_overcommit_ratio
     jsonb system_reserve
     jsonb capacity_snapshot
-    text status
   }
   cluster_grant_shared_pools {
     text grant_id FK
@@ -300,7 +300,10 @@ erDiagram
 **Điểm cần review**
 
 - `capacity_snapshot` của shared pool và `allocatable_*` của dedicated node là **dữ liệu chép từ Kubernetes**. Controller báo qua status của CR phụ (`PlatformNodeGrant` cho dedicated node, `PlatformSharedPool` cho shared pool, `PlatformNodeInventory` cho danh sách node trong `cluster_nodes`), worker chép về DB — worker không đọc Node trực tiếp. Chênh lệch với reservation → `Overcommitted`.
-- `onboarding_policies.grant_template` là JSON điền sẵn vào form duyệt; grant đã cấp là snapshot, đổi policy sau đó không ảnh hưởng [5.2.1].
+- `onboarding_policies.entitlement_template` và `grant_template` là JSON điền sẵn vào form duyệt; entitlement và grant đã cấp là snapshot, đổi policy sau đó không ảnh hưởng [5.1][5.2.1].
+- `id` của `clusters`, `shared_compute_pools` và `network_pools` là tên do Platform Admin đặt (`cluster-a`, `shared-general`, `onboarding-pod-network`), không phải ULID. Chúng thành giá trị label và tên object trên Kubernetes nên phải là DNS label (CHECK trong schema). Hệ quả: tên pool là duy nhất trên toàn platform, không phải trong từng Cluster; Cluster thứ hai phải đặt tên pool khác.
+- Grant phải có ít nhất một row `cluster_grant_network_pools` (service kiểm khi duyệt và khi sửa grant); `cluster_grant_shared_pools` được để trống.
+- `shared_compute_pools` chưa có cột trạng thái: chưa có luồng nào cần nó. Thêm khi M5 định nghĩa được giá trị.
 
 ## 4. Vùng Workspace & Allocation
 

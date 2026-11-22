@@ -342,6 +342,8 @@ maxGroups: 10
 maxWorkspacesTotal: 8
 ```
 
+`maxGroups` tối thiểu là 3: ba group mặc định `admins/developers/viewers` tạo lúc duyệt cũng tính vào giới hạn này.
+
 CPU, RAM, Namespace, node và network được cấp theo từng ClusterGrant vì capacity của mỗi cluster độc lập.
 
 ### 5.2 OrganizationClusterGrant
@@ -396,6 +398,8 @@ resources:
 sharedPoolRefs: [shared-general]
 allowedNetworkPoolRefs: [onboarding-pod-network]
 ```
+
+Policy mang thêm mẫu global entitlement (5.1), cũng điền sẵn vào form duyệt. Grant phải có ít nhất một `allowedNetworkPoolRefs` vì Workspace nào cũng cần CIDR; `sharedPoolRefs` được để trống cho Organization chỉ dùng dedicated node.
 
 Admin duyệt nguyên mẫu hoặc sửa trước khi bấm duyệt; grant đã cấp là snapshot, đổi policy sau đó không ảnh hưởng. Nâng quota, cấp thêm Cluster/shared pool/dedicated node về sau vẫn qua admin UI — policy chỉ là giá trị mặc định của cùng data model, không phải một luồng cấp phát riêng.
 
