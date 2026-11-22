@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Schemas } from '@/api/client'
-import { fromApproval, toApproval } from './grant'
+import { fromApproval, fromGrant, toApproval } from './grant'
 
 // The seed's onboarding policy (cmd/tenantry-seed).
 const proposal: Schemas['Approval'] = {
@@ -36,5 +36,13 @@ describe('grant form', () => {
     const g = toApproval({ ...fromApproval(proposal), pool: '' }).clusterGrant
     expect(g.sharedPoolIds).toEqual([])
     expect(g.resources).toMatchObject({ requestsCpu: '0', limitsMemory: '0Gi', pods: 0, requestsStorage: '20Gi' })
+  })
+  it('keeps the pools beyond the first, which the form does not show', () => {
+    const g = { ...proposal.clusterGrant, sharedPoolIds: ['shared-general', 'gpu'], networkPoolIds: ['a', 'b'] }
+    const out = toApproval(fromGrant(g)).clusterGrant
+    expect([out.sharedPoolIds, out.networkPoolIds]).toEqual([
+      ['shared-general', 'gpu'],
+      ['a', 'b'],
+    ])
   })
 })

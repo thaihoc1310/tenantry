@@ -34,11 +34,22 @@ const orgNav = computed(() => {
     ['overview', 'Overview', '', 'Odometer'],
     ['members', 'Members', '/members', 'User'],
     ['groups', 'Groups', '/groups', 'Collection'],
+    ['clusters', 'Clusters', '/clusters', 'Cpu'],
     ['settings', 'Settings', '/settings', 'Setting'],
   ]
   const role = current.value?.myRole
   return role === 'OrgOwner' || role === 'OrgAdmin' ? all : all.filter(([k]) => k === 'overview' || k === 'settings')
 })
+
+// The Platform Admin menu (mockups: AppShell); Platform health comes later.
+const adminNav = [
+  ['organizations', 'Organizations', '/admin/organizations', 'OfficeBuilding'],
+  ['clusters', 'Clusters', '/admin/clusters', 'Cpu'],
+  ['policy', 'Onboarding policy', '/admin/onboarding-policy', 'DocumentChecked'],
+  ['grants', 'Grants', '/admin/grants', 'Coin'],
+  ['operations', 'Operations', '/admin/operations', 'Operation'],
+  ['users', 'Users', '/admin/users', 'UserFilled'],
+]
 
 // The review queue's length, for the admin menu.
 const pending = useAdminOrganizations('Pending', 200, () => isAdmin.value && props.area === 'admin')
@@ -120,14 +131,21 @@ async function signOut() {
                 ><el-icon><component :is="icon" /></el-icon>{{ label }}</RouterLink
               >
             </template>
-            <RouterLink v-else to="/admin/organizations" :aria-current="active === 'organizations' ? 'page' : undefined"
-              ><el-icon><OfficeBuilding /></el-icon>Organizations<span
-                v-if="waiting"
-                class="t-nav-count"
-                :aria-label="waiting + ' waiting'"
-                >{{ waiting }}</span
-              ></RouterLink
-            >
+            <template v-else>
+              <RouterLink
+                v-for="[key, label, path, icon] in adminNav"
+                :key="key"
+                :to="path!"
+                :aria-current="active === key ? 'page' : undefined"
+                ><el-icon><component :is="icon" /></el-icon>{{ label
+                }}<span
+                  v-if="key === 'organizations' && waiting"
+                  class="t-nav-count"
+                  :aria-label="waiting + ' waiting'"
+                  >{{ waiting }}</span
+                ></RouterLink
+              >
+            </template>
           </nav>
         </div>
       </aside>

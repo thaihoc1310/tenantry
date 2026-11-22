@@ -12,11 +12,21 @@ withDefaults(
     errors?: Partial<Record<keyof GrantModel, string>>
     options?: { pools: string[]; nets: string[]; classes: string[] }
     idp?: string
+    // limits: show the organization-wide limits too (approving, creating, the policy).
+    limits?: boolean
+    // notes: what Workspaces already reserve, under each field (editing a grant).
+    notes?: Partial<Record<keyof GrantModel, string>>
   }>(),
-  { errors: () => ({}), options: () => ({ pools: [], nets: [], classes: [] }), idp: 'g' },
+  {
+    errors: () => ({}),
+    options: () => ({ pools: [], nets: [], classes: [] }),
+    idp: 'g',
+    limits: true,
+    notes: () => ({}),
+  },
 )
 
-const limits: [keyof GrantModel, string, string, string][] = [
+const limitFields: [keyof GrantModel, string, string, string][] = [
   ['maxMembers', 'Members', '', ''],
   ['maxGroups', 'Groups', '', 'Includes the 3 default groups.'],
   ['maxWorkspacesTotal', 'Workspaces, all clusters', '', ''],
@@ -30,10 +40,10 @@ const every: [keyof GrantModel, string, string][] = [
 
 <template>
   <el-form label-position="top" class="t-stack" style="gap: 24px" @submit.prevent>
-    <section class="t-section">
+    <section v-if="limits" class="t-section">
       <h3>Organization, every cluster</h3>
       <div class="t-fields">
-        <el-form-item v-for="f in limits" :key="f[0]" :label="f[1]" :for="idp + '-' + f[0]">
+        <el-form-item v-for="f in limitFields" :key="f[0]" :label="f[1]" :for="idp + '-' + f[0]">
           <NumField
             :id="idp + '-' + f[0]"
             v-model="g[f[0]] as number"
@@ -52,6 +62,7 @@ const every: [keyof GrantModel, string, string][] = [
         <el-form-item v-for="f in every" :key="f[0]" :label="f[1]" :for="idp + '-' + f[0]">
           <NumField :id="idp + '-' + f[0]" v-model="g[f[0]] as number" :unit="f[2]" />
           <div v-if="errors[f[0]]" class="t-field-note t-field-err">{{ errors[f[0]] }}</div>
+          <div v-else-if="notes[f[0]]" class="t-field-note num">{{ notes[f[0]] }}</div>
         </el-form-item>
       </div>
     </section>
@@ -75,11 +86,12 @@ const every: [keyof GrantModel, string, string][] = [
       </div>
       <template v-if="g.pool">
         <p class="t-field-note">Shared quota: the total that this Organization's Workspaces may reserve on the pool.</p>
-        <ResourceGrid v-model="g" :idp="idp" :errors="errors" />
+        <ResourceGrid v-model="g" :idp="idp" :errors="errors" :notes="notes" />
         <div class="t-fields">
           <el-form-item label="Pods" :for="idp + '-pods'">
             <NumField :id="idp + '-pods'" v-model="g.pods" />
             <div v-if="errors.pods" class="t-field-note t-field-err">{{ errors.pods }}</div>
+            <div v-else-if="notes.pods" class="t-field-note num">{{ notes.pods }}</div>
           </el-form-item>
         </div>
       </template>

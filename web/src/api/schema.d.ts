@@ -143,6 +143,149 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{orgId}/clusters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        /** The clusters the organization is granted, the default first (OrgOwner or OrgAdmin) */
+        get: operations["listOrgClusters"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{orgId}/clusters/{clusterId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        /** One cluster the organization is granted (OrgOwner or OrgAdmin) */
+        get: operations["getOrgCluster"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{orgId}/clusters/{clusterId}/compute-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        /** Which compute modes the organization can use on a cluster, and why not (OrgOwner or OrgAdmin) */
+        get: operations["getComputeOptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{orgId}/clusters/{clusterId}/shared-pools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        /** The shared pools of the organization's grant on a cluster, as a summary (OrgOwner or OrgAdmin) */
+        get: operations["listOrgSharedPools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{orgId}/clusters/{clusterId}/dedicated-nodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        /** The nodes dedicated to the organization on a cluster, with their capacity (OrgOwner or OrgAdmin) */
+        get: operations["listOrgDedicatedNodes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{orgId}/clusters/{clusterId}/network-pools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        /** The network pools of the organization's grant on a cluster (OrgOwner or OrgAdmin) */
+        get: operations["listOrgNetworkPools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations/{orgId}/invitations": {
         parameters: {
             query?: never;
@@ -568,6 +711,429 @@ export interface paths {
          */
         get: operations["adminListOrganizations"];
         put?: never;
+        /**
+         * Create an Active organization for a customer, with its owner, entitlement and default cluster grant (Platform Admin)
+         * @description One transaction, like an approval (architecture/03-flows.md §2a): the
+         *     organization is Active at once, the owner is its OrgOwner and joins
+         *     `admins`, and the default groups reach Keycloak asynchronously. The
+         *     owner must have logged in to the portal at least once (422
+         *     `OWNER_USER_NOT_FOUND`): there is no invitation to become owner, since
+         *     an organization is never without its one OrgOwner.
+         */
+        post: operations["createAdminOrganization"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/organizations/{orgId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id (`org-<ulid>`). Not a slug, which a Rejected and a Pending request may share. */
+                orgId: components["parameters"]["adminOrgId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * One organization with its entitlement, cluster grants and usage (Platform Admin)
+         * @description `usage` gives the same numbers as `GET /organizations/{orgId}/usage`.
+         *     A Pending or Rejected request has no entitlement, grants or usage yet.
+         */
+        get: operations["getAdminOrganization"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/organizations/{orgId}/entitlement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id (`org-<ulid>`). Not a slug, which a Rejected and a Pending request may share. */
+                orgId: components["parameters"]["adminOrgId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Change an organization's entitlement (Platform Admin)
+         * @description Every limit must stay at or above what the organization uses, and
+         *     `maxGroups` at 3 or more (the default groups count): otherwise 409
+         *     `ENTITLEMENT_BELOW_USAGE` with `details.limit` (the first limit too
+         *     low), `details.used` and `details.requested`. The audit event keeps
+         *     the values before and after.
+         */
+        put: operations["putAdminEntitlement"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Users who have logged in, by email (Platform Admin)
+         * @description Ordered by email. `q` keeps those whose email or display name
+         *     contains it, case-insensitively.
+         */
+        get: operations["listAdminUsers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/users/{userId}:disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Disable a user's account (Platform Admin)
+         * @description One transaction: `status=Disabled`, every portal session of the user
+         *     ends, and the group sync worker disables the account in Keycloak
+         *     (`syncStatus` Pending until it has). A Platform Admin cannot disable
+         *     themselves. Disabling a disabled user changes nothing.
+         */
+        post: operations["disableUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/users/{userId}:enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enable a disabled user's account again (Platform Admin)
+         * @description The group sync worker enables the account in Keycloak. Enabling an active user changes nothing.
+         */
+        post: operations["enableUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/organizations/{orgId}/cluster-grants/{clusterId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id (`org-<ulid>`). Not a slug, which a Rejected and a Pending request may share. */
+                orgId: components["parameters"]["adminOrgId"];
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Give an Active organization a grant on a cluster, or change it (Platform Admin)
+         * @description `clusterId` in the body must be the path's. A new grant needs a Ready
+         *     cluster (409 `CLUSTER_NOT_READY`) and is the default when it is the
+         *     organization's only one. The grant lists at least one network pool;
+         *     every pool is on its cluster, a network pool shared or the
+         *     organization's own. Changing a grant sends nothing to the cluster and
+         *     never touches running Workspaces (PRODUCT-PLAN §5.5); the audit event
+         *     keeps the values before and after.
+         */
+        put: operations["putClusterGrant"];
+        post?: never;
+        /**
+         * Take an organization's grant on a cluster away (Platform Admin)
+         * @description Refused (409 `CONFLICT`, `details.dedicatedNodes`) while the
+         *     organization holds dedicated nodes on the cluster. Deleting the
+         *     default grant makes the oldest grant left the default.
+         */
+        delete: operations["deleteClusterGrant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/cluster-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every grant of every organization, with what its Workspaces hold (Platform Admin) */
+        get: operations["listAdminClusterGrants"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/clusters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The cluster registry (Platform Admin) */
+        get: operations["listAdminClusters"];
+        put?: never;
+        /** Register a cluster; it stays Registered until an Admin marks it Ready (Platform Admin) */
+        post: operations["registerCluster"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/clusters/{clusterId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change a cluster's metadata or status (Platform Admin)
+         * @description Status moves as architecture/04-state-machines.md §6 allows, set by
+         *     hand in the MVP: `Registered → Ready`, then among `Ready`,
+         *     `Maintenance` and `Unavailable`; never back to `Registered` (409
+         *     `CONFLICT`, `details.field` = `status`). `reservedCidrs` may not
+         *     overlap a network pool of the cluster (409 `CIDR_OVERLAP`).
+         */
+        patch: operations["patchCluster"];
+        trace?: never;
+    };
+    "/admin/clusters/{clusterId}/nodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The nodes of a cluster as last reported, free, in a pool or dedicated (Platform Admin)
+         * @description From M6 the operator reports them (PlatformNodeInventory); before
+         *     that, the seed writes them once.
+         */
+        get: operations["listClusterNodes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/clusters/{clusterId}/shared-pools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        /** A cluster's shared pools with their nodes and capacity (Platform Admin) */
+        get: operations["listSharedPools"];
+        put?: never;
+        /**
+         * Add a shared pool to a cluster (Platform Admin)
+         * @description The id is a DNS label unique across clusters; `system` is the label
+         *     of the system pool and refused. A node that joins must be free: a
+         *     Ready worker of the cluster, in no pool and dedicated to nobody. Only
+         *     the database changes until the operator labels nodes (M6).
+         */
+        post: operations["createSharedPool"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/clusters/{clusterId}/shared-pools/{poolId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clusterId: components["parameters"]["clusterId"];
+                poolId: components["parameters"]["poolId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Change a shared pool's name, overcommit ratio, system reserve and nodes (Platform Admin)
+         * @description `nodes` is the whole list: a node left out leaves the pool (its Pods
+         *     keep running: drain it yourself to take it out for good). A node
+         *     that joins must be free. Only the database changes until the
+         *     operator follows (M6); the audit event keeps before and after.
+         */
+        put: operations["putSharedPool"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/clusters/{clusterId}/network-pools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        /** A cluster's network pools (Platform Admin) */
+        get: operations["listNetworkPools"];
+        put?: never;
+        /**
+         * Add a network pool to a cluster (Platform Admin)
+         * @description Its ranges overlap no other network pool of the cluster and none of
+         *     the cluster's reserved ranges (409 `CIDR_OVERLAP`, `details.cidr`,
+         *     `details.conflictsWith`). Without `organizationId` any
+         *     organization's grant may list it.
+         */
+        post: operations["createNetworkPool"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/clusters/{clusterId}/network-pools/{poolId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clusterId: components["parameters"]["clusterId"];
+                poolId: components["parameters"]["poolId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change a network pool's ranges or prefix lengths (Platform Admin)
+         * @description A range added is checked like a new pool's. Only the database
+         *     changes: CIDRs are handed out by the API.
+         */
+        patch: operations["patchNetworkPool"];
+        trace?: never;
+    };
+    "/admin/organizations/{orgId}/cluster-grants/{clusterId}/dedicated-nodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id (`org-<ulid>`). Not a slug, which a Rejected and a Pending request may share. */
+                orgId: components["parameters"]["adminOrgId"];
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set the nodes an organization holds on a cluster (Platform Admin)
+         * @description `nodes` is the whole set, under the organization's grant on the
+         *     cluster (404 without one). A new node must be a worker of the cluster
+         *     in no pool and dedicated to nobody; it starts `NotReady` until the
+         *     operator has checked it (M8). A node left out is revoked; a node kept
+         *     takes the system reserve given. Only the database changes in M5;
+         *     the audit event keeps before and after.
+         */
+        put: operations["putDedicatedNodes"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/onboarding-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What approving a request proposes (Platform Admin)
+         * @description 404 when no policy is active.
+         */
+        get: operations["getOnboardingPolicy"];
+        /**
+         * Replace the onboarding policy (Platform Admin)
+         * @description `clusterGrant.clusterId` is the default cluster of new
+         *     organizations. What the policy proposes must suit any organization:
+         *     its network pools are shared ones. Grants already given are copies
+         *     and do not change (PRODUCT-PLAN §5.2.1).
+         */
+        put: operations["putOnboardingPolicy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Operations of every organization and of clusters, newest first (Platform Admin) */
+        get: operations["listAdminOperations"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -748,7 +1314,11 @@ export interface components {
         /** @description Limits that do not depend on a cluster (PRODUCT-PLAN §5.1). */
         Entitlement: {
             maxMembers: number;
-            /** @description Includes the three default groups. */
+            /**
+             * @description Includes the three default groups, so at least 3: fewer is
+             *     `VALIDATION_FAILED` when approving or creating an organization,
+             *     and `ENTITLEMENT_BELOW_USAGE` when changing an entitlement.
+             */
             maxGroups: number;
             maxWorkspacesTotal: number;
         };
@@ -799,6 +1369,261 @@ export interface components {
         Approval: {
             entitlement: components["schemas"]["Entitlement"];
             clusterGrant: components["schemas"]["ClusterGrantInput"];
+        };
+        AdminCluster: {
+            id: string;
+            displayName: string;
+            /** @enum {string} */
+            status: "Registered" | "Ready" | "Maintenance" | "Unavailable";
+            /** @description Capsule Proxy: the server of tenant kubeconfigs */
+            proxyEndpoint: string;
+            /** @description Headlamp */
+            consoleUrl: string;
+            /** @description Routes are <name>-<workspace>.<appsDomain> */
+            appsDomain: string;
+            /** @description Ranges the cluster already uses (Pod, Service, node CIDRs): network pools may not overlap them. */
+            reservedCidrs: string[];
+            /** Format: date-time */
+            lastHealthCheck?: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        AdminClusterList: {
+            items: components["schemas"]["AdminCluster"][];
+        };
+        ClusterCreate: {
+            id: components["schemas"]["PoolId"];
+            displayName: string;
+            proxyEndpoint: string;
+            consoleUrl: string;
+            appsDomain: string;
+            reservedCidrs?: string[];
+        };
+        ClusterPatch: {
+            displayName?: string;
+            /** @enum {string} */
+            status?: "Registered" | "Ready" | "Maintenance" | "Unavailable";
+            proxyEndpoint?: string;
+            consoleUrl?: string;
+            appsDomain?: string;
+            reservedCidrs?: string[];
+        };
+        OrganizationRef: {
+            id: string;
+            slug: string;
+            displayName: string;
+        };
+        AdminClusterGrant: {
+            organization: components["schemas"]["OrganizationRef"];
+            clusterGrant: components["schemas"]["ClusterGrant"];
+            usage: components["schemas"]["GrantUsage"];
+        };
+        AdminClusterGrantList: {
+            items: components["schemas"]["AdminClusterGrant"][];
+            nextCursor?: string;
+        };
+        OperationList: {
+            items: components["schemas"]["Operation"][];
+            nextCursor?: string;
+        };
+        NodeCapacity: {
+            cpu: components["schemas"]["Quantity"];
+            memory: components["schemas"]["Quantity"];
+            pods: number;
+        };
+        ClusterNode: {
+            name: string;
+            /** @enum {string} */
+            kind: "ControlPlane" | "System" | "Worker";
+            ready: boolean;
+            schedulable: boolean;
+            allocatable: components["schemas"]["NodeCapacity"];
+            sharedPoolId?: string;
+            dedicatedTo?: components["schemas"]["OrganizationRef"];
+            /** Format: date-time */
+            observedAt: string;
+        };
+        ClusterNodeList: {
+            items: components["schemas"]["ClusterNode"][];
+        };
+        SharedPoolInput: {
+            name: string;
+            allocationOvercommitRatio: number;
+            systemReserve: components["schemas"]["NodeCapacity"];
+            nodes: string[];
+        };
+        SharedPoolCreate: {
+            id: components["schemas"]["PoolId"];
+            name: string;
+            allocationOvercommitRatio: number;
+            systemReserve: components["schemas"]["NodeCapacity"];
+            nodes: string[];
+        };
+        SharedPool: {
+            id: string;
+            clusterId: string;
+            name: string;
+            allocationOvercommitRatio: number;
+            systemReserve: components["schemas"]["NodeCapacity"];
+            nodes: string[];
+            /** @description reservable = the nodes' allocatable less systemReserve per node; ceiling = ratio × reservable; allocated: what Shared Workspaces hold */
+            capacity: {
+                reservable: components["schemas"]["NodeCapacity"];
+                ceiling: components["schemas"]["NodeCapacity"];
+                allocated: components["schemas"]["NodeCapacity"];
+            };
+        };
+        SharedPoolList: {
+            items: components["schemas"]["SharedPool"][];
+        };
+        NetworkPoolCreate: {
+            id: components["schemas"]["PoolId"];
+            /** @description Absent: a pool any organization's grant may list */
+            organizationId?: string;
+            cidrs: string[];
+            defaultPrefixLength: number;
+            allowedPrefixLengths: number[];
+        };
+        NetworkPoolPatch: {
+            cidrs?: string[];
+            defaultPrefixLength?: number;
+            allowedPrefixLengths?: number[];
+        };
+        NetworkPool: {
+            id: string;
+            clusterId: string;
+            organizationId?: string;
+            cidrs: string[];
+            defaultPrefixLength: number;
+            allowedPrefixLengths: number[];
+        };
+        NetworkPoolList: {
+            items: components["schemas"]["NetworkPool"][];
+        };
+        DedicatedNodesInput: {
+            nodes: {
+                name: string;
+                systemReserve: components["schemas"]["NodeCapacity"];
+            }[];
+        };
+        DedicatedNode: {
+            id: string;
+            clusterId: string;
+            name: string;
+            allocatable: components["schemas"]["NodeCapacity"];
+            systemReserve: components["schemas"]["NodeCapacity"];
+            reservable: components["schemas"]["NodeCapacity"];
+            reserved: components["schemas"]["NodeCapacity"];
+            remaining: components["schemas"]["NodeCapacity"];
+            /** @enum {string} */
+            nodeState: "Ready" | "NotReady" | "Cordoned";
+            /** @enum {string} */
+            capacityState: "Available" | "PartiallyAllocated" | "FullyAllocated" | "Overcommitted";
+        };
+        DedicatedNodeList: {
+            items: components["schemas"]["DedicatedNode"][];
+        };
+        /** @description A cluster as an organization sees it, without the ranges it reserves. */
+        OrgCluster: {
+            id: string;
+            displayName: string;
+            /** @enum {string} */
+            status: "Registered" | "Ready" | "Maintenance" | "Unavailable";
+            proxyEndpoint: string;
+            consoleUrl: string;
+            appsDomain: string;
+            grantId: string;
+            /** @description The organization's default cluster */
+            isDefault: boolean;
+            /** @description Shared pools the grant lists */
+            sharedPools: number;
+            /** @description Nodes dedicated to the organization there */
+            dedicatedNodes: number;
+        };
+        OrgClusterList: {
+            items: components["schemas"]["OrgCluster"][];
+        };
+        ComputeOptions: {
+            items: {
+                /** @enum {string} */
+                mode: "Shared" | "Dedicated";
+                available: boolean;
+                /** @description Why the mode cannot be chosen */
+                reason?: string;
+            }[];
+        };
+        /** @description A shared pool as a summary; its nodes are not shown. */
+        OrgSharedPool: {
+            id: string;
+            name: string;
+            nodeCount: number;
+            /** @description ceiling: what all Workspaces on the pool may reserve; allocated: what they do */
+            capacity: {
+                ceiling: components["schemas"]["NodeCapacity"];
+                allocated: components["schemas"]["NodeCapacity"];
+            };
+        };
+        OrgSharedPoolList: {
+            items: components["schemas"]["OrgSharedPool"][];
+        };
+        OrgDedicatedNode: {
+            /** @description The node grant's id */
+            id: string;
+            name: string;
+            /** @enum {string} */
+            nodeState: "Ready" | "NotReady" | "Cordoned";
+            /** @enum {string} */
+            capacityState: "Available" | "PartiallyAllocated" | "FullyAllocated" | "Overcommitted";
+            reservable: components["schemas"]["NodeCapacity"];
+            reserved: components["schemas"]["NodeCapacity"];
+            remaining: components["schemas"]["NodeCapacity"];
+            /** @description The organization's Workspaces holding a reservation on the node */
+            workspaces: string[];
+        };
+        OrgDedicatedNodeList: {
+            items: components["schemas"]["OrgDedicatedNode"][];
+        };
+        OrgNetworkPool: {
+            id: string;
+            cidrs: string[];
+            defaultPrefixLength: number;
+            allowedPrefixLengths: number[];
+            /** @description Any organization's grant may list it; false: the organization's own */
+            shared: boolean;
+        };
+        OrgNetworkPoolList: {
+            items: components["schemas"]["OrgNetworkPool"][];
+        };
+        AdminOrganizationCreate: {
+            slug: string;
+            displayName: string;
+            description?: string;
+            /** @description Compared lowercase */
+            ownerEmail: string;
+            entitlement: components["schemas"]["Entitlement"];
+            clusterGrant: components["schemas"]["ClusterGrantInput"];
+        };
+        AdminOrganizationDetail: {
+            organization: components["schemas"]["AdminOrganization"];
+            entitlement?: components["schemas"]["Entitlement"];
+            clusterGrants: components["schemas"]["ClusterGrant"][];
+            /** @description The nodes the organization holds, on every cluster. */
+            dedicatedNodes?: components["schemas"]["DedicatedNode"][];
+            usage?: components["schemas"]["OrganizationUsage"];
+        };
+        AdminUser: {
+            id: string;
+            email?: string;
+            displayName: string;
+            /** @enum {string} */
+            status: "Active" | "Disabled";
+            syncStatus: components["schemas"]["SyncStatus"];
+            /** Format: date-time */
+            createdAt: string;
+        };
+        AdminUserList: {
+            items: components["schemas"]["AdminUser"][];
+            nextCursor?: string;
         };
         ApprovedOrganization: {
             organization: components["schemas"]["AdminOrganization"];
@@ -1021,6 +1846,8 @@ export interface components {
         operationId: string;
         /** @description Organization id (`org-<ulid>`). Not a slug, which a Rejected and a Pending request may share. */
         adminOrgId: string;
+        clusterId: components["schemas"]["PoolId"];
+        poolId: components["schemas"]["PoolId"];
         groupId: string;
         transferId: string;
         /** @description As `Idempotency-Key`, and required here (IMPLEMENTATION-PLAN §3.4). */
@@ -1272,6 +2099,239 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["OrgNotActive"];
+        };
+    };
+    listOrgClusters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgClusterList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description The organization is not Active (`ORG_NOT_ACTIVE`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getOrgCluster: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgCluster"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description The organization is not Active (`ORG_NOT_ACTIVE`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getComputeOptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComputeOptions"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description The organization is not Active (`ORG_NOT_ACTIVE`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listOrgSharedPools: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgSharedPoolList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description The organization is not Active (`ORG_NOT_ACTIVE`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listOrgDedicatedNodes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgDedicatedNodeList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description The organization is not Active (`ORG_NOT_ACTIVE`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listOrgNetworkPools: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgNetworkPoolList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description The organization is not Active (`ORG_NOT_ACTIVE`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     listInvitations: {
@@ -2043,6 +3103,788 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminOrganizationList"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    createAdminOrganization: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description As `Idempotency-Key`, and required here (IMPLEMENTATION-PLAN §3.4). */
+                "Idempotency-Key": components["parameters"]["idempotencyKeyRequired"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminOrganizationCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovedOrganization"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            /**
+             * @description `SLUG_TAKEN`: another organization has the slug.
+             *     `CLUSTER_NOT_READY`: the grant's cluster is not Ready.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /**
+             * @description `OWNER_USER_NOT_FOUND`: nobody with this email has logged in.
+             *     `IDEMPOTENCY_KEY_REUSED`: the key came with another request.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getAdminOrganization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id (`org-<ulid>`). Not a slug, which a Rejected and a Pending request may share. */
+                orgId: components["parameters"]["adminOrgId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOrganizationDetail"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    putAdminEntitlement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id (`org-<ulid>`). Not a slug, which a Rejected and a Pending request may share. */
+                orgId: components["parameters"]["adminOrgId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Entitlement"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Entitlement"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /**
+             * @description `ENTITLEMENT_BELOW_USAGE`: a limit below what is used.
+             *     `ORG_NOT_ACTIVE`: a request still under review, or rejected.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listAdminUsers: {
+        parameters: {
+            query?: {
+                q?: string;
+                limit?: number;
+                /** @description Opaque; pass `nextCursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserList"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    disableUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUser"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    enableUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUser"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    putClusterGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id (`org-<ulid>`). Not a slug, which a Rejected and a Pending request may share. */
+                orgId: components["parameters"]["adminOrgId"];
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClusterGrantInput"];
+            };
+        };
+        responses: {
+            /** @description Changed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterGrant"];
+                };
+            };
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterGrant"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /**
+             * @description `CLUSTER_NOT_READY`: a new grant on a cluster that is not Ready.
+             *     `ORG_NOT_ACTIVE`: the organization is not Active.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteClusterGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id (`org-<ulid>`). Not a slug, which a Rejected and a Pending request may share. */
+                orgId: components["parameters"]["adminOrgId"];
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description Dedicated nodes left (`CONFLICT`), or the organization is not Active (`ORG_NOT_ACTIVE`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listAdminClusterGrants: {
+        parameters: {
+            query?: {
+                clusterId?: components["schemas"]["PoolId"];
+                limit?: number;
+                /** @description Opaque; pass `nextCursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminClusterGrantList"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    listAdminClusters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminClusterList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    registerCluster: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description As `Idempotency-Key`, and required here (IMPLEMENTATION-PLAN §3.4). */
+                "Idempotency-Key": components["parameters"]["idempotencyKeyRequired"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClusterCreate"];
+            };
+        };
+        responses: {
+            /** @description Registered */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCluster"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            /** @description A cluster with this id exists (`CONFLICT`, `details.field` = `id`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            422: components["responses"]["IdempotencyKeyReused"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    patchCluster: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClusterPatch"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCluster"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description A status change not allowed (`CONFLICT`), or reserved ranges overlapping a network pool (`CIDR_OVERLAP`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listClusterNodes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterNodeList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    listSharedPools: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedPoolList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    createSharedPool: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description As `Idempotency-Key`, and required here (IMPLEMENTATION-PLAN §3.4). */
+                "Idempotency-Key": components["parameters"]["idempotencyKeyRequired"];
+            };
+            path: {
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SharedPoolCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedPool"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description A pool with this id exists (`CONFLICT`, `details.field` = `id`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            422: components["responses"]["IdempotencyKeyReused"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    putSharedPool: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clusterId: components["parameters"]["clusterId"];
+                poolId: components["parameters"]["poolId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SharedPoolInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedPool"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listNetworkPools: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkPoolList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    createNetworkPool: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description As `Idempotency-Key`, and required here (IMPLEMENTATION-PLAN §3.4). */
+                "Idempotency-Key": components["parameters"]["idempotencyKeyRequired"];
+            };
+            path: {
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NetworkPoolCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkPool"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description A pool with this id exists (`CONFLICT`), or a range overlaps (`CIDR_OVERLAP`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            422: components["responses"]["IdempotencyKeyReused"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    patchNetworkPool: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clusterId: components["parameters"]["clusterId"];
+                poolId: components["parameters"]["poolId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NetworkPoolPatch"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkPool"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description A range overlaps (`CIDR_OVERLAP`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    putDedicatedNodes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id (`org-<ulid>`). Not a slug, which a Rejected and a Pending request may share. */
+                orgId: components["parameters"]["adminOrgId"];
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DedicatedNodesInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DedicatedNodeList"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description The organization is not Active (`ORG_NOT_ACTIVE`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getOnboardingPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Approval"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    putOnboardingPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Approval"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Approval"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listAdminOperations: {
+        parameters: {
+            query?: {
+                state?: "Pending" | "Running" | "Succeeded" | "Failed" | "Blocked";
+                limit?: number;
+                /** @description Opaque; pass `nextCursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationList"];
                 };
             };
             400: components["responses"]["Error"];

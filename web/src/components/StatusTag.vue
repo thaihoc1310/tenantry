@@ -29,8 +29,16 @@ const TONE: Record<string, string> = {
   Maintenance: 'warn',
   Unavailable: 'bad',
   Registered: 'idle',
+  Available: 'ok',
+  PartiallyAllocated: 'idle',
+  FullyAllocated: 'warn',
+  Overcommitted: 'bad',
 }
-const WORDS: Record<string, string> = { NotReady: 'Not ready' }
+const WORDS: Record<string, string> = {
+  NotReady: 'Not ready',
+  PartiallyAllocated: 'Partly allocated',
+  FullyAllocated: 'Fully allocated',
+}
 
 const cls = computed(() => {
   const t = props.tone ?? TONE[props.value ?? ''] ?? 'idle'

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // Organizations by status (docs/design/mockups: AdminOrgs). The review queue
-// comes first, oldest request first.
-import { computed } from 'vue'
+// comes first, oldest request first; an Admin may also create an
+// Organization directly.
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppShell from '@/app/AppShell.vue'
 import { when } from '@/app/format'
@@ -10,6 +11,7 @@ import ErrorState from '@/components/ErrorState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import TPanel from '@/components/TPanel.vue'
+import CreateOrganizationDialog from './CreateOrganizationDialog.vue'
 import { type AdminOrganization, type OrgStatus, useAdminOrganizations } from './queries'
 
 const route = useRoute()
@@ -26,11 +28,18 @@ const queue = useAdminOrganizations('Pending', 200)
 const waiting = computed(() => queue.items.value.length + (queue.hasNextPage.value ? '+' : ''))
 
 const by = (o: AdminOrganization) => o.owner.email ?? o.owner.displayName
+const creating = ref(false)
 </script>
 
 <template>
   <AppShell area="admin" active="organizations">
-    <PageHeader title="Organizations" />
+    <PageHeader title="Organizations">
+      <template #actions
+        ><el-button @click="creating = true"
+          ><el-icon><Plus /></el-icon>&nbsp;Create Organization</el-button
+        ></template
+      >
+    </PageHeader>
     <nav class="t-tabs" aria-label="Organizations by status">
       <RouterLink
         v-for="t in tabs"
@@ -105,6 +114,13 @@ const by = (o: AdminOrganization) => o.owner.email ?? o.owner.displayName
             <el-table-column label="Status" width="120">
               <template #default="{ row }"><StatusTag :value="row.status" /></template>
             </el-table-column>
+            <el-table-column width="120" align="right">
+              <template #default="{ row }"
+                ><el-button link type="primary" @click="router.push(`/admin/organizations/${row.id}`)"
+                  >Open</el-button
+                ></template
+              >
+            </el-table-column>
           </el-table>
         </div>
         <EmptyState v-else center title="No active Organizations" description="Approved Organizations appear here." />
@@ -142,5 +158,7 @@ const by = (o: AdminOrganization) => o.owner.email ?? o.owner.displayName
         <el-button :loading="list.isFetchingNextPage.value" @click="list.fetchNextPage()">Load more</el-button>
       </div>
     </TPanel>
+
+    <CreateOrganizationDialog v-model="creating" />
   </AppShell>
 </template>

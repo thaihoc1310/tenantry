@@ -19,6 +19,9 @@ export type GrantModel = {
   pods: number
   net: string
   sc: string
+  // Lists beyond the first, which the form's single choices do not show:
+  // kept as they are, so editing a grant never drops one.
+  extra: { pools: string[]; nets: string[]; classes: string[] }
 }
 
 // Form fields under which the API's field errors are shown.
@@ -57,14 +60,21 @@ export function emptyGrant(): GrantModel {
     pods: 0,
     net: '',
     sc: '',
+    extra: { pools: [], nets: [], classes: [] },
   }
 }
 
 export function fromApproval(a: Schemas['Approval']): GrantModel {
-  const g = a.clusterGrant
+  return fromGrant(a.clusterGrant, a.entitlement)
+}
+
+// fromGrant is a grant in the form's numbers; the entitlement fields keep
+// the defaults when none is given (editing a grant does not show them).
+export function fromGrant(g: Schemas['ClusterGrantInput'], e?: Schemas['Entitlement']): GrantModel {
   const r = g.resources
   return {
-    ...a.entitlement,
+    ...emptyGrant(),
+    ...e,
     clusterId: g.clusterId,
     ws: g.maxWorkspaces,
     ns: g.maxNamespacesTotal,
@@ -77,6 +87,11 @@ export function fromApproval(a: Schemas['Approval']): GrantModel {
     pods: r.pods,
     net: g.networkPoolIds[0] ?? '',
     sc: g.allowedStorageClasses[0] ?? '',
+    extra: {
+      pools: g.sharedPoolIds.slice(1),
+      nets: g.networkPoolIds.slice(1),
+      classes: g.allowedStorageClasses.slice(1),
+    },
   }
 }
 
@@ -98,9 +113,9 @@ export function toApproval(m: GrantModel): Schemas['Approval'] {
         pods: shared ? m.pods : 0,
         requestsStorage: memory(m.storage),
       },
-      sharedPoolIds: shared ? [m.pool] : [],
-      networkPoolIds: m.net ? [m.net] : [],
-      allowedStorageClasses: m.sc ? [m.sc] : [],
+      sharedPoolIds: shared ? [m.pool, ...m.extra.pools] : [],
+      networkPoolIds: m.net ? [m.net, ...m.extra.nets] : [...m.extra.nets],
+      allowedStorageClasses: m.sc ? [m.sc, ...m.extra.classes] : [...m.extra.classes],
     },
   }
 }

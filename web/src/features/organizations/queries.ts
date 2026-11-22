@@ -53,3 +53,50 @@ export function useCreateOrganization() {
 export async function logout(): Promise<void> {
   await fetch('/auth/logout', { method: 'POST', headers: { 'X-CSRF-Token': csrfToken() } })
 }
+
+// ---- The catalog of granted clusters (PRODUCT-PLAN §16.3), OrgOwner/OrgAdmin ----
+
+export function useOrgClusters(org: MaybeRefOrGetter<string>, enabled: MaybeRefOrGetter<boolean>) {
+  return useQuery({
+    queryKey: computed(() => ['org', toValue(org), 'clusters']),
+    enabled: computed(() => toValue(enabled)),
+    queryFn: async () =>
+      (await unwrap(api.GET('/organizations/{orgId}/clusters', { params: { path: { orgId: toValue(org) } } }))).items,
+  })
+}
+
+function useClusterPart<T>(
+  org: MaybeRefOrGetter<string>,
+  cluster: MaybeRefOrGetter<string>,
+  part: string,
+  fetch: (orgId: string, clusterId: string) => Promise<{ items: T[] }>,
+) {
+  return useQuery({
+    queryKey: computed(() => ['org', toValue(org), 'clusters', toValue(cluster), part]),
+    enabled: computed(() => !!toValue(cluster)),
+    queryFn: async () => (await fetch(toValue(org), toValue(cluster))).items,
+  })
+}
+
+export const useOrgSharedPools = (org: MaybeRefOrGetter<string>, cluster: MaybeRefOrGetter<string>) =>
+  useClusterPart(org, cluster, 'shared-pools', (orgId, clusterId) =>
+    unwrap(
+      api.GET('/organizations/{orgId}/clusters/{clusterId}/shared-pools', { params: { path: { orgId, clusterId } } }),
+    ),
+  )
+
+export const useOrgDedicatedNodes = (org: MaybeRefOrGetter<string>, cluster: MaybeRefOrGetter<string>) =>
+  useClusterPart(org, cluster, 'dedicated-nodes', (orgId, clusterId) =>
+    unwrap(
+      api.GET('/organizations/{orgId}/clusters/{clusterId}/dedicated-nodes', {
+        params: { path: { orgId, clusterId } },
+      }),
+    ),
+  )
+
+export const useOrgNetworkPools = (org: MaybeRefOrGetter<string>, cluster: MaybeRefOrGetter<string>) =>
+  useClusterPart(org, cluster, 'network-pools', (orgId, clusterId) =>
+    unwrap(
+      api.GET('/organizations/{orgId}/clusters/{clusterId}/network-pools', { params: { path: { orgId, clusterId } } }),
+    ),
+  )

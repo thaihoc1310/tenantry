@@ -1,4 +1,4 @@
-// Routes mirror IMPLEMENTATION-PLAN §6.4; M4 has the ones below.
+// Routes mirror IMPLEMENTATION-PLAN §6.4; M5 has the ones below.
 import { createRouter, createWebHistory } from 'vue-router'
 import { api, unwrap } from '@/api/client'
 import { queryClient } from '@/app/queryClient'
@@ -12,6 +12,11 @@ export const router = createRouter({
     { path: '/orgs/:orgSlug', component: () => import('@/features/organizations/OverviewPage.vue'), props: true },
     { path: '/orgs/:orgSlug/members', component: () => import('@/features/people/MembersPage.vue'), props: true },
     { path: '/orgs/:orgSlug/groups', component: () => import('@/features/people/GroupsPage.vue'), props: true },
+    {
+      path: '/orgs/:orgSlug/clusters',
+      component: () => import('@/features/organizations/ClustersPage.vue'),
+      props: true,
+    },
     { path: '/orgs/:orgSlug/settings', component: () => import('@/features/people/SettingsPage.vue'), props: true },
     { path: '/invitations/:token', component: () => import('@/features/people/InvitationPage.vue'), props: true },
     {
@@ -25,6 +30,21 @@ export const router = createRouter({
           component: () => import('@/features/admin/AdminReviewPage.vue'),
           props: true,
         },
+        {
+          path: 'organizations/:orgId',
+          component: () => import('@/features/admin/AdminOrganizationPage.vue'),
+          props: true,
+        },
+        { path: 'clusters', component: () => import('@/features/admin/AdminClustersPage.vue') },
+        { path: 'onboarding-policy', component: () => import('@/features/admin/AdminPolicyPage.vue') },
+        { path: 'grants', component: () => import('@/features/admin/AdminGrantsPage.vue') },
+        {
+          path: 'grants/:orgId/:clusterId',
+          component: () => import('@/features/admin/AdminGrantPage.vue'),
+          props: true,
+        },
+        { path: 'operations', component: () => import('@/features/admin/AdminOperationsPage.vue') },
+        { path: 'users', component: () => import('@/features/admin/AdminUsersPage.vue') },
       ],
     },
     { path: '/:rest(.*)*', component: () => import('@/app/NotFoundPage.vue'), meta: { public: true } },
