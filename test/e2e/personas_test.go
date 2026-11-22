@@ -182,6 +182,13 @@ func TestPersonas(t *testing.T) {
 		ID, URL, State, Message string
 	}
 	alice.api(t, http.MethodPost, "/workspaces/"+solar.Workspace.ID+"/routes", map[string]any{"namespace": frontend, "name": "web", "service": "web", "port": 80}, &route, 202)
+	defer func() {
+		if t.Failed() && route.State != "Active" {
+			cr, _ := admin(t, "", "get", "platformworkspace", solar.Workspace.K8sName, "-o",
+				"jsonpath=generation={.metadata.generation} observed={.status.observedGeneration} phase={.status.phase} routes={.status.routes} conditions={.status.conditions}")
+			t.Logf("Route web: state %q message %q; the CR: %s", route.State, route.Message, cr)
+		}
+	}()
 	until(t, "Route web Active", 3*time.Minute, func() bool {
 		var list struct {
 			Items []struct{ ID, URL, State, Message string }
