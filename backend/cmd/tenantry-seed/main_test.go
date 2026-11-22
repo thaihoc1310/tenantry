@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi/oapi"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
@@ -24,6 +23,23 @@ var lab = options{
 	clusterID: "cluster-a", clusterName: "Cluster A",
 	proxyEndpoint: "https://kube-a.test", consoleURL: "https://console-a.test", appsDomain: "apps.test",
 	networkCIDR: "10.240.0.0/18", storageClass: "standard",
+	reservedCIDRs: []netip.Prefix{netip.MustParsePrefix("192.168.0.0/16"), netip.MustParsePrefix("10.96.0.0/12")},
+	nodes: []node{
+		{name: "cp1", kind: "ControlPlane", ready: true, cpuMilli: 4000, memory: 8 << 30, pods: 110},
+		{name: "wk2", kind: "Worker", ready: true, schedule: true, cpuMilli: 3000, memory: 11776 << 20, pods: 110, pool: "shared-general"},
+	},
+}
+
+func TestParseNode(t *testing.T) {
+	n, err := parseNode("name=wk2,kind=Worker,cpu=3,memory=11776Mi,pods=110,ready=true,schedulable=true,pool=shared-general")
+	if err != nil || n != lab.nodes[1] {
+		t.Fatalf("got %+v, %v", n, err)
+	}
+	for _, bad := range []string{"", "kind=Worker", "name=wk2,cpu=lots", "name=wk2,size=3", "name=wk2,ready"} {
+		if _, err := parseNode(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
 }
 
 // The templates are exactly what the approval form takes, minus the cluster.
@@ -80,11 +96,7 @@ func TestSeedTwice(t *testing.T) {
 	if _, err := p.Up(ctx); err != nil {
 		t.Fatal(err)
 	}
-	pool, err := pgxpool.New(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
+	pool := testdb.Pool(t, url)
 	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
 	run := func() {
 		t.Helper()
@@ -96,10 +108,22 @@ func TestSeedTwice(t *testing.T) {
 	}
 
 	run()
-	if _, err := pool.Exec(ctx, `UPDATE shared_compute_pools SET allocation_overcommit_ratio = 2.5`); err != nil {
+	// An Admin's changes since: none is undone by the next run.
+	if _, err := pool.Exec(ctx, `UPDATE shared_compute_pools SET allocation_overcommit_ratio = 2.5, system_reserve_cpu_milli = 1000;
+		UPDATE clusters SET reserved_cidrs = '{10.0.0.0/8}';
+		UPDATE cluster_nodes SET shared_pool_id = NULL WHERE node_name = 'wk2'`); err != nil {
 		t.Fatal(err)
 	}
 	run()
+	var nodes string
+	if err := pool.QueryRow(ctx, `SELECT (SELECT array_to_string(reserved_cidrs, ',') FROM clusters) || ' ' ||
+		(SELECT system_reserve_cpu_milli::text FROM shared_compute_pools) || ' ' ||
+		(SELECT string_agg(node_name || ':' || kind || ':' || coalesce(shared_pool_id, '-'), ',' ORDER BY node_name) FROM cluster_nodes)`).Scan(&nodes); err != nil {
+		t.Fatal(err)
+	}
+	if want := "10.0.0.0/8 1000 cp1:ControlPlane:-,wk2:Worker:-"; nodes != want {
+		t.Fatalf("nodes after two runs: %s, want %s", nodes, want)
+	}
 
 	var state string
 	if err := pool.QueryRow(ctx, `

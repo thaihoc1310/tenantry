@@ -1,0 +1,45 @@
+{
+  "responses": {
+    "200": {
+      "items": [
+        {
+          "id": "shared-general",
+          "clusterId": "cluster-a",
+          "name": "Shared general",
+          "allocationOvercommitRatio": 3,
+          "systemReserve": {
+            "cpu": "500m",
+            "memory": "1536Mi",
+            "pods": 10
+          },
+          "nodes": [
+            "fdp-k8s-wk2",
+            "fdp-k8s-wk3"
+          ],
+          "capacity": {
+            "reservable": {
+              "cpu": "5",
+              "memory": "20Gi",
+              "pods": 200
+            },
+            "ceiling": {
+              "cpu": "15",
+              "memory": "60Gi",
+              "pods": 600
+            },
+            "allocated": {
+              "cpu": "0",
+              "memory": "0",
+              "pods": 0
+            }
+          }
+        }
+      ]
+    },
+    "404": {
+      "code": "NOT_FOUND",
+      "message": "cluster not found",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K"
+    }
+  }
+}

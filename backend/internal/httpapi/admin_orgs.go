@@ -47,6 +47,17 @@ func (s server) GetAdminOrganization(ctx context.Context, req oapi.GetAdminOrgan
 		u := toUsage(*d.Usage)
 		resp.Entitlement, resp.Usage = &e, &u
 		resp.ClusterGrants = grantsOf(d.Usage.Grants)
+		nodes := []oapi.DedicatedNode{}
+		for _, g := range d.Usage.Grants {
+			held, err := s.clusters.DedicatedNodes(ctx, d.ID, g.ClusterID)
+			if err != nil {
+				return nil, err
+			}
+			for _, n := range held {
+				nodes = append(nodes, toDedicatedNode(n))
+			}
+		}
+		resp.DedicatedNodes = &nodes
 	}
 	return oapi.GetAdminOrganization200JSONResponse(resp), nil
 }

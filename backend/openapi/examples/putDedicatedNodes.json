@@ -1,0 +1,60 @@
+{
+  "request": {
+    "nodes": [
+      {
+        "name": "fdp-k8s-wk3",
+        "systemReserve": {
+          "cpu": "500m",
+          "memory": "1536Mi",
+          "pods": 10
+        }
+      }
+    ]
+  },
+  "responses": {
+    "200": {
+      "items": [
+        {
+          "id": "nodegrant-01jd3mcc1b2c3d4e5f6g7h8j9k",
+          "clusterId": "cluster-a",
+          "name": "fdp-k8s-wk3",
+          "allocatable": {
+            "cpu": "3",
+            "memory": "12097084Ki",
+            "pods": 110
+          },
+          "systemReserve": {
+            "cpu": "500m",
+            "memory": "1536Mi",
+            "pods": 10
+          },
+          "reservable": {
+            "cpu": "2500m",
+            "memory": "10524988Ki",
+            "pods": 100
+          },
+          "reserved": {
+            "cpu": "0",
+            "memory": "0",
+            "pods": 0
+          },
+          "remaining": {
+            "cpu": "2500m",
+            "memory": "10524988Ki",
+            "pods": 100
+          },
+          "nodeState": "NotReady",
+          "capacityState": "Available"
+        }
+      ]
+    },
+    "400": {
+      "code": "VALIDATION_FAILED",
+      "message": "nodes: fdp-k8s-wk3 is in pool shared-general: take it out of the pool first",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K",
+      "details": {
+        "field": "nodes"
+      }
+    }
+  }
+}

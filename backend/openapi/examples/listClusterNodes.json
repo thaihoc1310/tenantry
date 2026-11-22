@@ -1,0 +1,26 @@
+{
+  "responses": {
+    "200": {
+      "items": [
+        {
+          "name": "fdp-k8s-wk3",
+          "kind": "Worker",
+          "ready": true,
+          "schedulable": true,
+          "allocatable": {
+            "cpu": "3",
+            "memory": "12097084Ki",
+            "pods": 110
+          },
+          "sharedPoolId": "shared-general",
+          "observedAt": "2026-11-22T10:00:00Z"
+        }
+      ]
+    },
+    "404": {
+      "code": "NOT_FOUND",
+      "message": "cluster not found",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K"
+    }
+  }
+}

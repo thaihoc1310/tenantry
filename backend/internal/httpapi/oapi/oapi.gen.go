@@ -64,6 +64,27 @@ func (e AdminUserStatus) Valid() bool {
 	}
 }
 
+// Defines values for ClusterNodeKind.
+const (
+	ControlPlane ClusterNodeKind = "ControlPlane"
+	System       ClusterNodeKind = "System"
+	Worker       ClusterNodeKind = "Worker"
+)
+
+// Valid indicates whether the value is a known member of the ClusterNodeKind enum.
+func (e ClusterNodeKind) Valid() bool {
+	switch e {
+	case ControlPlane:
+		return true
+	case System:
+		return true
+	case Worker:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ClusterPatchStatus.
 const (
 	ClusterPatchStatusMaintenance ClusterPatchStatus = "Maintenance"
@@ -82,6 +103,51 @@ func (e ClusterPatchStatus) Valid() bool {
 	case ClusterPatchStatusRegistered:
 		return true
 	case ClusterPatchStatusUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DedicatedNodeCapacityState.
+const (
+	Available          DedicatedNodeCapacityState = "Available"
+	FullyAllocated     DedicatedNodeCapacityState = "FullyAllocated"
+	Overcommitted      DedicatedNodeCapacityState = "Overcommitted"
+	PartiallyAllocated DedicatedNodeCapacityState = "PartiallyAllocated"
+)
+
+// Valid indicates whether the value is a known member of the DedicatedNodeCapacityState enum.
+func (e DedicatedNodeCapacityState) Valid() bool {
+	switch e {
+	case Available:
+		return true
+	case FullyAllocated:
+		return true
+	case Overcommitted:
+		return true
+	case PartiallyAllocated:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DedicatedNodeNodeState.
+const (
+	DedicatedNodeNodeStateCordoned DedicatedNodeNodeState = "Cordoned"
+	DedicatedNodeNodeStateNotReady DedicatedNodeNodeState = "NotReady"
+	DedicatedNodeNodeStateReady    DedicatedNodeNodeState = "Ready"
+)
+
+// Valid indicates whether the value is a known member of the DedicatedNodeNodeState enum.
+func (e DedicatedNodeNodeState) Valid() bool {
+	switch e {
+	case DedicatedNodeNodeStateCordoned:
+		return true
+	case DedicatedNodeNodeStateNotReady:
+		return true
+	case DedicatedNodeNodeStateReady:
 		return true
 	default:
 		return false
@@ -443,6 +509,9 @@ type AdminOrganizationCreate struct {
 type AdminOrganizationDetail struct {
 	ClusterGrants []ClusterGrant `json:"clusterGrants"`
 
+	// DedicatedNodes The nodes the organization holds, on every cluster.
+	DedicatedNodes *[]DedicatedNode `json:"dedicatedNodes,omitempty"`
+
 	// Entitlement Limits that do not depend on a cluster (PRODUCT-PLAN §5.1).
 	Entitlement  *Entitlement       `json:"entitlement,omitempty"`
 	Organization AdminOrganization  `json:"organization"`
@@ -567,6 +636,26 @@ type ClusterGrantInput struct {
 	SharedPoolIds []PoolId       `json:"sharedPoolIds"`
 }
 
+// ClusterNode defines model for ClusterNode.
+type ClusterNode struct {
+	Allocatable  NodeCapacity     `json:"allocatable"`
+	DedicatedTo  *OrganizationRef `json:"dedicatedTo,omitempty"`
+	Kind         ClusterNodeKind  `json:"kind"`
+	Name         string           `json:"name"`
+	ObservedAt   time.Time        `json:"observedAt"`
+	Ready        bool             `json:"ready"`
+	Schedulable  bool             `json:"schedulable"`
+	SharedPoolId *string          `json:"sharedPoolId,omitempty"`
+}
+
+// ClusterNodeKind defines model for ClusterNode.Kind.
+type ClusterNodeKind string
+
+// ClusterNodeList defines model for ClusterNodeList.
+type ClusterNodeList struct {
+	Items []ClusterNode `json:"items"`
+}
+
 // ClusterPatch defines model for ClusterPatch.
 type ClusterPatch struct {
 	AppsDomain    *string             `json:"appsDomain,omitempty"`
@@ -579,6 +668,39 @@ type ClusterPatch struct {
 
 // ClusterPatchStatus defines model for ClusterPatch.Status.
 type ClusterPatchStatus string
+
+// DedicatedNode defines model for DedicatedNode.
+type DedicatedNode struct {
+	Allocatable   NodeCapacity               `json:"allocatable"`
+	CapacityState DedicatedNodeCapacityState `json:"capacityState"`
+	ClusterId     string                     `json:"clusterId"`
+	Id            string                     `json:"id"`
+	Name          string                     `json:"name"`
+	NodeState     DedicatedNodeNodeState     `json:"nodeState"`
+	Remaining     NodeCapacity               `json:"remaining"`
+	Reservable    NodeCapacity               `json:"reservable"`
+	Reserved      NodeCapacity               `json:"reserved"`
+	SystemReserve NodeCapacity               `json:"systemReserve"`
+}
+
+// DedicatedNodeCapacityState defines model for DedicatedNode.CapacityState.
+type DedicatedNodeCapacityState string
+
+// DedicatedNodeNodeState defines model for DedicatedNode.NodeState.
+type DedicatedNodeNodeState string
+
+// DedicatedNodeList defines model for DedicatedNodeList.
+type DedicatedNodeList struct {
+	Items []DedicatedNode `json:"items"`
+}
+
+// DedicatedNodesInput defines model for DedicatedNodesInput.
+type DedicatedNodesInput struct {
+	Nodes []struct {
+		Name          string       `json:"name"`
+		SystemReserve NodeCapacity `json:"systemReserve"`
+	} `json:"nodes"`
+}
 
 // Entitlement Limits that do not depend on a cluster (PRODUCT-PLAN §5.1).
 type Entitlement struct {
@@ -798,6 +920,53 @@ type MemberPatch struct {
 	Role InvitationRole `json:"role"`
 }
 
+// NetworkPool defines model for NetworkPool.
+type NetworkPool struct {
+	AllowedPrefixLengths []int    `json:"allowedPrefixLengths"`
+	Cidrs                []string `json:"cidrs"`
+	ClusterId            string   `json:"clusterId"`
+	DefaultPrefixLength  int      `json:"defaultPrefixLength"`
+	Id                   string   `json:"id"`
+	OrganizationId       *string  `json:"organizationId,omitempty"`
+}
+
+// NetworkPoolCreate defines model for NetworkPoolCreate.
+type NetworkPoolCreate struct {
+	AllowedPrefixLengths []int    `json:"allowedPrefixLengths"`
+	Cidrs                []string `json:"cidrs"`
+	DefaultPrefixLength  int      `json:"defaultPrefixLength"`
+	Id                   PoolId   `json:"id"`
+
+	// OrganizationId Absent: a pool any organization's grant may list
+	OrganizationId *string `json:"organizationId,omitempty"`
+}
+
+// NetworkPoolList defines model for NetworkPoolList.
+type NetworkPoolList struct {
+	Items []NetworkPool `json:"items"`
+}
+
+// NetworkPoolPatch defines model for NetworkPoolPatch.
+type NetworkPoolPatch struct {
+	AllowedPrefixLengths *[]int    `json:"allowedPrefixLengths,omitempty"`
+	Cidrs                *[]string `json:"cidrs,omitempty"`
+	DefaultPrefixLength  *int      `json:"defaultPrefixLength,omitempty"`
+}
+
+// NodeCapacity defines model for NodeCapacity.
+type NodeCapacity struct {
+	// Cpu A Kubernetes quantity, e.g. `500m` or `2` for CPU, `4Gi` for memory and storage.
+	//
+	// Example: 4Gi
+	Cpu Quantity `json:"cpu"`
+
+	// Memory A Kubernetes quantity, e.g. `500m` or `2` for CPU, `4Gi` for memory and storage.
+	//
+	// Example: 4Gi
+	Memory Quantity `json:"memory"`
+	Pods   int      `json:"pods"`
+}
+
 // Operation defines model for Operation.
 type Operation struct {
 	// CorrelationId Request id of the call that started it, for support
@@ -942,6 +1111,45 @@ type Rejection struct {
 	Reason string `json:"reason"`
 }
 
+// SharedPool defines model for SharedPool.
+type SharedPool struct {
+	AllocationOvercommitRatio float32 `json:"allocationOvercommitRatio"`
+
+	// Capacity reservable = the nodes' allocatable less systemReserve per node; ceiling = ratio × reservable; allocated: what Shared Workspaces hold
+	Capacity struct {
+		Allocated  NodeCapacity `json:"allocated"`
+		Ceiling    NodeCapacity `json:"ceiling"`
+		Reservable NodeCapacity `json:"reservable"`
+	} `json:"capacity"`
+	ClusterId     string       `json:"clusterId"`
+	Id            string       `json:"id"`
+	Name          string       `json:"name"`
+	Nodes         []string     `json:"nodes"`
+	SystemReserve NodeCapacity `json:"systemReserve"`
+}
+
+// SharedPoolCreate defines model for SharedPoolCreate.
+type SharedPoolCreate struct {
+	AllocationOvercommitRatio float32      `json:"allocationOvercommitRatio"`
+	Id                        PoolId       `json:"id"`
+	Name                      string       `json:"name"`
+	Nodes                     []string     `json:"nodes"`
+	SystemReserve             NodeCapacity `json:"systemReserve"`
+}
+
+// SharedPoolInput defines model for SharedPoolInput.
+type SharedPoolInput struct {
+	AllocationOvercommitRatio float32      `json:"allocationOvercommitRatio"`
+	Name                      string       `json:"name"`
+	Nodes                     []string     `json:"nodes"`
+	SystemReserve             NodeCapacity `json:"systemReserve"`
+}
+
+// SharedPoolList defines model for SharedPoolList.
+type SharedPoolList struct {
+	Items []SharedPool `json:"items"`
+}
+
 // SyncStatus Whether Keycloak has caught up with this row (04-state-machines §9.1).
 type SyncStatus string
 
@@ -1013,6 +1221,18 @@ type ListAdminClusterGrantsParams struct {
 
 // RegisterClusterParams defines parameters for RegisterCluster.
 type RegisterClusterParams struct {
+	// IdempotencyKey As `Idempotency-Key`, and required here (IMPLEMENTATION-PLAN §3.4).
+	IdempotencyKey IdempotencyKeyRequired `json:"Idempotency-Key"`
+}
+
+// CreateNetworkPoolParams defines parameters for CreateNetworkPool.
+type CreateNetworkPoolParams struct {
+	// IdempotencyKey As `Idempotency-Key`, and required here (IMPLEMENTATION-PLAN §3.4).
+	IdempotencyKey IdempotencyKeyRequired `json:"Idempotency-Key"`
+}
+
+// CreateSharedPoolParams defines parameters for CreateSharedPool.
+type CreateSharedPoolParams struct {
 	// IdempotencyKey As `Idempotency-Key`, and required here (IMPLEMENTATION-PLAN §3.4).
 	IdempotencyKey IdempotencyKeyRequired `json:"Idempotency-Key"`
 }
@@ -1150,6 +1370,18 @@ type RegisterClusterJSONRequestBody = ClusterCreate
 // PatchClusterJSONRequestBody defines body for PatchCluster for application/json ContentType.
 type PatchClusterJSONRequestBody = ClusterPatch
 
+// CreateNetworkPoolJSONRequestBody defines body for CreateNetworkPool for application/json ContentType.
+type CreateNetworkPoolJSONRequestBody = NetworkPoolCreate
+
+// PatchNetworkPoolJSONRequestBody defines body for PatchNetworkPool for application/json ContentType.
+type PatchNetworkPoolJSONRequestBody = NetworkPoolPatch
+
+// CreateSharedPoolJSONRequestBody defines body for CreateSharedPool for application/json ContentType.
+type CreateSharedPoolJSONRequestBody = SharedPoolCreate
+
+// PutSharedPoolJSONRequestBody defines body for PutSharedPool for application/json ContentType.
+type PutSharedPoolJSONRequestBody = SharedPoolInput
+
 // PutOnboardingPolicyJSONRequestBody defines body for PutOnboardingPolicy for application/json ContentType.
 type PutOnboardingPolicyJSONRequestBody = Approval
 
@@ -1158,6 +1390,9 @@ type CreateAdminOrganizationJSONRequestBody = AdminOrganizationCreate
 
 // PutClusterGrantJSONRequestBody defines body for PutClusterGrant for application/json ContentType.
 type PutClusterGrantJSONRequestBody = ClusterGrantInput
+
+// PutDedicatedNodesJSONRequestBody defines body for PutDedicatedNodes for application/json ContentType.
+type PutDedicatedNodesJSONRequestBody = DedicatedNodesInput
 
 // PutAdminEntitlementJSONRequestBody defines body for PutAdminEntitlement for application/json ContentType.
 type PutAdminEntitlementJSONRequestBody = Entitlement
@@ -1203,6 +1438,27 @@ type ServerInterface interface {
 	// PatchCluster Change a cluster's metadata or status (Platform Admin)
 	// (PATCH /admin/clusters/{clusterId})
 	PatchCluster(w http.ResponseWriter, r *http.Request, clusterId ClusterId)
+	// ListNetworkPools A cluster's network pools (Platform Admin)
+	// (GET /admin/clusters/{clusterId}/network-pools)
+	ListNetworkPools(w http.ResponseWriter, r *http.Request, clusterId ClusterId)
+	// CreateNetworkPool Add a network pool to a cluster (Platform Admin)
+	// (POST /admin/clusters/{clusterId}/network-pools)
+	CreateNetworkPool(w http.ResponseWriter, r *http.Request, clusterId ClusterId, params CreateNetworkPoolParams)
+	// PatchNetworkPool Change a network pool's ranges or prefix lengths (Platform Admin)
+	// (PATCH /admin/clusters/{clusterId}/network-pools/{poolId})
+	PatchNetworkPool(w http.ResponseWriter, r *http.Request, clusterId ClusterId, poolId PoolId)
+	// ListClusterNodes The nodes of a cluster as last reported, free, in a pool or dedicated (Platform Admin)
+	// (GET /admin/clusters/{clusterId}/nodes)
+	ListClusterNodes(w http.ResponseWriter, r *http.Request, clusterId ClusterId)
+	// ListSharedPools A cluster's shared pools with their nodes and capacity (Platform Admin)
+	// (GET /admin/clusters/{clusterId}/shared-pools)
+	ListSharedPools(w http.ResponseWriter, r *http.Request, clusterId ClusterId)
+	// CreateSharedPool Add a shared pool to a cluster (Platform Admin)
+	// (POST /admin/clusters/{clusterId}/shared-pools)
+	CreateSharedPool(w http.ResponseWriter, r *http.Request, clusterId ClusterId, params CreateSharedPoolParams)
+	// PutSharedPool Change a shared pool's name, overcommit ratio, system reserve and nodes (Platform Admin)
+	// (PUT /admin/clusters/{clusterId}/shared-pools/{poolId})
+	PutSharedPool(w http.ResponseWriter, r *http.Request, clusterId ClusterId, poolId PoolId)
 	// GetOnboardingPolicy What approving a request proposes (Platform Admin)
 	// (GET /admin/onboarding-policy)
 	GetOnboardingPolicy(w http.ResponseWriter, r *http.Request)
@@ -1227,6 +1483,9 @@ type ServerInterface interface {
 	// PutClusterGrant Give an Active organization a grant on a cluster, or change it (Platform Admin)
 	// (PUT /admin/organizations/{orgId}/cluster-grants/{clusterId})
 	PutClusterGrant(w http.ResponseWriter, r *http.Request, orgId AdminOrgId, clusterId ClusterId)
+	// PutDedicatedNodes Set the nodes an organization holds on a cluster (Platform Admin)
+	// (PUT /admin/organizations/{orgId}/cluster-grants/{clusterId}/dedicated-nodes)
+	PutDedicatedNodes(w http.ResponseWriter, r *http.Request, orgId AdminOrgId, clusterId ClusterId)
 	// PutAdminEntitlement Change an organization's entitlement (Platform Admin)
 	// (PUT /admin/organizations/{orgId}/entitlement)
 	PutAdminEntitlement(w http.ResponseWriter, r *http.Request, orgId AdminOrgId)
@@ -1359,6 +1618,48 @@ func (_ Unimplemented) PatchCluster(w http.ResponseWriter, r *http.Request, clus
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// ListNetworkPools A cluster's network pools (Platform Admin)
+// (GET /admin/clusters/{clusterId}/network-pools)
+func (_ Unimplemented) ListNetworkPools(w http.ResponseWriter, r *http.Request, clusterId ClusterId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateNetworkPool Add a network pool to a cluster (Platform Admin)
+// (POST /admin/clusters/{clusterId}/network-pools)
+func (_ Unimplemented) CreateNetworkPool(w http.ResponseWriter, r *http.Request, clusterId ClusterId, params CreateNetworkPoolParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PatchNetworkPool Change a network pool's ranges or prefix lengths (Platform Admin)
+// (PATCH /admin/clusters/{clusterId}/network-pools/{poolId})
+func (_ Unimplemented) PatchNetworkPool(w http.ResponseWriter, r *http.Request, clusterId ClusterId, poolId PoolId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListClusterNodes The nodes of a cluster as last reported, free, in a pool or dedicated (Platform Admin)
+// (GET /admin/clusters/{clusterId}/nodes)
+func (_ Unimplemented) ListClusterNodes(w http.ResponseWriter, r *http.Request, clusterId ClusterId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListSharedPools A cluster's shared pools with their nodes and capacity (Platform Admin)
+// (GET /admin/clusters/{clusterId}/shared-pools)
+func (_ Unimplemented) ListSharedPools(w http.ResponseWriter, r *http.Request, clusterId ClusterId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateSharedPool Add a shared pool to a cluster (Platform Admin)
+// (POST /admin/clusters/{clusterId}/shared-pools)
+func (_ Unimplemented) CreateSharedPool(w http.ResponseWriter, r *http.Request, clusterId ClusterId, params CreateSharedPoolParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutSharedPool Change a shared pool's name, overcommit ratio, system reserve and nodes (Platform Admin)
+// (PUT /admin/clusters/{clusterId}/shared-pools/{poolId})
+func (_ Unimplemented) PutSharedPool(w http.ResponseWriter, r *http.Request, clusterId ClusterId, poolId PoolId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // GetOnboardingPolicy What approving a request proposes (Platform Admin)
 // (GET /admin/onboarding-policy)
 func (_ Unimplemented) GetOnboardingPolicy(w http.ResponseWriter, r *http.Request) {
@@ -1404,6 +1705,12 @@ func (_ Unimplemented) DeleteClusterGrant(w http.ResponseWriter, r *http.Request
 // PutClusterGrant Give an Active organization a grant on a cluster, or change it (Platform Admin)
 // (PUT /admin/organizations/{orgId}/cluster-grants/{clusterId})
 func (_ Unimplemented) PutClusterGrant(w http.ResponseWriter, r *http.Request, orgId AdminOrgId, clusterId ClusterId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutDedicatedNodes Set the nodes an organization holds on a cluster (Platform Admin)
+// (PUT /admin/organizations/{orgId}/cluster-grants/{clusterId}/dedicated-nodes)
+func (_ Unimplemented) PutDedicatedNodes(w http.ResponseWriter, r *http.Request, orgId AdminOrgId, clusterId ClusterId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1764,6 +2071,262 @@ func (siw *ServerInterfaceWrapper) PatchCluster(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// ListNetworkPools operation middleware
+func (siw *ServerInterfaceWrapper) ListNetworkPools(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterId" -------------
+	var clusterId ClusterId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterId", chi.URLParam(r, "clusterId"), &clusterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "clusterId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListNetworkPools(w, r, clusterId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateNetworkPool operation middleware
+func (siw *ServerInterfaceWrapper) CreateNetworkPool(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterId" -------------
+	var clusterId ClusterId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterId", chi.URLParam(r, "clusterId"), &clusterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "clusterId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateNetworkPoolParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKeyRequired
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("Header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateNetworkPool(w, r, clusterId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PatchNetworkPool operation middleware
+func (siw *ServerInterfaceWrapper) PatchNetworkPool(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterId" -------------
+	var clusterId ClusterId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterId", chi.URLParam(r, "clusterId"), &clusterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "clusterId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "poolId" -------------
+	var poolId PoolId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "poolId", chi.URLParam(r, "poolId"), &poolId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "poolId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PatchNetworkPool(w, r, clusterId, poolId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListClusterNodes operation middleware
+func (siw *ServerInterfaceWrapper) ListClusterNodes(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterId" -------------
+	var clusterId ClusterId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterId", chi.URLParam(r, "clusterId"), &clusterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "clusterId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListClusterNodes(w, r, clusterId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListSharedPools operation middleware
+func (siw *ServerInterfaceWrapper) ListSharedPools(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterId" -------------
+	var clusterId ClusterId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterId", chi.URLParam(r, "clusterId"), &clusterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "clusterId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSharedPools(w, r, clusterId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateSharedPool operation middleware
+func (siw *ServerInterfaceWrapper) CreateSharedPool(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterId" -------------
+	var clusterId ClusterId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterId", chi.URLParam(r, "clusterId"), &clusterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "clusterId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateSharedPoolParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKeyRequired
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("Header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateSharedPool(w, r, clusterId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutSharedPool operation middleware
+func (siw *ServerInterfaceWrapper) PutSharedPool(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterId" -------------
+	var clusterId ClusterId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterId", chi.URLParam(r, "clusterId"), &clusterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "clusterId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "poolId" -------------
+	var poolId PoolId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "poolId", chi.URLParam(r, "poolId"), &poolId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "poolId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutSharedPool(w, r, clusterId, poolId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetOnboardingPolicy operation middleware
 func (siw *ServerInterfaceWrapper) GetOnboardingPolicy(w http.ResponseWriter, r *http.Request) {
 
@@ -2042,6 +2605,41 @@ func (siw *ServerInterfaceWrapper) PutClusterGrant(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutClusterGrant(w, r, orgId, clusterId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutDedicatedNodes operation middleware
+func (siw *ServerInterfaceWrapper) PutDedicatedNodes(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "orgId" -------------
+	var orgId AdminOrgId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "orgId", chi.URLParam(r, "orgId"), &orgId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "orgId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "clusterId" -------------
+	var clusterId ClusterId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterId", chi.URLParam(r, "clusterId"), &clusterId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "clusterId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutDedicatedNodes(w, r, orgId, clusterId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3474,6 +4072,30 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Patch(options.BaseURL+"/admin/clusters/{clusterId}", wrapper.PatchCluster)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/admin/clusters/{clusterId}/nodes", wrapper.ListClusterNodes)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/admin/clusters/{clusterId}/shared-pools", wrapper.ListSharedPools)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/admin/clusters/{clusterId}/shared-pools", wrapper.CreateSharedPool)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/admin/clusters/{clusterId}/shared-pools/{poolId}", wrapper.PutSharedPool)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/admin/clusters/{clusterId}/network-pools", wrapper.ListNetworkPools)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/admin/clusters/{clusterId}/network-pools", wrapper.CreateNetworkPool)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/admin/clusters/{clusterId}/network-pools/{poolId}", wrapper.PatchNetworkPool)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/admin/organizations/{orgId}/cluster-grants/{clusterId}/dedicated-nodes", wrapper.PutDedicatedNodes)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/admin/onboarding-policy", wrapper.GetOnboardingPolicy)
 	})
 	r.Group(func(r chi.Router) {
@@ -3826,6 +4448,652 @@ func (response PatchCluster409JSONResponse) VisitPatchClusterResponse(w http.Res
 type PatchCluster429JSONResponse struct{ RateLimitedJSONResponse }
 
 func (response PatchCluster429JSONResponse) VisitPatchClusterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListNetworkPoolsRequestObject struct {
+	ClusterId ClusterId `json:"clusterId"`
+}
+
+type ListNetworkPoolsResponseObject interface {
+	VisitListNetworkPoolsResponse(w http.ResponseWriter) error
+}
+
+type ListNetworkPools200JSONResponse NetworkPoolList
+
+func (response ListNetworkPools200JSONResponse) VisitListNetworkPoolsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListNetworkPools401JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListNetworkPools401JSONResponse) VisitListNetworkPoolsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListNetworkPools403JSONResponse ErrorResponse
+
+func (response ListNetworkPools403JSONResponse) VisitListNetworkPoolsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListNetworkPools404JSONResponse ErrorResponse
+
+func (response ListNetworkPools404JSONResponse) VisitListNetworkPoolsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateNetworkPoolRequestObject struct {
+	ClusterId ClusterId `json:"clusterId"`
+	Params    CreateNetworkPoolParams
+	Body      *CreateNetworkPoolJSONRequestBody
+}
+
+type CreateNetworkPoolResponseObject interface {
+	VisitCreateNetworkPoolResponse(w http.ResponseWriter) error
+}
+
+type CreateNetworkPool201JSONResponse NetworkPool
+
+func (response CreateNetworkPool201JSONResponse) VisitCreateNetworkPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateNetworkPool400JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateNetworkPool400JSONResponse) VisitCreateNetworkPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateNetworkPool401JSONResponse ErrorResponse
+
+func (response CreateNetworkPool401JSONResponse) VisitCreateNetworkPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateNetworkPool403JSONResponse ErrorResponse
+
+func (response CreateNetworkPool403JSONResponse) VisitCreateNetworkPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateNetworkPool404JSONResponse ErrorResponse
+
+func (response CreateNetworkPool404JSONResponse) VisitCreateNetworkPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateNetworkPool409JSONResponse ErrorResponse
+
+func (response CreateNetworkPool409JSONResponse) VisitCreateNetworkPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateNetworkPool422JSONResponse struct {
+	IdempotencyKeyReusedJSONResponse
+}
+
+func (response CreateNetworkPool422JSONResponse) VisitCreateNetworkPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateNetworkPool429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response CreateNetworkPool429JSONResponse) VisitCreateNetworkPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PatchNetworkPoolRequestObject struct {
+	ClusterId ClusterId `json:"clusterId"`
+	PoolId    PoolId    `json:"poolId"`
+	Body      *PatchNetworkPoolJSONRequestBody
+}
+
+type PatchNetworkPoolResponseObject interface {
+	VisitPatchNetworkPoolResponse(w http.ResponseWriter) error
+}
+
+type PatchNetworkPool200JSONResponse NetworkPool
+
+func (response PatchNetworkPool200JSONResponse) VisitPatchNetworkPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PatchNetworkPool400JSONResponse struct{ ErrorJSONResponse }
+
+func (response PatchNetworkPool400JSONResponse) VisitPatchNetworkPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PatchNetworkPool401JSONResponse ErrorResponse
+
+func (response PatchNetworkPool401JSONResponse) VisitPatchNetworkPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PatchNetworkPool403JSONResponse ErrorResponse
+
+func (response PatchNetworkPool403JSONResponse) VisitPatchNetworkPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PatchNetworkPool404JSONResponse ErrorResponse
+
+func (response PatchNetworkPool404JSONResponse) VisitPatchNetworkPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PatchNetworkPool409JSONResponse ErrorResponse
+
+func (response PatchNetworkPool409JSONResponse) VisitPatchNetworkPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PatchNetworkPool429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response PatchNetworkPool429JSONResponse) VisitPatchNetworkPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListClusterNodesRequestObject struct {
+	ClusterId ClusterId `json:"clusterId"`
+}
+
+type ListClusterNodesResponseObject interface {
+	VisitListClusterNodesResponse(w http.ResponseWriter) error
+}
+
+type ListClusterNodes200JSONResponse ClusterNodeList
+
+func (response ListClusterNodes200JSONResponse) VisitListClusterNodesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListClusterNodes401JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListClusterNodes401JSONResponse) VisitListClusterNodesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListClusterNodes403JSONResponse ErrorResponse
+
+func (response ListClusterNodes403JSONResponse) VisitListClusterNodesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListClusterNodes404JSONResponse ErrorResponse
+
+func (response ListClusterNodes404JSONResponse) VisitListClusterNodesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSharedPoolsRequestObject struct {
+	ClusterId ClusterId `json:"clusterId"`
+}
+
+type ListSharedPoolsResponseObject interface {
+	VisitListSharedPoolsResponse(w http.ResponseWriter) error
+}
+
+type ListSharedPools200JSONResponse SharedPoolList
+
+func (response ListSharedPools200JSONResponse) VisitListSharedPoolsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSharedPools401JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListSharedPools401JSONResponse) VisitListSharedPoolsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSharedPools403JSONResponse ErrorResponse
+
+func (response ListSharedPools403JSONResponse) VisitListSharedPoolsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSharedPools404JSONResponse ErrorResponse
+
+func (response ListSharedPools404JSONResponse) VisitListSharedPoolsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSharedPoolRequestObject struct {
+	ClusterId ClusterId `json:"clusterId"`
+	Params    CreateSharedPoolParams
+	Body      *CreateSharedPoolJSONRequestBody
+}
+
+type CreateSharedPoolResponseObject interface {
+	VisitCreateSharedPoolResponse(w http.ResponseWriter) error
+}
+
+type CreateSharedPool201JSONResponse SharedPool
+
+func (response CreateSharedPool201JSONResponse) VisitCreateSharedPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSharedPool400JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateSharedPool400JSONResponse) VisitCreateSharedPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSharedPool401JSONResponse ErrorResponse
+
+func (response CreateSharedPool401JSONResponse) VisitCreateSharedPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSharedPool403JSONResponse ErrorResponse
+
+func (response CreateSharedPool403JSONResponse) VisitCreateSharedPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSharedPool404JSONResponse ErrorResponse
+
+func (response CreateSharedPool404JSONResponse) VisitCreateSharedPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSharedPool409JSONResponse ErrorResponse
+
+func (response CreateSharedPool409JSONResponse) VisitCreateSharedPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSharedPool422JSONResponse struct {
+	IdempotencyKeyReusedJSONResponse
+}
+
+func (response CreateSharedPool422JSONResponse) VisitCreateSharedPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSharedPool429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response CreateSharedPool429JSONResponse) VisitCreateSharedPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutSharedPoolRequestObject struct {
+	ClusterId ClusterId `json:"clusterId"`
+	PoolId    PoolId    `json:"poolId"`
+	Body      *PutSharedPoolJSONRequestBody
+}
+
+type PutSharedPoolResponseObject interface {
+	VisitPutSharedPoolResponse(w http.ResponseWriter) error
+}
+
+type PutSharedPool200JSONResponse SharedPool
+
+func (response PutSharedPool200JSONResponse) VisitPutSharedPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutSharedPool400JSONResponse struct{ ErrorJSONResponse }
+
+func (response PutSharedPool400JSONResponse) VisitPutSharedPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutSharedPool401JSONResponse ErrorResponse
+
+func (response PutSharedPool401JSONResponse) VisitPutSharedPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutSharedPool403JSONResponse ErrorResponse
+
+func (response PutSharedPool403JSONResponse) VisitPutSharedPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutSharedPool404JSONResponse ErrorResponse
+
+func (response PutSharedPool404JSONResponse) VisitPutSharedPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutSharedPool429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response PutSharedPool429JSONResponse) VisitPutSharedPoolResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -4479,6 +5747,115 @@ func (response PutClusterGrant409JSONResponse) VisitPutClusterGrantResponse(w ht
 type PutClusterGrant429JSONResponse struct{ RateLimitedJSONResponse }
 
 func (response PutClusterGrant429JSONResponse) VisitPutClusterGrantResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutDedicatedNodesRequestObject struct {
+	OrgId     AdminOrgId `json:"orgId"`
+	ClusterId ClusterId  `json:"clusterId"`
+	Body      *PutDedicatedNodesJSONRequestBody
+}
+
+type PutDedicatedNodesResponseObject interface {
+	VisitPutDedicatedNodesResponse(w http.ResponseWriter) error
+}
+
+type PutDedicatedNodes200JSONResponse DedicatedNodeList
+
+func (response PutDedicatedNodes200JSONResponse) VisitPutDedicatedNodesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutDedicatedNodes400JSONResponse struct{ ErrorJSONResponse }
+
+func (response PutDedicatedNodes400JSONResponse) VisitPutDedicatedNodesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutDedicatedNodes401JSONResponse ErrorResponse
+
+func (response PutDedicatedNodes401JSONResponse) VisitPutDedicatedNodesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutDedicatedNodes403JSONResponse ErrorResponse
+
+func (response PutDedicatedNodes403JSONResponse) VisitPutDedicatedNodesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutDedicatedNodes404JSONResponse ErrorResponse
+
+func (response PutDedicatedNodes404JSONResponse) VisitPutDedicatedNodesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutDedicatedNodes409JSONResponse ErrorResponse
+
+func (response PutDedicatedNodes409JSONResponse) VisitPutDedicatedNodesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutDedicatedNodes429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response PutDedicatedNodes429JSONResponse) VisitPutDedicatedNodesResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -7474,6 +8851,27 @@ type StrictServerInterface interface {
 	// PatchCluster Change a cluster's metadata or status (Platform Admin)
 	// (PATCH /admin/clusters/{clusterId})
 	PatchCluster(ctx context.Context, request PatchClusterRequestObject) (PatchClusterResponseObject, error)
+	// ListNetworkPools A cluster's network pools (Platform Admin)
+	// (GET /admin/clusters/{clusterId}/network-pools)
+	ListNetworkPools(ctx context.Context, request ListNetworkPoolsRequestObject) (ListNetworkPoolsResponseObject, error)
+	// CreateNetworkPool Add a network pool to a cluster (Platform Admin)
+	// (POST /admin/clusters/{clusterId}/network-pools)
+	CreateNetworkPool(ctx context.Context, request CreateNetworkPoolRequestObject) (CreateNetworkPoolResponseObject, error)
+	// PatchNetworkPool Change a network pool's ranges or prefix lengths (Platform Admin)
+	// (PATCH /admin/clusters/{clusterId}/network-pools/{poolId})
+	PatchNetworkPool(ctx context.Context, request PatchNetworkPoolRequestObject) (PatchNetworkPoolResponseObject, error)
+	// ListClusterNodes The nodes of a cluster as last reported, free, in a pool or dedicated (Platform Admin)
+	// (GET /admin/clusters/{clusterId}/nodes)
+	ListClusterNodes(ctx context.Context, request ListClusterNodesRequestObject) (ListClusterNodesResponseObject, error)
+	// ListSharedPools A cluster's shared pools with their nodes and capacity (Platform Admin)
+	// (GET /admin/clusters/{clusterId}/shared-pools)
+	ListSharedPools(ctx context.Context, request ListSharedPoolsRequestObject) (ListSharedPoolsResponseObject, error)
+	// CreateSharedPool Add a shared pool to a cluster (Platform Admin)
+	// (POST /admin/clusters/{clusterId}/shared-pools)
+	CreateSharedPool(ctx context.Context, request CreateSharedPoolRequestObject) (CreateSharedPoolResponseObject, error)
+	// PutSharedPool Change a shared pool's name, overcommit ratio, system reserve and nodes (Platform Admin)
+	// (PUT /admin/clusters/{clusterId}/shared-pools/{poolId})
+	PutSharedPool(ctx context.Context, request PutSharedPoolRequestObject) (PutSharedPoolResponseObject, error)
 	// GetOnboardingPolicy What approving a request proposes (Platform Admin)
 	// (GET /admin/onboarding-policy)
 	GetOnboardingPolicy(ctx context.Context, request GetOnboardingPolicyRequestObject) (GetOnboardingPolicyResponseObject, error)
@@ -7498,6 +8896,9 @@ type StrictServerInterface interface {
 	// PutClusterGrant Give an Active organization a grant on a cluster, or change it (Platform Admin)
 	// (PUT /admin/organizations/{orgId}/cluster-grants/{clusterId})
 	PutClusterGrant(ctx context.Context, request PutClusterGrantRequestObject) (PutClusterGrantResponseObject, error)
+	// PutDedicatedNodes Set the nodes an organization holds on a cluster (Platform Admin)
+	// (PUT /admin/organizations/{orgId}/cluster-grants/{clusterId}/dedicated-nodes)
+	PutDedicatedNodes(ctx context.Context, request PutDedicatedNodesRequestObject) (PutDedicatedNodesResponseObject, error)
 	// PutAdminEntitlement Change an organization's entitlement (Platform Admin)
 	// (PUT /admin/organizations/{orgId}/entitlement)
 	PutAdminEntitlement(ctx context.Context, request PutAdminEntitlementRequestObject) (PutAdminEntitlementResponseObject, error)
@@ -7757,6 +9158,220 @@ func (sh *strictHandler) PatchCluster(w http.ResponseWriter, r *http.Request, cl
 	}
 }
 
+// ListNetworkPools operation middleware
+func (sh *strictHandler) ListNetworkPools(w http.ResponseWriter, r *http.Request, clusterId ClusterId) {
+	var request ListNetworkPoolsRequestObject
+
+	request.ClusterId = clusterId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListNetworkPools(ctx, request.(ListNetworkPoolsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListNetworkPools")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListNetworkPoolsResponseObject); ok {
+		if err := validResponse.VisitListNetworkPoolsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateNetworkPool operation middleware
+func (sh *strictHandler) CreateNetworkPool(w http.ResponseWriter, r *http.Request, clusterId ClusterId, params CreateNetworkPoolParams) {
+	var request CreateNetworkPoolRequestObject
+
+	request.ClusterId = clusterId
+	request.Params = params
+
+	var body CreateNetworkPoolJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateNetworkPool(ctx, request.(CreateNetworkPoolRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateNetworkPool")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateNetworkPoolResponseObject); ok {
+		if err := validResponse.VisitCreateNetworkPoolResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PatchNetworkPool operation middleware
+func (sh *strictHandler) PatchNetworkPool(w http.ResponseWriter, r *http.Request, clusterId ClusterId, poolId PoolId) {
+	var request PatchNetworkPoolRequestObject
+
+	request.ClusterId = clusterId
+	request.PoolId = poolId
+
+	var body PatchNetworkPoolJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PatchNetworkPool(ctx, request.(PatchNetworkPoolRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PatchNetworkPool")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PatchNetworkPoolResponseObject); ok {
+		if err := validResponse.VisitPatchNetworkPoolResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListClusterNodes operation middleware
+func (sh *strictHandler) ListClusterNodes(w http.ResponseWriter, r *http.Request, clusterId ClusterId) {
+	var request ListClusterNodesRequestObject
+
+	request.ClusterId = clusterId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListClusterNodes(ctx, request.(ListClusterNodesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListClusterNodes")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListClusterNodesResponseObject); ok {
+		if err := validResponse.VisitListClusterNodesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListSharedPools operation middleware
+func (sh *strictHandler) ListSharedPools(w http.ResponseWriter, r *http.Request, clusterId ClusterId) {
+	var request ListSharedPoolsRequestObject
+
+	request.ClusterId = clusterId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListSharedPools(ctx, request.(ListSharedPoolsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListSharedPools")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListSharedPoolsResponseObject); ok {
+		if err := validResponse.VisitListSharedPoolsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateSharedPool operation middleware
+func (sh *strictHandler) CreateSharedPool(w http.ResponseWriter, r *http.Request, clusterId ClusterId, params CreateSharedPoolParams) {
+	var request CreateSharedPoolRequestObject
+
+	request.ClusterId = clusterId
+	request.Params = params
+
+	var body CreateSharedPoolJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateSharedPool(ctx, request.(CreateSharedPoolRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateSharedPool")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateSharedPoolResponseObject); ok {
+		if err := validResponse.VisitCreateSharedPoolResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutSharedPool operation middleware
+func (sh *strictHandler) PutSharedPool(w http.ResponseWriter, r *http.Request, clusterId ClusterId, poolId PoolId) {
+	var request PutSharedPoolRequestObject
+
+	request.ClusterId = clusterId
+	request.PoolId = poolId
+
+	var body PutSharedPoolJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutSharedPool(ctx, request.(PutSharedPoolRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutSharedPool")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutSharedPoolResponseObject); ok {
+		if err := validResponse.VisitPutSharedPoolResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetOnboardingPolicy operation middleware
 func (sh *strictHandler) GetOnboardingPolicy(w http.ResponseWriter, r *http.Request) {
 	var request GetOnboardingPolicyRequestObject
@@ -7977,6 +9592,40 @@ func (sh *strictHandler) PutClusterGrant(w http.ResponseWriter, r *http.Request,
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PutClusterGrantResponseObject); ok {
 		if err := validResponse.VisitPutClusterGrantResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutDedicatedNodes operation middleware
+func (sh *strictHandler) PutDedicatedNodes(w http.ResponseWriter, r *http.Request, orgId AdminOrgId, clusterId ClusterId) {
+	var request PutDedicatedNodesRequestObject
+
+	request.OrgId = orgId
+	request.ClusterId = clusterId
+
+	var body PutDedicatedNodesJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutDedicatedNodes(ctx, request.(PutDedicatedNodesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutDedicatedNodes")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutDedicatedNodesResponseObject); ok {
+		if err := validResponse.VisitPutDedicatedNodesResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -8953,193 +10602,221 @@ func (sh *strictHandler) AcceptOwnershipTransfer(w http.ResponseWriter, r *http.
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"WrN2iGf08OGVPnr/PwAA//8=",
+	"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",
+	"dPGBRDy4wzIVSa1Z28cTuv/wSh+9/x8AAP//",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

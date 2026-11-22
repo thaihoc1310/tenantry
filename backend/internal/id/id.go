@@ -17,6 +17,7 @@ const (
 	Invitation   = "inv"
 	Transfer     = "transfer"
 	ClusterGrant = "grant"
+	NodeGrant    = "nodegrant"
 )
 
 // ULID returns the ULID part of an id made by New.

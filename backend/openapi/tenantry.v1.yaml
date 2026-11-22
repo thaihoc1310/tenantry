@@ -1065,6 +1065,223 @@ paths:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
+  /admin/clusters/{clusterId}/nodes:
+    parameters:
+      - $ref: "#/components/parameters/clusterId"
+    get:
+      operationId: listClusterNodes
+      summary: The nodes of a cluster as last reported, free, in a pool or dedicated (Platform Admin)
+      description: |
+        From M6 the operator reports them (PlatformNodeInventory); before
+        that, the seed writes them once.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClusterNodeList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /admin/clusters/{clusterId}/shared-pools:
+    parameters:
+      - $ref: "#/components/parameters/clusterId"
+    get:
+      operationId: listSharedPools
+      summary: A cluster's shared pools with their nodes and capacity (Platform Admin)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SharedPoolList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createSharedPool
+      security: [{ session: [], csrf: [] }]
+      summary: Add a shared pool to a cluster (Platform Admin)
+      description: |
+        The id is a DNS label unique across clusters; `system` is the label
+        of the system pool and refused. A node that joins must be free: a
+        Ready worker of the cluster, in no pool and dedicated to nobody. Only
+        the database changes until the operator labels nodes (M6).
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKeyRequired"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SharedPoolCreate" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SharedPool" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: A pool with this id exists (`CONFLICT`, `details.field` = `id`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /admin/clusters/{clusterId}/shared-pools/{poolId}:
+    parameters:
+      - $ref: "#/components/parameters/clusterId"
+      - $ref: "#/components/parameters/poolId"
+    put:
+      operationId: putSharedPool
+      security: [{ session: [], csrf: [] }]
+      summary: Change a shared pool's name, overcommit ratio, system reserve and nodes (Platform Admin)
+      description: |
+        `nodes` is the whole list: a node left out leaves the pool (its Pods
+        keep running: drain it yourself to take it out for good). A node
+        that joins must be free. Only the database changes until the
+        operator follows (M6); the audit event keeps before and after.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SharedPoolInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SharedPool" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /admin/clusters/{clusterId}/network-pools:
+    parameters:
+      - $ref: "#/components/parameters/clusterId"
+    get:
+      operationId: listNetworkPools
+      summary: A cluster's network pools (Platform Admin)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NetworkPoolList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createNetworkPool
+      security: [{ session: [], csrf: [] }]
+      summary: Add a network pool to a cluster (Platform Admin)
+      description: |
+        Its ranges overlap no other network pool of the cluster and none of
+        the cluster's reserved ranges (409 `CIDR_OVERLAP`, `details.cidr`,
+        `details.conflictsWith`). Without `organizationId` any
+        organization's grant may list it.
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKeyRequired"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NetworkPoolCreate" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NetworkPool" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: A pool with this id exists (`CONFLICT`), or a range overlaps (`CIDR_OVERLAP`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /admin/clusters/{clusterId}/network-pools/{poolId}:
+    parameters:
+      - $ref: "#/components/parameters/clusterId"
+      - $ref: "#/components/parameters/poolId"
+    patch:
+      operationId: patchNetworkPool
+      security: [{ session: [], csrf: [] }]
+      summary: Change a network pool's ranges or prefix lengths (Platform Admin)
+      description: |
+        A range added is checked like a new pool's. Only the database
+        changes: CIDRs are handed out by the API.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NetworkPoolPatch" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NetworkPool" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: A range overlaps (`CIDR_OVERLAP`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /admin/organizations/{orgId}/cluster-grants/{clusterId}/dedicated-nodes:
+    parameters:
+      - $ref: "#/components/parameters/adminOrgId"
+      - $ref: "#/components/parameters/clusterId"
+    put:
+      operationId: putDedicatedNodes
+      security: [{ session: [], csrf: [] }]
+      summary: Set the nodes an organization holds on a cluster (Platform Admin)
+      description: |
+        `nodes` is the whole set, under the organization's grant on the
+        cluster (404 without one). A new node must be a worker of the cluster
+        in no pool and dedicated to nobody; it starts `NotReady` until the
+        operator has checked it (M8). A node left out is revoked; a node kept
+        takes the system reserve given. Only the database changes in M5;
+        the audit event keeps before and after.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DedicatedNodesInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DedicatedNodeList" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: The organization is not Active (`ORG_NOT_ACTIVE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
   /admin/onboarding-policy:
     get:
       operationId: getOnboardingPolicy
@@ -1246,6 +1463,12 @@ components:
 
     clusterId:
       name: clusterId
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/PoolId" }
+
+    poolId:
+      name: poolId
       in: path
       required: true
       schema: { $ref: "#/components/schemas/PoolId" }
@@ -1662,6 +1885,189 @@ components:
           items: { $ref: "#/components/schemas/Operation" }
         nextCursor: { type: string }
 
+    NodeCapacity:
+      type: object
+      required: [cpu, memory, pods]
+      additionalProperties: false
+      properties:
+        cpu: { $ref: "#/components/schemas/Quantity" }
+        memory: { $ref: "#/components/schemas/Quantity" }
+        pods: { type: integer, minimum: 0, maximum: 100000 }
+
+    ClusterNode:
+      type: object
+      required: [name, kind, ready, schedulable, allocatable, observedAt]
+      properties:
+        name: { type: string }
+        kind: { type: string, enum: [ControlPlane, System, Worker] }
+        ready: { type: boolean }
+        schedulable: { type: boolean }
+        allocatable: { $ref: "#/components/schemas/NodeCapacity" }
+        sharedPoolId: { type: string }
+        dedicatedTo: { $ref: "#/components/schemas/OrganizationRef" }
+        observedAt: { type: string, format: date-time }
+
+    ClusterNodeList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ClusterNode" }
+
+    SharedPoolInput:
+      type: object
+      required: [name, allocationOvercommitRatio, systemReserve, nodes]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        allocationOvercommitRatio: { type: number, minimum: 1, maximum: 99.99, multipleOf: 0.01 }
+        systemReserve: { $ref: "#/components/schemas/NodeCapacity" }
+        nodes:
+          type: array
+          maxItems: 200
+          items: { type: string, maxLength: 253 }
+
+    SharedPoolCreate:
+      type: object
+      required: [id, name, allocationOvercommitRatio, systemReserve, nodes]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/PoolId" }
+        name: { type: string, minLength: 1, maxLength: 80 }
+        allocationOvercommitRatio: { type: number, minimum: 1, maximum: 99.99, multipleOf: 0.01 }
+        systemReserve: { $ref: "#/components/schemas/NodeCapacity" }
+        nodes:
+          type: array
+          maxItems: 200
+          items: { type: string, maxLength: 253 }
+
+    SharedPool:
+      type: object
+      required: [id, clusterId, name, allocationOvercommitRatio, systemReserve, nodes, capacity]
+      properties:
+        id: { type: string }
+        clusterId: { type: string }
+        name: { type: string }
+        allocationOvercommitRatio: { type: number }
+        systemReserve: { $ref: "#/components/schemas/NodeCapacity" }
+        nodes:
+          type: array
+          items: { type: string }
+        capacity:
+          type: object
+          description: "reservable = the nodes' allocatable less systemReserve per node; ceiling = ratio × reservable; allocated: what Shared Workspaces hold"
+          required: [reservable, ceiling, allocated]
+          properties:
+            reservable: { $ref: "#/components/schemas/NodeCapacity" }
+            ceiling: { $ref: "#/components/schemas/NodeCapacity" }
+            allocated: { $ref: "#/components/schemas/NodeCapacity" }
+
+    SharedPoolList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SharedPool" }
+
+    NetworkPoolCreate:
+      type: object
+      required: [id, cidrs, defaultPrefixLength, allowedPrefixLengths]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/PoolId" }
+        organizationId: { type: string, maxLength: 64, description: "Absent: a pool any organization's grant may list" }
+        cidrs:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { type: string, maxLength: 18 }
+        defaultPrefixLength: { type: integer, minimum: 8, maximum: 28 }
+        allowedPrefixLengths:
+          type: array
+          minItems: 1
+          maxItems: 21
+          items: { type: integer, minimum: 8, maximum: 28 }
+
+    NetworkPoolPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        cidrs:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { type: string, maxLength: 18 }
+        defaultPrefixLength: { type: integer, minimum: 8, maximum: 28 }
+        allowedPrefixLengths:
+          type: array
+          minItems: 1
+          maxItems: 21
+          items: { type: integer, minimum: 8, maximum: 28 }
+
+    NetworkPool:
+      type: object
+      required: [id, clusterId, cidrs, defaultPrefixLength, allowedPrefixLengths]
+      properties:
+        id: { type: string }
+        clusterId: { type: string }
+        organizationId: { type: string }
+        cidrs:
+          type: array
+          items: { type: string }
+        defaultPrefixLength: { type: integer }
+        allowedPrefixLengths:
+          type: array
+          items: { type: integer }
+
+    NetworkPoolList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/NetworkPool" }
+
+    DedicatedNodesInput:
+      type: object
+      required: [nodes]
+      additionalProperties: false
+      properties:
+        nodes:
+          type: array
+          maxItems: 200
+          items:
+            type: object
+            required: [name, systemReserve]
+            additionalProperties: false
+            properties:
+              name: { type: string, maxLength: 253 }
+              systemReserve: { $ref: "#/components/schemas/NodeCapacity" }
+
+    DedicatedNode:
+      type: object
+      required: [id, clusterId, name, allocatable, systemReserve, reservable, reserved, remaining, nodeState, capacityState]
+      properties:
+        id: { type: string }
+        clusterId: { type: string }
+        name: { type: string }
+        allocatable: { $ref: "#/components/schemas/NodeCapacity" }
+        systemReserve: { $ref: "#/components/schemas/NodeCapacity" }
+        reservable: { $ref: "#/components/schemas/NodeCapacity" }
+        reserved: { $ref: "#/components/schemas/NodeCapacity" }
+        remaining: { $ref: "#/components/schemas/NodeCapacity" }
+        nodeState: { type: string, enum: [Ready, NotReady, Cordoned] }
+        capacityState: { type: string, enum: [Available, PartiallyAllocated, FullyAllocated, Overcommitted] }
+
+    DedicatedNodeList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DedicatedNode" }
+
     AdminOrganizationCreate:
       type: object
       required: [slug, displayName, ownerEmail, entitlement, clusterGrant]
@@ -1683,6 +2089,10 @@ components:
         clusterGrants:
           type: array
           items: { $ref: "#/components/schemas/ClusterGrant" }
+        dedicatedNodes:
+          type: array
+          description: The nodes the organization holds, on every cluster.
+          items: { $ref: "#/components/schemas/DedicatedNode" }
         usage: { $ref: "#/components/schemas/OrganizationUsage" }
 
     AdminUser:

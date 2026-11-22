@@ -1,0 +1,36 @@
+{
+  "request": {
+    "id": "onboarding-pod-network-2",
+    "cidrs": [
+      "10.240.64.0/18"
+    ],
+    "defaultPrefixLength": 24,
+    "allowedPrefixLengths": [
+      24
+    ]
+  },
+  "responses": {
+    "201": {
+      "id": "onboarding-pod-network-2",
+      "clusterId": "cluster-a",
+      "cidrs": [
+        "10.240.64.0/18"
+      ],
+      "defaultPrefixLength": 24,
+      "allowedPrefixLengths": [
+        24
+      ]
+    },
+    "409": {
+      "code": "CIDR_OVERLAP",
+      "message": "10.240.32.0/19 overlaps 10.240.0.0/18 of network pool onboarding-pod-network",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K",
+      "details": {
+        "field": "cidrs",
+        "cidr": "10.240.32.0/19",
+        "conflictsWith": "10.240.0.0/18",
+        "in": "network pool onboarding-pod-network"
+      }
+    }
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "request": {
+    "id": "gpu",
+    "name": "GPU",
+    "allocationOvercommitRatio": 1.5,
+    "systemReserve": {
+      "cpu": "500m",
+      "memory": "1536Mi",
+      "pods": 10
+    },
+    "nodes": []
+  },
+  "responses": {
+    "201": {
+      "id": "gpu",
+      "clusterId": "cluster-a",
+      "name": "GPU",
+      "allocationOvercommitRatio": 1.5,
+      "systemReserve": {
+        "cpu": "500m",
+        "memory": "1536Mi",
+        "pods": 10
+      },
+      "nodes": [],
+      "capacity": {
+        "reservable": {
+          "cpu": "0",
+          "memory": "0",
+          "pods": 0
+        },
+        "ceiling": {
+          "cpu": "0",
+          "memory": "0",
+          "pods": 0
+        },
+        "allocated": {
+          "cpu": "0",
+          "memory": "0",
+          "pods": 0
+        }
+      }
+    },
+    "400": {
+      "code": "VALIDATION_FAILED",
+      "message": "id: \"system\" is the label of the system pool",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K",
+      "details": {
+        "field": "id"
+      }
+    }
+  }
+}

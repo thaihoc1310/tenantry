@@ -58,6 +58,28 @@ if [[ -z "$(kubectl -n keycloak get secret keycloak-realm -o jsonpath='{.data.TE
 fi
 copy_secret_key keycloak keycloak-realm TENANTRY_SYNC_CLIENT_SECRET tenantry-system tenantry-keycloak-sync client-secret
 
+# ---- what the seed writes once -------------------------------------------
+# The ranges the cluster already uses (kubeadm's Pod and Service subnets) and
+# its nodes, which the seed writes only if the database does not know them
+# yet: from M6 the operator reports nodes (PlatformNodeInventory). A node's
+# pool is the label 10-nodes.sh gave it.
+reserved_cidrs="$(kubectl -n kube-system get configmap kubeadm-config -o jsonpath='{.data.ClusterConfiguration}' |
+  python3 -c 'import json, re, sys
+c = sys.stdin.read()
+print(json.dumps([m.group(2) for m in re.finditer(r"(podSubnet|serviceSubnet): *(\S+)", c)]))')"
+seed_nodes="$(kubectl get nodes -o json | python3 -c 'import json, sys
+out = []
+for n in json.load(sys.stdin)["items"]:
+    name, labels, a = n["metadata"]["name"], n["metadata"]["labels"], n["status"]["allocatable"]
+    pool = labels.get("tenantry.io/compute-pool", "")
+    kind = "ControlPlane" if "node-role.kubernetes.io/control-plane" in labels else "System" if pool == "system" else "Worker"
+    ready = any(c["type"] == "Ready" and c["status"] == "True" for c in n["status"]["conditions"])
+    schedulable = not n["spec"].get("unschedulable", False)
+    fields = dict(name=name, kind=kind, cpu=a["cpu"], memory=a["memory"], pods=a["pods"],
+                  ready=str(ready).lower(), schedulable=str(schedulable).lower(), pool=pool if kind == "Worker" else "")
+    out.append(",".join(k + "=" + v for k, v in fields.items()))
+print(json.dumps(out))')"
+
 # ---- charts ---------------------------------------------------------------
 # The backend chart migrates before the new Pods start (pre-upgrade hook)
 # and seeds after (post-upgrade hook).
@@ -70,6 +92,8 @@ helm upgrade --install tenantry "${CLUSTER_DIR}/../charts/tenantry-backend" \
   --set seed.proxyEndpoint="https://${KUBE_HOST}" \
   --set seed.consoleURL="https://${CONSOLE_HOST}" \
   --set seed.appsDomain="${APPS_DOMAIN}" \
+  --set-json seed.reservedCidrs="${reserved_cidrs}" \
+  --set-json seed.nodes="${seed_nodes}" \
   --set worker.groupsync.keycloak.url="http://keycloak-http.keycloak.svc" \
   --wait --timeout 5m
 

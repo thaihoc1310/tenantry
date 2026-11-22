@@ -1,0 +1,24 @@
+{
+  "responses": {
+    "200": {
+      "items": [
+        {
+          "id": "onboarding-pod-network",
+          "clusterId": "cluster-a",
+          "cidrs": [
+            "10.240.0.0/18"
+          ],
+          "defaultPrefixLength": 24,
+          "allowedPrefixLengths": [
+            24
+          ]
+        }
+      ]
+    },
+    "404": {
+      "code": "NOT_FOUND",
+      "message": "cluster not found",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K"
+    }
+  }
+}

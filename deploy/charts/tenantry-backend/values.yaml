@@ -81,3 +81,11 @@ seed:
   appsDomain: ""      # tenant Routes: <name>-<workspace>.<appsDomain>
   networkCIDR: 10.240.0.0/18
   storageClass: standard
+  # Ranges the cluster already uses, which network pools may not overlap:
+  # the Pod CIDR (Calico's default pool) and the Service CIDR.
+  reservedCidrs: []
+  # The cluster's nodes, written once (from M6 the operator reports them),
+  # each as name=,kind=ControlPlane|System|Worker,cpu=,memory=,pods=,
+  # ready=,schedulable=,pool= (deploy/cluster/deploy.sh reads them from the
+  # cluster).
+  nodes: []

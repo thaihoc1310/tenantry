@@ -1,0 +1,55 @@
+{
+  "request": {
+    "name": "Shared general",
+    "allocationOvercommitRatio": 3,
+    "systemReserve": {
+      "cpu": "500m",
+      "memory": "1536Mi",
+      "pods": 10
+    },
+    "nodes": [
+      "fdp-k8s-wk2"
+    ]
+  },
+  "responses": {
+    "200": {
+      "id": "shared-general",
+      "clusterId": "cluster-a",
+      "name": "Shared general",
+      "allocationOvercommitRatio": 3,
+      "systemReserve": {
+        "cpu": "500m",
+        "memory": "1536Mi",
+        "pods": 10
+      },
+      "nodes": [
+        "fdp-k8s-wk2"
+      ],
+      "capacity": {
+        "reservable": {
+          "cpu": "2500m",
+          "memory": "10Gi",
+          "pods": 100
+        },
+        "ceiling": {
+          "cpu": "7500m",
+          "memory": "30Gi",
+          "pods": 300
+        },
+        "allocated": {
+          "cpu": "0",
+          "memory": "0",
+          "pods": 0
+        }
+      }
+    },
+    "400": {
+      "code": "VALIDATION_FAILED",
+      "message": "nodes: fdp-k8s-wk3 is dedicated to an organization",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K",
+      "details": {
+        "field": "nodes"
+      }
+    }
+  }
+}

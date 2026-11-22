@@ -1,6 +1,6 @@
 {{- if .Values.seed.enabled }}
-# The data an installation starts from: the cluster, its pools and the
-# onboarding policy (backend/cmd/tenantry-seed). Runs after every install and
+# The data an installation starts from: the cluster with its reserved ranges
+# and nodes, its pools and the onboarding policy (backend/cmd/tenantry-seed). Runs after every install and
 # upgrade; existing rows are kept as they are, so a re-run changes nothing
 # and never undoes an Admin's change.
 apiVersion: batch/v1
@@ -42,6 +42,12 @@ spec:
             - --apps-domain={{ required "seed.appsDomain is required" .appsDomain }}
             - --network-cidr={{ .networkCIDR }}
             - --storage-class={{ .storageClass }}
+            {{- with .reservedCidrs }}
+            - --reserved-cidrs={{ join "," . }}
+            {{- end }}
+            {{- range .nodes }}
+            - --node={{ . }}
+            {{- end }}
             {{- end }}
           env:
             {{- include "tenantry.env" . | nindent 12 }}

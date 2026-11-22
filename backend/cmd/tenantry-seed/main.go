@@ -1,9 +1,15 @@
 // Command tenantry-seed puts in the data an installation starts from
-// (IMPLEMENTATION-PLAN §10): the cluster, its shared pool, the shared network
-// pool and the onboarding policy approvals propose (PRODUCT-PLAN §5.2.1).
+// (IMPLEMENTATION-PLAN §10): the cluster with the ranges it already uses, its
+// nodes, its shared pool, the shared network pool and the onboarding policy
+// approvals propose (PRODUCT-PLAN §5.2.1).
 //
 //	tenantry-seed --proxy-endpoint https://kube-a.example.com \
-//	    --console-url https://console-a.example.com --apps-domain mvp.example.com
+//	    --console-url https://console-a.example.com --apps-domain mvp.example.com \
+//	    --reserved-cidrs 192.168.0.0/16,10.96.0.0/12 \
+//	    --node name=wk2,kind=Worker,cpu=3,memory=11776Mi,pods=110,ready=true,schedulable=true,pool=shared-general
+//
+// Nodes are written only if the cluster does not know them: from M6 the
+// operator reports them (PlatformNodeInventory).
 //
 // Running it again changes nothing: existing rows are kept as they are, so
 // it never undoes what an Admin has changed since.
@@ -19,10 +25,13 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/config"
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi/oapi"
@@ -34,6 +43,63 @@ type options struct {
 	proxyEndpoint, consoleURL, appsDomain string
 	networkCIDR                           string
 	storageClass                          string
+	reservedCIDRs                         []netip.Prefix
+	nodes                                 []node
+}
+
+// node is one node of the cluster as --node gives it.
+type node struct {
+	name, kind, pool string
+	ready, schedule  bool
+	cpuMilli, memory int64
+	pods             int32
+}
+
+// parseNode reads name=…,kind=…,cpu=…,memory=…,pods=…,ready=…,schedulable=…,pool=…
+func parseNode(v string) (node, error) {
+	n := node{kind: "Worker"}
+	for kv := range strings.SplitSeq(v, ",") {
+		k, val, ok := strings.Cut(kv, "=")
+		if !ok {
+			return n, fmt.Errorf("--node %q: want key=value pairs", v)
+		}
+		var err error
+		switch k {
+		case "name":
+			n.name = val
+		case "kind":
+			n.kind = val
+		case "pool":
+			n.pool = val
+		case "ready":
+			n.ready, err = strconv.ParseBool(val)
+		case "schedulable":
+			n.schedule, err = strconv.ParseBool(val)
+		case "cpu":
+			var q resource.Quantity
+			if q, err = resource.ParseQuantity(val); err == nil {
+				n.cpuMilli = q.MilliValue()
+			}
+		case "memory":
+			var q resource.Quantity
+			if q, err = resource.ParseQuantity(val); err == nil {
+				n.memory = q.Value()
+			}
+		case "pods":
+			var p int64
+			p, err = strconv.ParseInt(val, 10, 32)
+			n.pods = int32(p)
+		default:
+			return n, fmt.Errorf("--node %q: unknown key %q", v, k)
+		}
+		if err != nil {
+			return n, fmt.Errorf("--node %q: %s: %w", v, k, err)
+		}
+	}
+	if n.name == "" {
+		return n, fmt.Errorf("--node %q: name is required", v)
+	}
+	return n, nil
 }
 
 func main() {
@@ -53,6 +119,24 @@ func run(args []string) error {
 	fs.StringVar(&o.appsDomain, "apps-domain", "", "domain of tenant Routes (required)")
 	fs.StringVar(&o.networkCIDR, "network-cidr", "10.240.0.0/18", "address space of the shared network pool: the first quarter of the tenant supernet 10.240.0.0/16")
 	fs.StringVar(&o.storageClass, "storage-class", "standard", "StorageClass the onboarding grant allows")
+	fs.Func("reserved-cidrs", "comma-separated ranges the cluster already uses (Pod, Service CIDRs)", func(v string) error {
+		for c := range strings.SplitSeq(v, ",") {
+			if c = strings.TrimSpace(c); c == "" {
+				continue
+			}
+			p, err := netip.ParsePrefix(c)
+			if err != nil || p != p.Masked() {
+				return fmt.Errorf("%q is not a network address", c)
+			}
+			o.reservedCIDRs = append(o.reservedCIDRs, p)
+		}
+		return nil
+	})
+	fs.Func("node", "a node of the cluster (repeatable): name=,kind=,cpu=,memory=,pods=,ready=,schedulable=,pool=", func(v string) error {
+		n, err := parseNode(v)
+		o.nodes = append(o.nodes, n)
+		return err
+	})
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -91,6 +175,13 @@ func (o options) check() (netip.Prefix, error) {
 	}
 	return cidr, errors.Join(errs...)
 }
+
+// The per-node system reserve the shared pool starts with: what kubelet,
+// the CNI and the node's daemons keep (architecture/05 §4).
+var poolReserve = struct {
+	cpuMilli, memory int64
+	pods             int32
+}{500, 1536 << 20, 10}
 
 const (
 	sharedPoolID    = "shared-general"
@@ -131,6 +222,32 @@ func seed(ctx context.Context, q *store.Queries, o options, cidr netip.Prefix, l
 	})
 	if err := report("shared pool "+sharedPoolID, n, err); err != nil {
 		return err
+	}
+	n, err = q.SeedPoolSystemReserve(ctx, store.SeedPoolSystemReserveParams{
+		ID: sharedPoolID, SystemReserveCpuMilli: poolReserve.cpuMilli, SystemReserveMemoryBytes: poolReserve.memory,
+		SystemReservePods: poolReserve.pods,
+	})
+	if err := report("system reserve of "+sharedPoolID, n, err); err != nil {
+		return err
+	}
+	if len(o.reservedCIDRs) > 0 {
+		n, err = q.SeedReservedCIDRs(ctx, store.SeedReservedCIDRsParams{ID: o.clusterID, ReservedCidrs: o.reservedCIDRs})
+		if err := report("reserved ranges of "+o.clusterID, n, err); err != nil {
+			return err
+		}
+	}
+	for _, nd := range o.nodes {
+		var pool *string
+		if nd.pool != "" {
+			pool = &nd.pool
+		}
+		n, err = q.SeedClusterNode(ctx, store.SeedClusterNodeParams{
+			ClusterID: o.clusterID, NodeName: nd.name, Kind: nd.kind, Ready: nd.ready, Schedulable: nd.schedule,
+			AllocatableCpuMilli: nd.cpuMilli, AllocatableMemoryBytes: nd.memory, AllocatablePods: nd.pods, SharedPoolID: pool,
+		})
+		if err := report("node "+nd.name, n, err); err != nil {
+			return err
+		}
 	}
 
 	n, err = q.SeedNetworkPool(ctx, store.SeedNetworkPoolParams{

@@ -1,0 +1,33 @@
+{
+  "request": {
+    "cidrs": [
+      "10.240.0.0/18",
+      "10.240.128.0/18"
+    ]
+  },
+  "responses": {
+    "200": {
+      "id": "onboarding-pod-network",
+      "clusterId": "cluster-a",
+      "cidrs": [
+        "10.240.0.0/18",
+        "10.240.128.0/18"
+      ],
+      "defaultPrefixLength": 24,
+      "allowedPrefixLengths": [
+        24
+      ]
+    },
+    "409": {
+      "code": "CIDR_OVERLAP",
+      "message": "192.168.5.0/24 overlaps 192.168.0.0/16 of the cluster's own ranges",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K",
+      "details": {
+        "field": "cidrs",
+        "cidr": "192.168.5.0/24",
+        "conflictsWith": "192.168.0.0/16",
+        "in": "the cluster's own ranges"
+      }
+    }
+  }
+}
