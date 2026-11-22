@@ -1,0 +1,10 @@
+{{- /*
+The four tenantry.io CRDs, generated into operator/config/crd/bases and
+copied here by make operator-generate. They sit in templates/, not crds/, so
+an upgrade updates them too. Uninstalling the chart keeps them: deleting a CRD
+deletes every PlatformWorkspace with it, and their finalizers would wait for
+an operator that is gone.
+*/}}
+{{- range $path, $_ := .Files.Glob "files/crds/*.yaml" }}
+{{ $.Files.Get $path | replace "  annotations:\n" "  annotations:\n    helm.sh/resource-policy: keep\n" }}
+{{- end }}

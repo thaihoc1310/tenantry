@@ -1,0 +1,17 @@
+# The operator's image (deploy/Dockerfile.operator).
+image:
+  repository: tenantry/operator
+  tag: ""            # defaults to the chart appVersion
+  pullPolicy: IfNotPresent
+
+# Log level of the operator: debug, info or error.
+logLevel: info
+
+# Where the operator runs. Empty: any node. A cluster with a system pool sets
+# its label and taint here.
+nodeSelector: {}
+tolerations: []
+
+resources:
+  requests: { cpu: 50m, memory: 64Mi }
+  limits: { memory: 256Mi }

@@ -41,3 +41,21 @@ jobs:
       - uses: actions/checkout@v4
       - run: make chart-lint
       - run: make image
+  operator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: operator/go.mod
+          cache-dependency-path: operator/go.sum
+      - name: generated code, CRDs and chart match the Go types
+        run: make operator-generate && git diff --exit-code
+      - run: make operator-fmt-check
+      - run: make operator-vet
+      - uses: golangci/golangci-lint-action@v6
+        with: { working-directory: operator, args: --timeout=5m }
+      - run: make operator-test
+      - run: make operator-build
+      - run: make operator-chart-lint
+      - run: make operator-image

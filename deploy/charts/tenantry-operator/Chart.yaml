@@ -1,0 +1,6 @@
+apiVersion: v2
+name: tenantry-operator
+description: Tenantry Workspace Operator, its four tenantry.io CRDs and the cluster's PlatformNodeInventory
+type: application
+version: 0.1.0
+appVersion: dev
