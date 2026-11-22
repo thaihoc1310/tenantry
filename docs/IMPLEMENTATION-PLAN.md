@@ -255,11 +255,11 @@ Finalizer `tenantry.io/workspace` làm phần trong Cluster của delete (spec �
 2. bỏ `cordoned` trên Tenant: ở lab cũ, Capsule cordon chặn cả ghi của controller (kiểm lại trên 0.15.x ở M6);
 3. xóa Namespace của Tenant (cả portal và kubectl) → đợi biến mất (PVC và Pod mất theo Namespace); quá ngưỡng 10 phút → condition `Deleting=False, reason=BlockedByFinalizer` kèm tên object; worker map thành Operation `Blocked`;
 4. xóa tường minh GlobalTenantResource, Tenant → đợi biến mất;
-5. IPPool (từ M9): đợi không còn `WorkloadEndpoint` và không còn địa chỉ đang cấp trong CIDR → xóa IPPool qua API `projectcalico.org/v3` (để Calico nhả block affinity) → đợi `IPAMBlock` của CIDR biến mất (kiểm trên lab); Lab có Calico API server (`v3.projectcalico.org`, Service `calico-system/calico-api`), nên xóa qua `projectcalico.org/v3` được.
+5. IPPool (từ M9): đợi không còn địa chỉ đang cấp trong các `IPAMBlock` thuộc CIDR (Calico v3.32 không serve `workloadendpoints` qua API server) → xóa IPPool qua API `projectcalico.org/v3` (để Calico nhả block affinity) → đợi `IPAMBlock` của CIDR biến mất (kiểm trên lab); Lab có Calico API server (`v3.projectcalico.org`, Service `calico-system/calico-api`), nên xóa qua `projectcalico.org/v3` được.
 6. Dedicated (từ M8): gỡ membership label `workspaces.tenantry.io/<ws-id>` khỏi node (giữ org label/taint);
 7. gỡ finalizer. Worker xóa CR với propagation `Background`; thấy CR mất thì trong một transaction: reservation `Released`, CIDR `Quarantined` (từ M9), Workspace `Deleted`.
 
-`:force` của Platform Admin = worker patch annotation `tenantry.io/force-delete=true`; controller bỏ qua chờ finalizer PVC ở bước 3 và ghi event (audit ở API).
+`:force` của Platform Admin = worker patch annotation `tenantry.io/force-delete=true`; controller bỏ qua chờ finalizer PVC ở bước 3 và ghi event (audit ở API); không bỏ qua bước 5, IP rò gỡ tay theo `architecture/05-network-and-scheduling.md` mục 5.
 
 ### 4.4 Quan sát Namespace
 
@@ -637,7 +637,7 @@ Trong một feature: trang (`*Page.vue`), component riêng của feature, và m�
   2. Lock `network_pools` trong transaction reservation; error `CIDR_OUTSIDE_ALLOWED_POOL`, `CIDR_OVERLAP`. Guard sửa grant của spec §5.5: không gỡ NetworkPool còn Workspace giữ CIDR.
   3. Sub-reconciler `network`: Calico IPPool (nodeSelector `all()` nếu M8 chưa xong) + annotation `cni.projectcalico.org/ipv4pools` của Namespace là metadata managed trong `Tenant.spec.rules[]` (thay rule deny của M8; tenant sửa thì Capsule đặt lại), `ipv6pools` vẫn bị deny; `NetworkReady`.
   4. Baseline NetworkPolicy qua `GlobalTenantResource` (spec §7.4) gồm allow từ namespace `ingress-system`, deny metadata endpoint.
-  5. ValidatingAdmissionPolicy `tenantry-tenant-pod-network` (chart operator): trong Namespace tenant, từ chối Pod do tenant tạo mang annotation `cni.projectcalico.org/ipv4pools`, `ipv6pools`, `ipAddrs`, `ipAddrsNoIpam`, `floatingIPs`.
+  5. ValidatingAdmissionPolicy `tenantry-tenant-pod-network` (chart operator): trong Namespace tenant, từ chối Pod do tenant tạo mang annotation `cni.projectcalico.org/ipv4pools`, `ipv6pools`, `ipAddrs`, `ipAddrsNoIpam`, `floatingIPs`. VAP `tenantry-tenant-network-ready`: từ chối tạo Pod trong Namespace tenant mang label managed `tenantry.io/network=true` (chỉ khi có `spec.network`) mà chưa có NetworkPolicy `tenant-default-deny`; lỗi là `422` message cố định (05 §6).
   6. Finalizer bước IPPool (mục 4.3 bước 5); worker đặt `Quarantined` (mặc định 10 phút), vòng `housekeeping` chuyển `Released`.
   7. `GET /organizations/{orgId}/network-pools/{poolId}/availability` (chỉ pool nằm trong grant của Organization); UI Network tab + Advanced trong wizard.
 - **Đầu ra kiểm chứng**: Solar và Water nhận /24 khác nhau từ pool `onboarding-pod-network` (`10.240.0.0/18`); Pod IP đúng CIDR; Solar không ping/curl Water; cùng Workspace khác Namespace gọi được; xóa Workspace → CIDR `Quarantined` rồi `Released`, cấp lại được.

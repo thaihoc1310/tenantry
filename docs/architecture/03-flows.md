@@ -734,7 +734,7 @@ sequenceDiagram
 - Bước 7: không có Secret TLS nào được replicate vào Namespace của tenant; cert wildcard chỉ nằm ở namespace của platform (`05-network-and-scheduling.md` mục 7).
 - Xóa Namespace `source=kubectl` từ portal: API thêm tên đầy đủ vào `spec.namespacesToDelete`, controller xóa rồi dọn; Namespace có PVC yêu cầu gõ tên [4.5].
 - Bước 10: Capsule gắn annotation IPPool từ metadata của Tenant (từ M9); controller tự gắn nếu thấy Namespace của Tenant thiếu annotation (Namespace tạo bằng kubectl khi Capsule chưa kịp), test ở M9.
-- Nếu Namespace bị xóa bằng kubectl, controller gỡ khỏi `status.namespaces`; với `source=portal`, API bỏ tên khỏi `spec.namespaces` và cảnh báo, controller **không** tạo lại (`04-state-machines.md` mục 9.2).
+- Nếu Namespace bị xóa bằng kubectl: `source=kubectl` thì controller gỡ khỏi `status.namespaces` và row thành `Deleted`; `source=portal` thì Namespace vẫn trong `spec.namespaces` nên controller tạo lại ngay (rỗng), muốn bỏ hẳn phải xóa từ portal (`04-state-machines.md` mục 9.2).
 
 ---
 
@@ -1107,7 +1107,7 @@ sequenceDiagram
     end
   end
   CTRL->>CAP: DELETE GlobalTenantResource, Tenant acme-water, đợi biến mất
-  CTRL->>CAL: Đợi không còn WorkloadEndpoint và IP trong CIDR, DELETE IPPool, đợi IPAMBlock hết (từ M9)
+  CTRL->>CAL: Đợi không còn địa chỉ đang cấp trong IPAMBlock của CIDR, DELETE IPPool, đợi IPAMBlock hết (từ M9)
   CTRL->>K8S: Gỡ label workspaces.tenantry.io/ws-01jxyz trên worker-a-05
   Note over CTRL,K8S: Giữ dedicated-org label/taint và label của Green
   CTRL->>K8S: Gỡ finalizer CR, CR biến mất
@@ -1126,7 +1126,7 @@ sequenceDiagram
 - Bước 10 và 35–36: reservation và CIDR sang `Releasing` ngay khi nhận lệnh và vẫn tính vào capacity; chỉ `Released`/`Quarantined` trong transaction của worker khi CR đã biến mất (`04-state-machines.md` mục 3, 4). ClusterGrant không có row reservation: Workspace `Deleted` ra khỏi `SUM` của grant ở bước 37 (`02-data-model.md` mục 4). Green vẫn chạy, org label/taint không đổi [6.3][6.4].
 - Bước 11: tập binding thay đổi nên Group Sync tính lại `tenantry:tenant-users` cho member của các group được bind.
 - Bước 20–29: `Blocked` là condition `Deleting=False` reason `BlockedByFinalizer` trên CR, worker map thành Operation `Blocked`. OrgOwner/OrgAdmin retry (`Blocked → Running`, controller báo lại nếu vẫn kẹt); `:force` chỉ dành cho Platform Admin và được audit [16.5]. Force đi bằng annotation, không bằng `spec`, để không sinh generation mới.
-- Bước 17–33: thứ tự bắt buộc (`IMPLEMENTATION-PLAN.md` mục 4.3): gỡ quyền tenant → bỏ `cordoned` (cordon của Capsule chặn cả lệnh ghi của operator; kiểm lại trên 0.15.x ở M6) → xóa Namespace và đợi → xóa Tenant và đợi → Calico sạch rồi xóa IPPool → gỡ membership label → gỡ finalizer. Không release CIDR khi còn WorkloadEndpoint [7.4][7.5]. CR là cluster-scoped; ownerReference chỉ là lưới an toàn.
+- Bước 17–33: thứ tự bắt buộc (`IMPLEMENTATION-PLAN.md` mục 4.3): gỡ quyền tenant → bỏ `cordoned` (cordon của Capsule chặn cả lệnh ghi của operator; kiểm lại trên 0.15.x ở M6) → xóa Namespace và đợi → xóa Tenant và đợi → Calico sạch rồi xóa IPPool → gỡ membership label → gỡ finalizer. Không release CIDR khi Calico còn cấp địa chỉ trong CIDR; `:force` không bỏ qua bước này [7.4][7.5]. CR là cluster-scoped; ownerReference chỉ là lưới an toàn.
 - Bước 36: CIDR qua `Quarantined` rồi mới `Released`; trong lúc đó `k8s_name` cũng chưa dùng lại được [17.4]. Độ dài quarantine cấu hình được (`04-state-machines.md` mục 4). Workspace tạo trước M9 không có CIDR nên không qua quarantine, `k8s_name` dùng lại ngay khi `Deleted`. Row `workspaces` bị xóa hẳn khi CIDR `Released`; lịch sử nằm ở audit (`02-data-model.md`).
 - Worker chết giữa bước 35–37: transaction DB atomic; khi restart, worker thấy CR đã biến mất và Workspace còn `Deleting` → chạy lại bước 35–37 (xem mục 13b).
 

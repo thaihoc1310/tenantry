@@ -45,6 +45,7 @@
 33. **Quota của Workspace là một quota chung cho mọi Namespace** (`Tenant.spec.rules[].quota[]`, Capsule sinh `GlobalResourceQuota` và chặn ở admission), không chia trước theo Namespace; đã đo trên lab là không vượt trần kể cả khi tạo Pod đồng thời (5.4).
 34. **Gỡ user khỏi group không còn logout user trên Keycloak**: Keycloak chạy lại group mapper khi refresh (đã kiểm ở M4), nên token kế tiếp đã mất group; bỏ logout để user không bị đăng xuất khỏi mọi nơi (9.3; thay cho điểm 3).
 35. **Annotation của Namespace giữ bằng metadata managed của Capsule, không dùng `forbiddenAnnotations`**: đã thử trên lab, `forbiddenAnnotations` từ chối cả annotation Capsule tự gắn nên Namespace Dedicated không tạo được. Namespace Shared có `defaultTolerations` rỗng và whitelist chỉ gồm các taint `node.kubernetes.io/*`; `ComputeReady` của Shared chỉ cần pool có node Ready; node dedicated bị cordon vẫn giữ label/taint (6.4, 7.3, 18).
+36. **Pod chỉ được tạo khi Namespace đã có NetworkPolicy baseline** (VAP `tenantry-tenant-network-ready`): replication tới Namespace mới trễ 4–14s, đo ở M9; xóa IPPool đếm địa chỉ trong IPAMBlock vì Calico không serve WorkloadEndpoint, `:force` không bỏ qua bước này (7.4, 17.4).
 
 ### v0.6 → v0.7
 
@@ -765,7 +766,7 @@ Mỗi Namespace được replicate policy:
 - deny truy cập metadata endpoint;
 - không tin label mà tenant có thể tự sửa.
 
-Baseline này có từ M9 (cùng IPPool). Workspace tạo ở M6–M8 chưa có CIDR riêng và chưa được cô lập mạng.
+Baseline này có từ M9 (cùng IPPool). Workspace tạo ở M6–M8 chưa có CIDR riêng và chưa được cô lập mạng. Pod chỉ được tạo khi Namespace đã có `tenant-default-deny` (VAP `tenantry-tenant-network-ready`), nên Namespace mới, kể cả tạo bằng kubectl, không có khoảng Pod chạy chưa cô lập.
 
 Test bắt buộc:
 
@@ -1621,7 +1622,7 @@ Chính sách dữ liệu: **delete là xóa ngay và xóa hết**, gồm Namespa
 5. bỏ `cordoned` trên Tenant nếu đang bật (ở lab cũ, cordon của Capsule chặn cả lệnh ghi của controller; kiểm lại trên Capsule 0.15.x ở M6);
 6. xóa mọi Namespace của Tenant (cả nguồn portal và kubectl) và đợi chúng biến mất; PVC bị xóa theo Namespace. Kẹt quá ngưỡng thì condition `Deleting=False` reason `BlockedByFinalizer` kèm object đang giữ, Operation `Blocked`; OrgOwner/OrgAdmin chỉ có thể chờ hoặc `:retry`, **chỉ Platform Admin được `:force`** (xóa finalizer) và hành động này được audit;
 7. xóa GlobalTenantResource và Tenant một cách tường minh rồi đợi xong — owner reference chỉ là lưới an toàn;
-8. (từ M9) IPPool: đợi không còn WorkloadEndpoint và không còn địa chỉ nào đang dùng trong CIDR, xóa IPPool qua API `projectcalico.org/v3`, đợi các IPAMBlock của nó biến mất;
+8. (từ M9) IPPool: đợi không còn địa chỉ nào đang cấp trong các IPAMBlock thuộc CIDR (`:force` không bỏ qua bước này), xóa IPPool qua API `projectcalico.org/v3`, đợi các IPAMBlock của nó biến mất;
 9. (Dedicated, từ M8) gỡ membership label `workspaces.tenantry.io/<ws-id>` khỏi node; giữ label/taint Organization và label của Workspace khác;
 10. gỡ finalizer, CR biến mất;
 11. worker thấy CR mất, trong một transaction: NodeReservation `Released` (remaining của node tăng lại), NetworkAllocation `Quarantined` (từ M9), Workspace `Deleted`, Operation `Succeeded`, audit. Phần giữ chỗ trên ClusterGrant tự giảm vì Workspace `Deleted` không còn nằm trong `SUM`;
@@ -1646,7 +1647,7 @@ Không silently force-delete PVC/finalizer từ phía user.
 | Shared pool membership | CRD phụ `PlatformSharedPool` → operator gắn/gỡ label node `tenantry.io/compute-pool=<pool-id>` theo `spec.nodes` (trước M6: script `deploy/cluster/10-nodes.sh` gắn tạm) | M6 |
 | Shared compute | Tenant nodeSelector tới shared pool (annotation `PodNodeSelector` trên Namespace) | M8 |
 | Dedicated node selection | NodeReservation + org label/taint (`PlatformNodeGrant`) + Workspace membership label + Namespace annotation `PodNodeSelector` và `PodTolerationRestriction` (`defaultTolerations`, `tolerationsWhitelist` gồm cả `node.kubernetes.io/*`); VAP chỉ cho SA `tenantry-operator` đổi label/taint `tenantry.io/*`, `workspaces.tenantry.io/*` trên Node | M8 |
-| NetworkAllocation | Calico IPPool + Namespace annotation qua `Tenant.namespaceOptions.additionalMetadata`; annotation Calico và scheduler của Namespace là metadata managed trong `Tenant.spec.rules[]`, `ipv6pools` bị deny; VAP `tenantry-tenant-pod-network` chặn Pod của tenant mang annotation Calico (`ipv4pools`, `ipv6pools`, `ipAddrs`, `ipAddrsNoIpam`, `floatingIPs`) | M9 |
+| NetworkAllocation | Calico IPPool (`blockSize` = max(26, prefix)); annotation Calico và scheduler của Namespace là metadata managed trong `Tenant.spec.rules[]`, `ipv6pools` bị deny; NetworkPolicy baseline qua `GlobalTenantResource`; VAP `tenantry-tenant-pod-network` chặn Pod của tenant mang annotation Calico (`ipv4pools`, `ipv6pools`, `ipAddrs`, `ipAddrsNoIpam`, `floatingIPs`); VAP `tenantry-tenant-network-ready` chặn tạo Pod khi Namespace chưa có `tenant-default-deny` | M9 |
 | Network baseline | GlobalTenantResource NetworkPolicy, thuộc sub-reconciler `network` | M9 |
 | Storage allow-list | Capsule StorageClass allowed list (`Tenant.spec.storageClasses.allowed`) | M6 |
 | Route (`spec.routes`) | Ingress do controller dựng trong Namespace của tenant; ValidatingAdmissionPolicy `tenantry-tenant-ingress-lockdown` chặn Ingress và tài nguyên cert-manager **chỉ với caller `oidc:`** (namespace controller và garbage collector vẫn xóa được Ingress khi xóa Namespace) | M11 |

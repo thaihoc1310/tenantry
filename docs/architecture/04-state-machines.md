@@ -230,7 +230,7 @@ stateDiagram-v2
 | `[*]` | IPAM trong transaction tạo Workspace: pool thuộc grant và đúng Cluster; prefix ∈ `allowedPrefixLengths` (mặc định `defaultPrefixLength`); không overlap `clusters.reserved_cidrs` (Pod CIDR mặc định, Service CIDR, Node CIDR) và allocation khác (mọi state trừ `Released`) trong Cluster; còn đủ địa chỉ | `Allocated` | Row `network_allocations` (workspace_id, cluster_id, pool_id, CIDR); exclusion constraint chống race; CR `spec.network.cidr` |
 | `Allocated` | Workspace Controller tạo IPPool `assignmentMode: Manual`, Namespace annotation | (giữ `Allocated`) | Condition `NetworkReady` True |
 | `Allocated` | Transaction DELETE Workspace (mục 1.1) | `Releasing` | CIDR vẫn bị coi là chiếm; không thể cấp lại |
-| `Releasing` | Worker thấy CR biến mất. Trước đó finalizer đã chờ không còn WorkloadEndpoint và không còn địa chỉ đang cấp trong CIDR, xóa IPPool qua `projectcalico.org/v3` và chờ IPAMBlock của nó biến mất (kiểm chứng trên lab) | `Quarantined` | Cùng transaction đưa Workspace sang `Deleted`; `quarantine_until = now + T`, T cấu hình được, mặc định 10 phút; audit |
+| `Releasing` | Worker thấy CR biến mất. Trước đó finalizer đã chờ không còn địa chỉ đang cấp trong các IPAMBlock thuộc CIDR, xóa IPPool qua `projectcalico.org/v3` và chờ IPAMBlock của nó biến mất (kiểm chứng trên lab) | `Quarantined` | Cùng transaction đưa Workspace sang `Deleted`; `quarantine_until = now + T`, T cấu hình được, mặc định 10 phút; audit |
 | `Quarantined` | Vòng `housekeeping` thấy `quarantine_until` đã qua | `Released` | CIDR và `k8s_name` của Workspace dùng lại được; row Workspace xử lý theo `02-data-model.md` mục 4 |
 
 Không có cạnh `Allocated → Released` trực tiếp: Workspace `Failed` sau commit vẫn giữ `Allocated` (mục 3.2). Rollback trước commit không tạo row nên không cần state. Workspace tạo trước M9 không có row nào ở đây (mục 1.2).
@@ -476,7 +476,7 @@ stateDiagram-v2
 | `Observed` | Worker sync `status` về DB | `Active` | Row `source=kubectl`; portal hiển thị badge nguồn; tính vào `namespaceQuota` |
 | `Active` | `DELETE /workspaces/{id}/namespaces/{name}` (tên đầy đủ); nếu có PVC bắt confirm gõ tên; áp dụng cho cả `source=kubectl` | `Deleting` | Bỏ hậu tố khỏi `spec.namespaces` (nếu có), thêm tên đầy đủ vào `spec.namespacesToDelete`; Route trong Namespace bị bỏ khỏi `spec.routes` cùng transaction; Operation `namespace.delete` |
 | `Deleting` | Controller xóa Namespace, dọn `spec.namespacesToDelete`, entry biến mất khỏi `status.namespaces` | `Deleted` | Operation `Succeeded`; kẹt finalizer quá ngưỡng → Operation `Failed` kèm object đang giữ, retry khi object tự hết (`Blocked` chỉ có ở `workspace.delete`, mục 2) |
-| `Active` | User `kubectl delete ns` | `Deleted` | Worker sync thấy biến mất; `source=portal` thì controller không tạo lại, API bỏ tên khỏi `spec.namespaces` và cảnh báo trên portal |
+| `Active` | User `kubectl delete ns` | `Deleted` (chỉ `source=kubectl`) | Worker sync thấy biến mất. `source=portal`: Namespace còn trong `spec.namespaces` nên controller tạo lại ngay (khai báo, như mọi drift khác), rỗng; muốn bỏ hẳn thì xóa từ portal |
 
 Developer/Viewer gọi endpoint ghi nhận `403 FORBIDDEN` (`03-flows.md` mục 7a).
 
@@ -548,7 +548,7 @@ flowchart TB
     D3["Finalizer: gỡ owners và RoleBinding (tenant mất quyền),<br/>gỡ cordoned khỏi Tenant"]
     D4["Xóa mọi Namespace (PVC theo Namespace),<br/>đợi biến mất"]
     D5["Xóa GlobalTenantResource, Tenant<br/>và đợi biến mất"]
-    D6["IPPool: đợi hết WorkloadEndpoint và địa chỉ đang cấp,<br/>xóa qua projectcalico.org/v3, đợi IPAMBlock biến mất"]
+    D6["IPPool: đợi hết địa chỉ đang cấp trong IPAMBlock,<br/>xóa qua projectcalico.org/v3, đợi IPAMBlock biến mất"]
     D7["Đợi Pod rời dedicated node,<br/>gỡ membership label"]
     D8["Gỡ finalizer, CR biến mất"]
     D9["Worker, một transaction:<br/>NodeReservation: Released<br/>NetworkAllocation: Quarantined<br/>Workspace: Deleted (rời Σ của grant)<br/>Operation: Succeeded"]
