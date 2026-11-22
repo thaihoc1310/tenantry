@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -315,6 +316,43 @@ func TestRedeliveryCreatesNoDuplicate(t *testing.T) {
 		e.cluster.get(k8s.Workspaces, "acme-solar").GetGeneration() != 1 || e.op(c.Operation.ID).State != "Running" {
 		t.Fatalf("%d CRs after %d applies, generation %d, operation %s", n, e.cluster.applies,
 			e.cluster.get(k8s.Workspaces, "acme-solar").GetGeneration(), e.op(c.Operation.ID).State)
+	}
+}
+
+// kube-apiserver down right after the create committed (PRODUCT-PLAN
+// §24.5): the Workspace and its operation wait, the event backs off and is
+// delivered once the cluster answers, with one CR, and nothing was lost.
+func TestClusterDownAfterCommit(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.cluster.fail = errors.New("dial tcp 10.0.0.1:6443: connect: connection refused")
+	c := e.create("solar") // delivers once, and fails
+	var attempts int
+	var lastError string
+	if err := e.db.QueryRow(ctx, `SELECT attempts, last_error FROM outbox_events WHERE operation_id = $1`, c.Operation.ID).Scan(&attempts, &lastError); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 1 || !strings.Contains(lastError, "connection refused") || e.op(c.Operation.ID).State != "Pending" ||
+		e.workspace(c.Workspace.ID).State != "Provisioning" {
+		t.Fatalf("while the cluster is down: attempts %d %q, operation %s", attempts, lastError, e.op(c.Operation.ID).State)
+	}
+	e.deliver() // backing off: not due yet
+	if e.cluster.applies != 0 {
+		t.Fatalf("delivered before its backoff: %d", e.cluster.applies)
+	}
+
+	e.cluster.fail = nil
+	if _, err := e.db.Exec(ctx, `UPDATE outbox_events SET next_attempt_at = now()`); err != nil {
+		t.Fatal(err)
+	}
+	e.deliver()
+	if n := len(e.cluster.objs[k8s.Workspaces]); n != 1 || e.op(c.Operation.ID).State != "Running" {
+		t.Fatalf("after the cluster is back: %d CRs, operation %s", n, e.op(c.Operation.ID).State)
+	}
+	e.report("acme-solar", v1.PhaseReady, readyConds)
+	e.sync()
+	if e.workspace(c.Workspace.ID).State != "Ready" || e.op(c.Operation.ID).State != "Succeeded" {
+		t.Fatalf("not Ready: %s", e.workspace(c.Workspace.ID).State)
 	}
 }
 
