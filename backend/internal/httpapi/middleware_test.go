@@ -118,3 +118,28 @@ func lineText(m map[string]any) string {
 	b, _ := json.Marshal(m)
 	return string(b)
 }
+
+// Every answer carries the security headers; a handler may still choose its
+// own caching (the event stream).
+func TestSecurityHeaders(t *testing.T) {
+	h := httpapi.SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/stream" {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
+	}))
+	for path, cache := range map[string]string{"/api/v1/me": "no-store", "/stream": "no-cache"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		for k, want := range map[string]string{
+			"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "same-origin",
+			"Strict-Transport-Security": "max-age=31536000", "Cache-Control": cache,
+		} {
+			if got := rec.Header().Get(k); got != want {
+				t.Errorf("%s %s = %q, want %q", path, k, got, want)
+			}
+		}
+		if !strings.Contains(rec.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'") {
+			t.Errorf("%s CSP %q", path, rec.Header().Get("Content-Security-Policy"))
+		}
+	}
+}

@@ -274,6 +274,9 @@ test('someone taken out of a group loses the portal at once and Kubernetes withi
   )
   const seconds = Math.round((end - removed) / 1000)
   test.info().annotations.push({ type: 'Kubernetes access ended after (s)', description: String(seconds) })
+  console.log(
+    `revocation: removed at ${new Date(removed).toISOString()}, old token refused at ${new Date(end).toISOString()}, ${seconds} s; it expired at ${new Date(exp * 1000).toISOString()}`,
+  )
   expect(seconds).toBeLessThanOrEqual(5 * 60 + 30)
   expect(end / 1000).toBeGreaterThanOrEqual(exp - 30) // it lasted as long as the token, no longer
 

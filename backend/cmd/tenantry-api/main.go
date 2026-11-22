@@ -102,7 +102,7 @@ const maxBodyBytes = 1 << 20
 
 func routes(db *pgxpool.Pool, a *auth.Service, trustedProxies []netip.Prefix, log *slog.Logger) http.Handler {
 	r := chi.NewRouter()
-	r.Use(metrics.HTTP, httpapi.WithRequestID, httpapi.LogRequests(log), httpapi.Recover)
+	r.Use(metrics.HTTP, httpapi.SecurityHeaders, httpapi.WithRequestID, httpapi.LogRequests(log), httpapi.Recover)
 	// Liveness: the process answers. It never touches the database, so an
 	// outage of PostgreSQL does not make Kubernetes restart every API pod.
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {

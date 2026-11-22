@@ -16,10 +16,28 @@ import (
 // The middlewares here wrap the whole HTTP surface, /healthz included; mount
 // them on the root router in this order:
 //
-//	r.Use(httpapi.WithRequestID, httpapi.LogRequests(log), httpapi.Recover)
+//	r.Use(httpapi.SecurityHeaders, httpapi.WithRequestID, httpapi.LogRequests(log), httpapi.Recover)
 //
 // so the request id exists before anything logs and the access log sees the
 // 500 that Recover writes.
+
+// SecurityHeaders sets what every API answer carries (IMPLEMENTATION-PLAN
+// M12): JSON and the login pages are never cached, sniffed, framed or sent
+// on as a referrer; the only HTML (the login failure page) styles itself
+// inline and loads nothing. A handler may set Cache-Control itself (the
+// event stream).
+func SecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "same-origin")
+		h.Set("Strict-Transport-Security", "max-age=31536000")
+		h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+		h.Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
+}
 
 // WithRequestID tags every request with an id that is echoed in the
 // X-Request-Id header and in error bodies, so a user report can be matched to logs.
