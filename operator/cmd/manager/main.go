@@ -99,6 +99,7 @@ func main() {
 		},
 		BlockedAfter: blockedAfter,
 		Proxy:        proxyProber(mgr.GetClient(), serviceAccount, proxyURL, proxyProbe),
+		APIReader:    mgr.GetAPIReader(),
 	}).SetupWithManager(mgr))
 	must("setting up platformsharedpool", (&controller.PlatformSharedPoolReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr))
 	must("setting up platformnodegrant", (&controller.PlatformNodeGrantReconciler{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader()}).SetupWithManager(mgr))

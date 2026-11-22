@@ -6,6 +6,7 @@ package subreconciler
 import (
 	"context"
 	"errors"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,6 +39,9 @@ const (
 type Result struct {
 	Condition metav1.Condition
 	Wait      bool
+	// After asks for a slower look again than Wait, for a state that
+	// changes on its own time and that no watch reports.
+	After time.Duration
 }
 
 func ok(t string) Result {

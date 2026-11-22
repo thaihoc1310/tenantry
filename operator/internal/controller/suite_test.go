@@ -99,6 +99,7 @@ func newWorkspaceReconciler() *PlatformWorkspaceReconciler {
 		Recorder:     events.NewFakeRecorder(100),
 		Render:       render.Options{OperatorServiceAccount: operatorSA, AllowedRegistries: []string{"docker.io"}},
 		BlockedAfter: 10 * time.Minute,
+		APIReader:    testClient,
 	}
 }
 

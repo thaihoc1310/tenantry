@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -13,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1 "github.com/thaihoc1310/tenantry/operator/api/v1alpha1"
@@ -366,22 +368,73 @@ func TestWorkspaceForceDelete(t *testing.T) {
 	if err := testClient.Delete(ctx, getWorkspace(t, "acme-wind")); err != nil {
 		t.Fatal(err)
 	}
+	// Capsule 0.15 keeps a Tenant until its Namespaces are gone.
+	tenant := getTenant(t, "acme-wind")
+	tenant.SetFinalizers([]string{"controller.projectcapsule.dev/finalize"})
+	if err := testClient.Update(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
 	reconcileOnce(t, r, "acme-wind") // step 1
 	capsuleReconciles(t, "acme-wind")
 	reconcileOnce(t, r, "acme-wind") // Namespace deleted, not waited for; replication deleted
-	reconcileOnce(t, r, "acme-wind") // Tenant deleted
-	tenant := &unstructured.Unstructured{}
-	tenant.SetGroupVersionKind(render.TenantGVK)
-	if err := testClient.Get(ctx, client.ObjectKey{Name: "acme-wind"}, tenant); !apierrors.IsNotFound(err) {
-		t.Fatalf("Tenant not deleted under force-delete: %v", err)
-	}
-	reconcileOnce(t, r, "acme-wind")
+	reconcileOnce(t, r, "acme-wind") // Tenant deleted, not waited for either; the CR goes
 	if err := testClient.Get(ctx, client.ObjectKey{Name: "acme-wind"}, &v1.PlatformWorkspace{}); !apierrors.IsNotFound(err) {
-		t.Errorf("PlatformWorkspace still there: %v", err)
+		reconcileOnce(t, r, "acme-wind")
+		if err := testClient.Get(ctx, client.ObjectKey{Name: "acme-wind"}, &v1.PlatformWorkspace{}); !apierrors.IsNotFound(err) {
+			t.Fatalf("PlatformWorkspace still there: %v", err)
+		}
+	}
+	tenant = getTenant(t, "acme-wind")
+	if tenant.GetDeletionTimestamp() == nil {
+		t.Error("Tenant not deleted under force-delete")
+	}
+	// What is left is out of the tenant's reach: owners and RoleBindings went first.
+	if got := owners(tenant); !slices.Equal(got, []string{"ServiceAccount:" + operatorSA}) {
+		t.Errorf("owners of the Tenant left behind: %v", got)
+	}
+	if _, found, _ := unstructured.NestedSlice(tenant.Object, "spec", "additionalRoleBindings"); found {
+		t.Error("RoleBindings left on the Tenant left behind")
 	}
 	ns := &corev1.Namespace{}
 	if err := testClient.Get(ctx, client.ObjectKey{Name: "acme-wind-frontend"}, ns); err != nil || ns.DeletionTimestamp == nil {
 		t.Errorf("the Namespace is not being deleted: %v", err)
+	}
+	var leftovers string
+	for len(leftovers) == 0 {
+		select {
+		case e := <-r.Recorder.(*events.FakeRecorder).Events:
+			if strings.Contains(e, "ForceDeleteLeftovers") {
+				leftovers = e
+			}
+		default:
+			t.Fatal("no ForceDeleteLeftovers Event")
+		}
+	}
+	if !strings.Contains(leftovers, "acme-wind-frontend") || !strings.Contains(leftovers, "Tenant acme-wind") {
+		t.Errorf("Event %q does not name what is left", leftovers)
+	}
+
+	// A new Workspace of the same name waits for the old Tenant, slowly.
+	again := newWorkspace("acme-wind")
+	if err := testClient.Create(ctx, again); err != nil {
+		t.Fatal(err)
+	}
+	reconcileOnce(t, r, "acme-wind")
+	res := reconcileOnce(t, r, "acme-wind")
+	if c := condition(getWorkspace(t, "acme-wind"), v1.ConditionCapsuleTenantReady); c.Reason != subreconciler.ReasonTenantTerminating {
+		t.Errorf("CapsuleTenantReady %+v, want TenantTerminating", c)
+	}
+	if res.RequeueAfter != 30*time.Second {
+		t.Errorf("requeue %v, want 30s", res.RequeueAfter)
+	}
+	// Capsule finishes: the old Tenant goes, the new one is made.
+	tenant.SetFinalizers(nil)
+	if err := testClient.Update(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	reconcileOnce(t, r, "acme-wind")
+	if fresh := getTenant(t, "acme-wind"); fresh.GetDeletionTimestamp() != nil || len(fresh.GetOwnerReferences()) != 1 {
+		t.Errorf("new Tenant %v", fresh.GetOwnerReferences())
 	}
 }
 
