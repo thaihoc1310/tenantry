@@ -348,6 +348,8 @@ erDiagram
     text compute_mode "Shared|Dedicated"
     text shared_pool_id FK "nullable, chỉ Shared"
     bigint desired_generation "= annotation tenantry.io/spec-version của CR"
+    boolean cordoned "desired, M7"
+    jsonb usage_snapshot "M7, worker chép từ status.usage"
     bigint observed_generation
     jsonb conditions
     timestamptz deleted_at

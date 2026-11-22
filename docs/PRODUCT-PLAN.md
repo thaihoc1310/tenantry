@@ -1432,10 +1432,10 @@ POST   /api/v1/organizations/{orgId}/workspaces:validate
 POST   /api/v1/organizations/{orgId}/workspaces
 GET    /api/v1/organizations/{orgId}/workspaces
 GET    /api/v1/workspaces/{workspaceId}
-PATCH  /api/v1/workspaces/{workspaceId}
-DELETE /api/v1/workspaces/{workspaceId}
-POST   /api/v1/workspaces/{workspaceId}:cordon          # M7, OrgOwner/OrgAdmin
-POST   /api/v1/workspaces/{workspaceId}:uncordon        # M7, OrgOwner/OrgAdmin
+PATCH  /api/v1/workspaces/{workspaceId}                 # M7, resources thay cả quota; 200 khi không đổi, 202 kèm Operation workspace.update
+DELETE /api/v1/workspaces/{workspaceId}?confirmName=    # M7, confirmName phải khớp tên Workspace
+POST   /api/v1/workspaces/{workspaceId}:cordon          # M7, OrgOwner/OrgAdmin; 200 khi đã cordon, 202 kèm Operation
+POST   /api/v1/workspaces/{workspaceId}:uncordon        # M7, OrgOwner/OrgAdmin; tương tự
 GET    /api/v1/workspaces/{workspaceId}/operations      # M7, lịch sử Operation của Workspace
 
 GET    /api/v1/workspaces/{workspaceId}/bindings
@@ -1448,7 +1448,7 @@ DELETE /api/v1/workspaces/{workspaceId}/namespaces/{name}
 GET    /api/v1/workspaces/{workspaceId}/routes
 POST   /api/v1/workspaces/{workspaceId}/routes
 DELETE /api/v1/workspaces/{workspaceId}/routes/{routeId}
-GET    /api/v1/workspaces/{workspaceId}/usage
+GET    /api/v1/workspaces/{workspaceId}/usage           # M7, items[{resource, used, limit}] + usage từng Namespace
 GET    /api/v1/workspaces/{workspaceId}/kubeconfig
 GET    /api/v1/workspaces/{workspaceId}/console-link
 ```
@@ -1495,9 +1495,9 @@ Với Dedicated mode, API coi `requestsCpu`/`requestsMemory`/`pods` là phần c
 
 ```text
 GET    /api/v1/operations/{operationId}
-GET    /api/v1/operations/{operationId}/events     # M7, SSE, cùng payload với GET operation; portal fallback poll 2s
+GET    /api/v1/operations/{operationId}/events     # M7, SSE event `operation` (cùng payload với GET operation), keepalive 15s, đóng khi Succeeded/Failed/Blocked hoặc sau 10 phút; portal fallback poll 2s
 POST   /api/v1/operations/{operationId}:retry      # nhận Operation Failed hoặc Blocked; OrgOwner/OrgAdmin/Platform Admin
-POST   /api/v1/operations/{operationId}:force      # chỉ Platform Admin: thôi chờ Namespace/Tenant kẹt khi delete (vẫn chờ IPAM sạch)
+POST   /api/v1/operations/{operationId}:force      # chỉ Platform Admin: thôi chờ Namespace/Tenant kẹt khi delete (vẫn chờ IPAM sạch); trả Operation Running, audit operation.force
 
 GET    /api/v1/admin/organizations                 # ?status=Pending cho hàng đợi duyệt
 GET    /api/v1/admin/organizations/{orgId}         # M5, entitlement + ClusterGrant + usage (cùng số với /usage)
@@ -1545,7 +1545,9 @@ API mutation trả operation ID nếu có Kubernetes reconciliation. Error có s
 - `CLUSTER_GRANT_QUOTA_EXCEEDED` — vượt quota của ClusterGrant; `details.resource` (`requestsCpu`, `limitsMemory`, `pods`, `storage`, `workspaces`, `namespaces`…), `details.limit`, `details.allocated`, `details.requested`;
 - `ENTITLEMENT_EXCEEDED` — vượt global entitlement; `details.limit` = `maxMembers` | `maxGroups` | `maxWorkspacesTotal`;
 - `ENTITLEMENT_BELOW_USAGE` — Admin hạ entitlement dưới số đang dùng hoặc `maxGroups` < 3;
-- `CLUSTER_GRANT_BELOW_ALLOCATION`;
+- `CLUSTER_GRANT_BELOW_ALLOCATION` — kể cả gỡ shared pool còn Workspace khỏi grant (`details.sharedPoolId`);
+- `WORKSPACE_QUOTA_BELOW_USAGE` — resize dưới usage, hoặc `namespaceQuota` dưới số Namespace đang có;
+- `ORGANIZATION_NOT_EMPTY` — xóa Organization còn Workspace hoặc dedicated node (`details.workspaces`, `details.dedicatedNodes`);
 - `ORG_NOT_ACTIVE`;
 - `CLUSTER_NOT_GRANTED`;
 - `CLUSTER_NOT_READY`;
@@ -1558,6 +1560,8 @@ API mutation trả operation ID nếu có Kubernetes reconciliation. Error có s
 - `LAST_OWNER_BINDING`;
 - `GROUP_SYNC_PENDING`;
 - `WORKSPACE_NOT_READY`.
+
+Các mã giới hạn và capacity trên đều `409`. Xung đột không có mã riêng trả `409 CONFLICT` kèm `details`: xóa grant còn Workspace và thu hồi node còn reservation (`details.workspaces`), tạo Namespace vượt `namespaceQuota` (`details.limit=namespaceQuota`), xóa group còn binding (`details.workspaceIds`). Operation do worker đặt `error_code`: `APPLY_FAILED`, `RECONCILE_FAILED`, `RECONCILE_DEGRADED`, `RECONCILE_TIMEOUT`, `BLOCKED_BY_FINALIZER`.
 
 ## 17. Workspace state machine
 
