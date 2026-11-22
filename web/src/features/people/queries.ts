@@ -151,6 +151,12 @@ export function useLeave(org: MaybeRefOrGetter<string>) {
   )
 }
 
+export function useDeleteOrganization(org: MaybeRefOrGetter<string>) {
+  return orgMutation(org, () =>
+    unwrap(api.DELETE('/organizations/{orgId}', { params: { path: { orgId: toValue(org) } } })),
+  )
+}
+
 export function usePatchOrganization(org: MaybeRefOrGetter<string>) {
   return orgMutation(org, (body: Schemas['OrganizationPatch']) =>
     unwrap(api.PATCH('/organizations/{orgId}', { params: { path: { orgId: toValue(org) } }, body })),

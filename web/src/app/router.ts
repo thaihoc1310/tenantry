@@ -10,6 +10,16 @@ export const router = createRouter({
     { path: '/request', component: () => import('@/features/onboarding/RequestPage.vue'), props: { another: true } },
     { path: '/login', component: () => import('@/features/onboarding/LoggedOutPage.vue'), meta: { public: true } },
     { path: '/orgs/:orgSlug', component: () => import('@/features/organizations/OverviewPage.vue'), props: true },
+    {
+      path: '/orgs/:orgSlug/workspaces',
+      component: () => import('@/features/workspaces/WorkspacesPage.vue'),
+      props: true,
+    },
+    {
+      path: '/orgs/:orgSlug/workspaces/:wsSlug',
+      component: () => import('@/features/workspaces/WorkspacePage.vue'),
+      props: true,
+    },
     { path: '/orgs/:orgSlug/members', component: () => import('@/features/people/MembersPage.vue'), props: true },
     { path: '/orgs/:orgSlug/groups', component: () => import('@/features/people/GroupsPage.vue'), props: true },
     {

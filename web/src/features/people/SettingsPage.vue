@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // An Organization's settings (docs/design/mockups: Settings and Transfer):
 // its details, handing it to an OrgAdmin (the waiting offer shows to the owner
-// and to its recipient), and leaving it. Deleting an Organization comes with
-// Workspaces (M6).
+// and to its recipient), leaving it, and deleting it once it is empty
+// (owner only, typing its slug: 04-state-machines §11).
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -18,6 +18,7 @@ import { useMe, useOrganization } from '@/features/organizations/queries'
 import {
   useAcceptTransfer,
   useCancelTransfer,
+  useDeleteOrganization,
   useLeave,
   useMembers,
   usePatchOrganization,
@@ -43,6 +44,18 @@ const propose = useProposeTransfer(slug)
 const accept = useAcceptTransfer(slug)
 const cancel = useCancelTransfer(slug)
 const leave = useLeave(slug)
+const deleteOrg = useDeleteOrganization(slug)
+const confirmSlug = ref('')
+
+async function removeOrg() {
+  try {
+    await deleteOrg.mutateAsync()
+    ElMessage.success(`${org.data.value?.displayName} is deleted.`)
+    void router.push('/')
+  } catch (err) {
+    showFailure(err)
+  }
+}
 
 const t = computed(() => transfer.data.value ?? null)
 const forMe = computed(() => !!t.value && t.value.to.id === me.data.value?.id)
@@ -251,6 +264,29 @@ async function leaveOrg() {
       </TPanel>
       <TPanel v-else title="Leave this Organization">
         <p class="muted">The owner cannot leave. Transfer ownership first; then you can leave as an OrgAdmin.</p>
+      </TPanel>
+
+      <TPanel v-if="owner && active" title="Delete this Organization" danger>
+        <div class="t-stack" style="max-width: 560px">
+          <p class="muted">
+            Only an empty Organization can be deleted: delete its Workspaces first, and ask a Platform Admin to take
+            back its dedicated nodes. Its grants, groups and invitations go with it; this cannot be undone.
+          </p>
+          <el-form label-position="top" @submit.prevent="removeOrg">
+            <el-form-item :label="`Type ${org.data.value.slug} to confirm`" for="org-del-confirm">
+              <el-input id="org-del-confirm" v-model="confirmSlug" style="max-width: 320px" />
+            </el-form-item>
+          </el-form>
+          <div>
+            <el-button
+              type="danger"
+              :disabled="confirmSlug !== org.data.value.slug"
+              :loading="deleteOrg.isPending.value"
+              @click="removeOrg"
+              >Delete {{ org.data.value.displayName }}</el-button
+            >
+          </div>
+        </div>
       </TPanel>
     </template>
   </AppShell>

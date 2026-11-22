@@ -32,13 +32,16 @@ const isAdmin = computed(() => me.data.value?.isPlatformAdmin === true)
 const orgNav = computed(() => {
   const all = [
     ['overview', 'Overview', '', 'Odometer'],
+    ['workspaces', 'Workspaces', '/workspaces', 'Grid'],
     ['members', 'Members', '/members', 'User'],
     ['groups', 'Groups', '/groups', 'Collection'],
     ['clusters', 'Clusters', '/clusters', 'Cpu'],
     ['settings', 'Settings', '/settings', 'Setting'],
   ]
   const role = current.value?.myRole
-  return role === 'OrgOwner' || role === 'OrgAdmin' ? all : all.filter(([k]) => k === 'overview' || k === 'settings')
+  return role === 'OrgOwner' || role === 'OrgAdmin'
+    ? all
+    : all.filter(([k]) => k === 'overview' || k === 'workspaces' || k === 'settings')
 })
 
 // The Platform Admin menu (mockups: AppShell); Platform health comes later.
