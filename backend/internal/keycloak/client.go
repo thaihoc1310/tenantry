@@ -1,9 +1,9 @@
 // Package keycloak mirrors organization groups to Keycloak (IMPLEMENTATION-PLAN
 // §5.2): a thin client for the few Admin API calls needed, and the group sync
 // worker built on it. It authenticates as the service account of the client
-// tenantry-sync (manage-users and query-groups of realm-management), whose
-// secret is as strong as a Platform Admin (architecture/06 §7): only the
-// group sync Deployment holds it.
+// tenantry-sync: query-users and query-groups of realm-management, the rest
+// through fine-grained admin permissions (deploy/cluster/keycloak-fgap.py,
+// architecture/06 §7). Only the group sync Deployment holds its secret.
 //
 // It also turns accounts on and off when a Platform Admin disables or
 // enables a user (M5).

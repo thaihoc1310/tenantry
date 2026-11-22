@@ -64,3 +64,8 @@ kubectl -n keycloak exec keycloak-0 -- bash -c '
 PORTAL_HOST="${PORTAL_HOST}" CONSOLE_HOST="${CONSOLE_HOST}" \
   "${CLUSTER_DIR}/realm-sync.py" "${CLUSTER_DIR}/../keycloak/realm-tenantry.json" |
   kubectl -n keycloak exec -i keycloak-0 -- bash -s
+
+# tenantry-sync works through fine-grained admin permissions, not manage-users
+# (architecture/06 §7): realm-sync.py has just left its service account with
+# query-users and query-groups; the permissions follow at once.
+"${CLUSTER_DIR}/keycloak-fgap.py" apply | kubectl -n keycloak exec -i keycloak-0 -- bash -s

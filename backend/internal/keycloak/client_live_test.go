@@ -72,3 +72,72 @@ func TestLiveKeycloak(t *testing.T) {
 		t.Fatalf("deleted group found: %v %v", found, err)
 	}
 }
+
+// TestLiveKeycloakNarrowed checks, as tenantry-sync, what the fine-grained
+// admin permissions of deploy/cluster/keycloak-fgap.py leave it
+// (architecture/06 §7): enabling a person's account still works, and none of
+// what would make it a Platform Admin does. Run by make keycloak-live-test
+// once the permissions are applied (KEYCLOAK_TEST_FGAP=1), with a plain user
+// (KEYCLOAK_TEST_USER_ID), a Platform Admin (KEYCLOAK_TEST_ADMIN_ID) and the
+// id of the platform-admin role (KEYCLOAK_TEST_ADMIN_ROLE_ID).
+func TestLiveKeycloakNarrowed(t *testing.T) {
+	if os.Getenv("KEYCLOAK_TEST_URL") == "" || os.Getenv("KEYCLOAK_TEST_FGAP") == "" {
+		t.Skip("KEYCLOAK_TEST_URL or KEYCLOAK_TEST_FGAP not set")
+	}
+	t.Setenv("TENANTRY_KEYCLOAK_URL", os.Getenv("KEYCLOAK_TEST_URL"))
+	t.Setenv("TENANTRY_KEYCLOAK_CLIENT_SECRET", os.Getenv("KEYCLOAK_TEST_CLIENT_SECRET"))
+	cfg, err := config.LoadKeycloakSync()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, ctx := NewClient(cfg), context.Background()
+	user, admin, role := os.Getenv("KEYCLOAK_TEST_USER_ID"), os.Getenv("KEYCLOAK_TEST_ADMIN_ID"), os.Getenv("KEYCLOAK_TEST_ADMIN_ROLE_ID")
+	if user == "" || admin == "" || role == "" {
+		t.Fatal("KEYCLOAK_TEST_USER_ID, KEYCLOAK_TEST_ADMIN_ID and KEYCLOAK_TEST_ADMIN_ROLE_ID are required")
+	}
+
+	// What the worker does still works on a plain user.
+	if err := c.SetUserEnabled(ctx, user, true); err != nil {
+		t.Fatalf("enable a plain user: %v", err)
+	}
+	b := make([]byte, 6)
+	_, _ = rand.Read(b)
+	group, err := c.EnsureGroup(ctx, "tenantry-live-test:"+hex.EncodeToString(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.DeleteGroup(context.Background(), group) })
+	if err := c.AddMember(ctx, user, group); err != nil {
+		t.Fatalf("add a plain user: %v", err)
+	}
+	if err := c.RemoveMember(ctx, user, group); err != nil {
+		t.Fatalf("remove a plain user: %v", err)
+	}
+
+	// None of this: each must be 403.
+	for _, step := range []struct {
+		what, method, path string
+		body               any
+	}{
+		{"reset a plain user's password", "PUT", "/users/" + user + "/reset-password", map[string]any{"type": "password", "value": "Pw-" + hex.EncodeToString(b), "temporary": true}},
+		{"grant platform-admin", "POST", "/users/" + user + "/role-mappings/realm", []map[string]string{{"id": role, "name": "platform-admin"}}},
+		{"impersonate a plain user", "POST", "/users/" + user + "/impersonation", nil},
+		{"change a Platform Admin's email", "PUT", "/users/" + admin, map[string]any{"email": "taken-over@example.com"}},
+		{"disable a Platform Admin", "PUT", "/users/" + admin, map[string]any{"enabled": false}},
+		{"put a Platform Admin in a group", "PUT", "/users/" + admin + "/groups/" + group, nil},
+		{"reset a Platform Admin's password", "PUT", "/users/" + admin + "/reset-password", map[string]any{"type": "password", "value": "Pw-" + hex.EncodeToString(b), "temporary": true}},
+		{"create a client", "POST", "/clients", map[string]any{"clientId": "tenantry-live-test-" + hex.EncodeToString(b)}},
+		{"change the realm", "PUT", "", map[string]any{"displayName": "taken over"}},
+	} {
+		resp, err := c.admin(ctx, step.method, step.path, step.body)
+		if err != nil {
+			t.Fatalf("%s: %v", step.what, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != 403 {
+			t.Errorf("%s: %d, want 403", step.what, resp.StatusCode)
+		} else {
+			t.Logf("%s: 403", step.what)
+		}
+	}
+}
