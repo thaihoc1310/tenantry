@@ -3,6 +3,7 @@ package controller
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -89,9 +90,10 @@ func expectAllowed(t *testing.T, what string, err error) {
 	}
 }
 
-// The chart's policies (architecture/05 §2, 06 §7): only the operator and
-// the admin group change tenantry.io/* labels and taints on Nodes; a tenant
-// cannot name a node for its Pods.
+// The chart's policies (architecture/05 §2 and §5, 06 §7): only the
+// operator and the admin group change tenantry.io/* labels and taints on
+// Nodes; a tenant can neither name a node for its Pods nor pick their
+// addresses.
 func TestChartPolicies(t *testing.T) {
 	needEnv(t)
 	ctx := context.Background()
@@ -186,4 +188,29 @@ func TestChartPolicies(t *testing.T) {
 		},
 	}}
 	expectRefused(t, "a tenant Deployment names a node", func() error { return tenant.Create(ctx, deploy.DeepCopy()) })
+
+	// Calico annotations on Pods.
+	annotated := func(name, key string) *corev1.Pod {
+		p := pod(name, "")
+		p.Annotations = map[string]string{key: `["acme-other"]`}
+		return p
+	}
+	for i, key := range []string{"ipv4pools", "ipv6pools", "ipAddrs", "ipAddrsNoIpam", "floatingIPs"} {
+		expectRefused(t, "a tenant Pod picks its addresses with "+key, func() error {
+			return tenant.Create(ctx, annotated(fmt.Sprintf("addr-%d", i), "cni.projectcalico.org/"+key))
+		})
+	}
+	expectAllowed(t, "a tenant Pod with another annotation", tenant.Create(ctx, annotated("other", "example.com/note")))
+	expectAllowed(t, "a controller's Pod with a pool annotation (not a tenant caller)",
+		as(t, "system:serviceaccount:kube-system:replicaset-controller").Create(ctx, annotated("rs", "cni.projectcalico.org/ipv4pools")))
+	poolDeploy := deploy.DeepCopy()
+	poolDeploy.SetName("pool")
+	unstructured.RemoveNestedField(poolDeploy.Object, "spec", "template", "spec", "nodeName")
+	_ = unstructured.SetNestedStringMap(poolDeploy.Object, map[string]string{"cni.projectcalico.org/ipv4pools": `["acme-other"]`},
+		"spec", "template", "metadata", "annotations")
+	expectRefused(t, "a tenant Deployment picks its addresses", func() error { return tenant.Create(ctx, poolDeploy.DeepCopy()) })
+	plain := deploy.DeepCopy()
+	plain.SetName("plain")
+	unstructured.RemoveNestedField(plain.Object, "spec", "template", "spec", "nodeName")
+	expectAllowed(t, "a tenant Deployment without them", tenant.Create(ctx, plain))
 }
