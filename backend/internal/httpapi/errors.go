@@ -25,6 +25,14 @@ var statusOf = map[apperr.Code]int{
 	apperr.OrgRequestPending: http.StatusConflict,
 	apperr.ClusterNotReady:   http.StatusConflict,
 	apperr.OrgNotActive:      http.StatusConflict,
+
+	apperr.EntitlementExceeded:     http.StatusConflict,
+	apperr.InvitationInvalid:       http.StatusNotFound,
+	apperr.InvitationEmailMismatch: http.StatusForbidden,
+	apperr.TransferNotAllowed:      http.StatusForbidden,
+	apperr.RecipientNotOrgAdmin:    http.StatusUnprocessableEntity,
+	apperr.TransferInvalid:         http.StatusForbidden,
+	apperr.LeaveNotAllowed:         http.StatusConflict,
 }
 
 // writeError answers with an ErrorResponse.

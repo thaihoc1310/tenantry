@@ -85,6 +85,21 @@ type IdempotencyKey struct {
 	CreatedAt        time.Time
 }
 
+type Invitation struct {
+	ID         string
+	OrgID      string
+	Email      string
+	TokenHash  []byte
+	Role       string
+	GroupIds   []string
+	InvitedBy  string
+	ExpiresAt  time.Time
+	State      string
+	AcceptedBy *string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
 type NetworkPool struct {
 	ID                   string
 	ClusterID            string
@@ -181,6 +196,17 @@ type OutboxEvent struct {
 	LastError       string
 	ProcessedAt     *time.Time
 	CreatedAt       time.Time
+}
+
+type OwnershipTransfer struct {
+	ID         string
+	OrgID      string
+	FromUserID string
+	ToUserID   string
+	ExpiresAt  time.Time
+	State      string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 type Session struct {

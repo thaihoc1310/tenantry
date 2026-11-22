@@ -75,6 +75,9 @@ func TestConstraints(t *testing.T) {
 	mustExec(t, db, `INSERT INTO organization_members (org_id, user_id, role) VALUES ('org-acme', 'usr-alice', 'OrgOwner')`)
 	mustExec(t, db, `INSERT INTO operations (id, org_id, resource_type, resource_id, type, correlation_id)
 		VALUES ('op-1', 'org-acme', 'Workspace', 'ws-1', 'workspace.create', 'req-1')`)
+	mustExec(t, db, invite("inv-1", "dave@example.com", "OrgMember", "Pending"))
+	mustExec(t, db, `INSERT INTO ownership_transfers (id, org_id, from_user_id, to_user_id, expires_at)
+		VALUES ('ot-1', 'org-acme', 'usr-alice', 'usr-bob', now() + interval '7 days')`)
 
 	const unique, check, foreignKey = "23505", "23514", "23503"
 	cases := []struct {
@@ -95,6 +98,14 @@ func TestConstraints(t *testing.T) {
 			VALUES ('op-1', 'Workspace/ws-1', 'cluster-x', 'workspace.apply', '{}', 1)`, foreignKey},
 		{"fewer groups than the three default ones", `INSERT INTO organization_entitlements (org_id, max_members, max_groups, max_workspaces_total)
 			VALUES ('org-acme', 20, 2, 8)`, check},
+		{"invitation to become owner", invite("inv-x", "carol@example.com", "OrgOwner", "Pending"), check},
+		{"invitation email not lowercase", invite("inv-x", "Carol@example.com", "OrgMember", "Pending"), check},
+		{"accepted invitation without its acceptor", invite("inv-x", "carol@example.com", "OrgMember", "Accepted"), check},
+		{"second pending invitation for one email", invite("inv-x", "dave@example.com", "OrgMember", "Pending"), unique},
+		{"transfer to oneself", `INSERT INTO ownership_transfers (id, org_id, from_user_id, to_user_id, expires_at)
+			VALUES ('ot-x', 'org-acme', 'usr-alice', 'usr-alice', now() + interval '7 days')`, check},
+		{"second waiting transfer in one org", `INSERT INTO ownership_transfers (id, org_id, from_user_id, to_user_id, expires_at)
+			VALUES ('ot-x', 'org-acme', 'usr-alice', 'usr-bob', now() + interval '7 days')`, unique},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) { expectCode(t, db, c.sql, c.code) })
@@ -116,6 +127,12 @@ func provider(t *testing.T, db *sql.DB) *goose.Provider {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// invite is an invitation of org-acme by usr-alice; token hashes are derived from the id.
+func invite(id, email, role, state string) string {
+	return "INSERT INTO invitations (id, org_id, email, token_hash, role, invited_by, expires_at, state) VALUES ('" +
+		id + "', 'org-acme', '" + email + "', sha256(convert_to('" + id + "', 'UTF8')), '" + role + "', 'usr-alice', now() + interval '7 days', '" + state + "')"
 }
 
 func orgInsert(id, slug, owner, status string) string {

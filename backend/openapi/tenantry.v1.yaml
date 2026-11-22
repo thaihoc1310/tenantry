@@ -446,6 +446,13 @@ components:
         - ORG_REQUEST_PENDING
         - CLUSTER_NOT_READY
         - ORG_NOT_ACTIVE
+        - ENTITLEMENT_EXCEEDED
+        - INVITATION_INVALID
+        - INVITATION_EMAIL_MISMATCH
+        - TRANSFER_NOT_ALLOWED
+        - RECIPIENT_NOT_ORG_ADMIN
+        - TRANSFER_INVALID
+        - LEAVE_NOT_ALLOWED
         - INTERNAL
 
     ErrorResponse:

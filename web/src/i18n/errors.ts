@@ -40,6 +40,34 @@ export const errorText: Record<ErrorCode | 'NETWORK', Text> = {
     en: 'This Organization is not approved yet.',
     vi: 'Organization này chưa được duyệt.',
   },
+  ENTITLEMENT_EXCEEDED: {
+    en: 'This Organization has reached its limit. Ask a Platform Admin for more.',
+    vi: 'Organization đã chạm giới hạn được cấp. Hãy xin Platform Admin nâng thêm.',
+  },
+  INVITATION_INVALID: {
+    en: 'This invitation link no longer works: it expired, was used or was revoked.',
+    vi: 'Link mời không còn dùng được: đã hết hạn, đã dùng hoặc đã bị thu hồi.',
+  },
+  INVITATION_EMAIL_MISMATCH: {
+    en: 'This invitation is for another email. Log in with the invited address.',
+    vi: 'Lời mời này dành cho email khác. Hãy đăng nhập bằng đúng email được mời.',
+  },
+  TRANSFER_NOT_ALLOWED: {
+    en: 'Only the owner can hand the Organization over.',
+    vi: 'Chỉ Owner mới chuyển giao được Organization.',
+  },
+  RECIPIENT_NOT_ORG_ADMIN: {
+    en: 'The new owner must be an OrgAdmin of this Organization.',
+    vi: 'Người nhận phải là OrgAdmin của Organization này.',
+  },
+  TRANSFER_INVALID: {
+    en: 'This handover can no longer be accepted.',
+    vi: 'Yêu cầu chuyển giao này không còn chấp nhận được.',
+  },
+  LEAVE_NOT_ALLOWED: {
+    en: 'The owner cannot leave. Hand the Organization over first.',
+    vi: 'Owner không thể rời đi. Hãy chuyển giao Organization trước.',
+  },
   INTERNAL: {
     en: 'Something went wrong on our side. Your data is safe; try again in a moment.',
     vi: 'Hệ thống gặp lỗi. Dữ liệu của bạn vẫn an toàn; thử lại sau ít phút.',

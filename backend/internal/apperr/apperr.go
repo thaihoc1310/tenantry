@@ -28,6 +28,19 @@ const (
 	OrgRequestPending Code = "ORG_REQUEST_PENDING"
 	ClusterNotReady   Code = "CLUSTER_NOT_READY"
 	OrgNotActive      Code = "ORG_NOT_ACTIVE"
+
+	// Limits of the organization's entitlement (PRODUCT-PLAN §5.1).
+	EntitlementExceeded Code = "ENTITLEMENT_EXCEEDED"
+
+	// Invitations (PRODUCT-PLAN §9.1).
+	InvitationInvalid       Code = "INVITATION_INVALID"        // unknown, expired, used or revoked
+	InvitationEmailMismatch Code = "INVITATION_EMAIL_MISMATCH" // sent to another verified email
+
+	// Ownership transfer and leaving (PRODUCT-PLAN §9.2, §9.4).
+	TransferNotAllowed   Code = "TRANSFER_NOT_ALLOWED"    // only the OrgOwner offers the organization
+	RecipientNotOrgAdmin Code = "RECIPIENT_NOT_ORG_ADMIN" // only to one of its OrgAdmins
+	TransferInvalid      Code = "TRANSFER_INVALID"        // no longer acceptable by this caller
+	LeaveNotAllowed      Code = "LEAVE_NOT_ALLOWED"       // the OrgOwner transfers first
 )
 
 type Error struct {
