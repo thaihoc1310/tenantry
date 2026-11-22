@@ -141,7 +141,7 @@ INSERT INTO network_allocations (...);        -- state Allocated
 INSERT INTO operations (...);                 -- type workspace.create, state Pending
 INSERT INTO outbox_events (operation_id, ordering_key='Workspace/<id>', target_cluster_id, type='workspace.apply', payload=CR spec JSON, version);
 INSERT INTO audit_events (...);
-INSERT INTO idempotency_keys (...);          -- response 202 vừa dựng, xem 3.4
+UPDATE idempotency_keys SET response_...;    -- response 202 vừa dựng; row đã được giành ngay sau BEGIN, xem 3.4
 COMMIT;
 ```
 
@@ -159,12 +159,14 @@ COMMIT;
 
 - Header `Idempotency-Key` (UUID do client sinh) **bắt buộc** với `POST .../workspaces`, `POST .../invitations` và mọi `POST /admin/*` tạo resource — những chỗ retry mù có thể tạo trùng hoặc sinh token thứ hai. Các `POST` khác nhận header nếu client gửi.
 - Bảng `idempotency_keys`, khóa chính `(user_id, key)` (schema: `architecture/02-data-model.md` mục 2). Key của user này không đụng key của user khác.
-- Middleware tra key trước khi vào handler:
-  - chưa có → chạy handler; service ghi row (kèm `request_hash`, status và body của response) **trong cùng transaction** với thay đổi nghiệp vụ, nên không bao giờ có thay đổi mà thiếu key hay ngược lại;
-  - đã có, cùng `request_hash` → trả lại đúng response đã lưu, không chạy handler;
-  - đã có, `request_hash` khác → `422 IDEMPOTENCY_KEY_REUSED`.
-- Hai request cùng key đến đồng thời: request thua vấp khóa chính lúc commit, rollback rồi trả response của request thắng.
-- Chỉ response thành công được lưu; request lỗi không ghi key nên client sửa rồi gửi lại cùng key được.
+- Middleware **giành key ở đầu transaction**, trước khi vào handler: mở transaction rồi `INSERT ... ON CONFLICT (user_id, key) DO NOTHING` kèm `method`, `path`, `request_hash`.
+  - insert được → chạy handler trong chính transaction đó. Service chỉ ghi qua `store.InTx`: gặp transaction của request trong context thì mở savepoint bên trong, không thì mở transaction mới. Service không bao giờ ghi thẳng vào pool, nếu không thay đổi sẽ commit tách khỏi key. Handler xong, middleware ghi status, header `Location` và body của response vào row rồi commit: thay đổi và response đã lưu cùng commit hoặc cùng mất;
+  - key đã có, cùng `method`, `path` và `request_hash` → trả lại đúng response đã lưu kèm header `Idempotent-Replayed: true`, không chạy handler;
+  - key đã có, khác một trong ba thứ đó → `422 IDEMPOTENCY_KEY_REUSED`.
+- Hai request cùng key đến đồng thời: câu `INSERT` của request sau đứng chờ ngay tại đó cho tới khi request trước commit (rồi replay response của nó) hoặc rollback (rồi tự chạy handler). Giành key ở cuối transaction thì sai: request sau sẽ vấp thay đổi của request trước trước khi vấp key, ví dụ unique index của slug ở `POST /organizations`, và trả `409 SLUG_TAKEN` thay vì response của request trước.
+- Response được giữ trong bộ nhớ tới khi commit xong mới gửi, để client không bao giờ thấy thành công rồi bị rollback.
+- Chỉ response 2xx được lưu; request lỗi thì rollback cả transaction, key được nhả, nên client sửa rồi gửi lại cùng key được.
+- Body lưu ở cột kiểu `json`, không phải `jsonb`: `jsonb` sắp lại thứ tự key, còn `json` giữ nguyên văn bản nên response replay giống từng byte.
 - Row giữ 24 giờ, vòng `housekeeping` xóa (mục 5.3).
 
 ### 3.5 Authz middleware

@@ -13,7 +13,7 @@
 1. **Phiên portal gắn với SSO session của Keycloak.** Phiên sống đúng bằng refresh token; một bộ thời hạn duy nhất đặt ở realm (access token 5 phút, SSO idle 8 giờ, SSO max 24 giờ) thay cho hai bộ số mâu thuẫn trước đây. Logout portal kết thúc luôn SSO session.
 2. **Gỡ group/membership dùng tombstone.** Row bị đánh dấu xóa và chỉ biến mất sau khi Keycloak đã gỡ xong; trước đây row bị xóa ngay nên worker không còn gì để biết phải đồng bộ.
 3. **Hệ quả của thu hồi quyền được ghi rõ**: logout trên Keycloak đăng xuất user ở mọi nơi; chỉ thực hiện khi group bị gỡ đang có binding Workspace.
-4. **`Idempotency-Key`** lưu ở bảng riêng theo `(user, key)`, ghi cùng transaction với thay đổi.
+4. **`Idempotency-Key`** lưu ở bảng riêng theo `(user, key)`, giành ở đầu transaction và commit cùng thay đổi.
 5. **Không dùng Redis**, ghi thành quyết định có lý do (13.2, ADR 21).
 6. **Central plane không đọc Node**: việc kiểm node sạch, gắn label/taint và đọc capacity đi qua các CRD phụ `PlatformNodeGrant`, `PlatformSharedPool` (và `PlatformNodeInventory`, xem điểm 17); cấp dedicated node trở thành một Operation.
 7. **Storage dùng `csi-driver-nfs`** thay cho NFS subdir provisioner (đã ngừng phát hành từ 2023); vẫn là NFS, StorageClass `standard` không đổi. Lý do ở `architecture/05-network-and-scheduling.md` mục 9.

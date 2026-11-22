@@ -421,14 +421,14 @@ sequenceDiagram
   U->>SPA: Bấm Create
   SPA->>API: POST /organizations/acme/workspaces
   Note over SPA,API: Header Idempotency-Key = UUID sinh ở client
-  API->>API: Authz OrgOwner/OrgAdmin, validate slug solar
-  API->>DB: SELECT idempotency_keys theo (user, key)
-  alt Key đã có, cùng request hash
+  API->>DB: BEGIN
+  API->>DB: INSERT idempotency_keys (user, key) ON CONFLICT DO NOTHING
+  alt Key đã có, cùng method, path và request hash
     API-->>SPA: Trả lại đúng response đã lưu, không tạo mới
-  else Key đã có, request hash khác
+  else Key đã có, khác request
     API-->>SPA: 422 IDEMPOTENCY_KEY_REUSED
   end
-  API->>DB: BEGIN
+  API->>API: Authz OrgOwner/OrgAdmin, validate slug solar
   API->>DB: SELECT organization_cluster_grants FOR UPDATE
   API->>DB: Cluster cluster-a Ready? mode Shared được cấp?
   API->>DB: SUM allocation active trong grant + request mới
@@ -459,7 +459,7 @@ sequenceDiagram
   API->>DB: INSERT workspace_group_bindings
   API->>DB: INSERT operations workspace.create state=Pending
   API->>DB: INSERT outbox workspace.apply generation=1
-  API->>DB: INSERT idempotency_keys (response 202), audit, COMMIT
+  API->>DB: audit, UPDATE idempotency_keys (response 202), COMMIT
   API-->>SPA: 202 workspaceId + operationId
   SPA->>API: GET /operations/op-1 qua SSE hoặc poll
   PW->>DB: BEGIN, lấy outbox tới hạn FOR UPDATE SKIP LOCKED
@@ -486,11 +486,11 @@ sequenceDiagram
 
 **Điểm cần review**
 
-- Bước 8–12: `Idempotency-Key` tra theo `(user, key)`; row được ghi trong chính transaction tạo Workspace, nên retry của client nhận lại đúng response cũ và không tạo Workspace thứ hai [14.4]. Cơ chế: `IMPLEMENTATION-PLAN.md` mục 3.4.
-- Bước 12–24 là **một** transaction: lock grant, shared pool, NetworkPool đều `FOR UPDATE` và đúng thứ tự đó (pool cũng phải khóa ghi, nếu không hai Organization cùng tạo trên một pool sẽ cùng đọc một tổng và cùng vượt trần); unique/exclusion constraint trên `network_allocations` là lớp chặn overlap thứ hai [5.3][7.2].
-- Bước 20: shared là soft allocation — vượt `ratio × reservable` mới từ chối; portal cảnh báo khi pool gần trần nhưng Pod `Pending` khi mọi Workspace dùng hết quota là hành vi chấp nhận [6.2].
-- Bước 42–47: "DB đã commit nhưng apply thất bại" được cứu bằng outbox retry; reservation **không** bị release vì controller lỗi tạm thời [17]. Server-side apply với field manager riêng bảo đảm apply lại không tạo trùng.
-- Bước 49–54: controller không đọc DB; mọi thứ cần thiết nằm trong `spec` của CR.
+- Bước 6–9 và 32: `Idempotency-Key` được giành theo `(user, key)` ngay đầu transaction tạo Workspace và response được ghi vào row trước khi commit, nên retry của client nhận lại đúng response cũ và không tạo Workspace thứ hai [14.4]. Cơ chế: `IMPLEMENTATION-PLAN.md` mục 3.4.
+- Bước 6–32 là **một** transaction: lock grant, shared pool, NetworkPool đều `FOR UPDATE` và đúng thứ tự đó (pool cũng phải khóa ghi, nếu không hai Organization cùng tạo trên một pool sẽ cùng đọc một tổng và cùng vượt trần); unique/exclusion constraint trên `network_allocations` là lớp chặn overlap thứ hai [5.3][7.2].
+- Bước 16–19: shared là soft allocation — vượt `ratio × reservable` mới từ chối; portal cảnh báo khi pool gần trần nhưng Pod `Pending` khi mọi Workspace dùng hết quota là hành vi chấp nhận [6.2].
+- Bước 35–38: "DB đã commit nhưng apply thất bại" được cứu bằng outbox retry; reservation **không** bị release vì controller lỗi tạm thời [17]. Server-side apply với field manager riêng bảo đảm apply lại không tạo trùng.
+- Bước 39–45: controller không đọc DB; mọi thứ cần thiết nằm trong `spec` của CR.
 - `Validating` và `Reserving` chỉ tồn tại trong request; row `workspaces` đầu tiên được ghi đã ở `Provisioning` (`04-state-machines.md` mục 1).
 
 ---

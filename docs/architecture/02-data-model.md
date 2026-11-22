@@ -84,8 +84,9 @@ erDiagram
     text method
     text path
     bytea request_hash "sha256 của body"
-    int response_status
-    jsonb response_body
+    int response_status "0 khi mới giành key, 2xx khi đã commit"
+    text response_location "header Location của response, nullable"
+    json response_body "json để giữ nguyên từng byte, nullable"
     timestamptz created_at
   }
   organizations {
@@ -176,7 +177,7 @@ erDiagram
 **Phiên và idempotency:**
 
 - `sessions`: cơ chế ở `06-security-and-identity.md` mục 3. Index trên `user_id` (thu hồi mọi phiên của một user) và `expires_at` (dọn rác).
-- `idempotency_keys`: cơ chế ở `IMPLEMENTATION-PLAN.md` mục 3.4. Row được ghi trong cùng transaction với thay đổi nghiệp vụ; giữ 24 giờ rồi vòng `housekeeping` xóa.
+- `idempotency_keys`: cơ chế ở `IMPLEMENTATION-PLAN.md` mục 3.4. Row được giành ở đầu transaction của request và điền response trước khi commit, cùng transaction với thay đổi nghiệp vụ; giữ 24 giờ rồi vòng `housekeeping` xóa.
 
 ## 3. Vùng Cluster & Entitlement
 
