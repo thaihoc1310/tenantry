@@ -1,0 +1,72 @@
+{
+  "responses": {
+    "200": {
+      "organization": {
+        "members": {
+          "used": 1,
+          "limit": 20
+        },
+        "groups": {
+          "used": 3,
+          "limit": 10
+        },
+        "workspaces": {
+          "used": 0,
+          "limit": 8
+        }
+      },
+      "clusterGrants": [
+        {
+          "grantId": "grant-01jd3m7a1b2c3d4e5f6g7h8j9k",
+          "clusterId": "cluster-a",
+          "isDefault": true,
+          "workspaces": {
+            "allocated": 0,
+            "limit": 2,
+            "remaining": 2
+          },
+          "namespaces": {
+            "allocated": 0,
+            "limit": 6,
+            "remaining": 6
+          },
+          "requestsCpu": {
+            "allocated": "0",
+            "limit": "2",
+            "remaining": "2"
+          },
+          "requestsMemory": {
+            "allocated": "0",
+            "limit": "4Gi",
+            "remaining": "4Gi"
+          },
+          "limitsCpu": {
+            "allocated": "0",
+            "limit": "4",
+            "remaining": "4"
+          },
+          "limitsMemory": {
+            "allocated": "0",
+            "limit": "8Gi",
+            "remaining": "8Gi"
+          },
+          "pods": {
+            "allocated": 0,
+            "limit": 20,
+            "remaining": 20
+          },
+          "requestsStorage": {
+            "allocated": "0",
+            "limit": "20Gi",
+            "remaining": "20Gi"
+          }
+        }
+      ]
+    },
+    "409": {
+      "code": "ORG_NOT_ACTIVE",
+      "message": "the organization is not approved yet, so it has no entitlement",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K"
+    }
+  }
+}

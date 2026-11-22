@@ -1,0 +1,28 @@
+{
+  "responses": {
+    "200": {
+      "items": [
+        {
+          "id": "org-01jd3m6k4x8c9vq2b7t5n0w1yz",
+          "slug": "acme",
+          "displayName": "ACME",
+          "description": "Staging environments for the web team",
+          "ownerUserId": "usr-01jd3m5z9t2c8vq2b7t5n0w1ab",
+          "status": "Active",
+          "reviewNote": "",
+          "createdAt": "2026-11-21T09:17:00Z",
+          "myRole": "OrgOwner"
+        }
+      ],
+      "nextCursor": "org-01jd3m6k4x8c9vq2b7t5n0w1yz"
+    },
+    "400": {
+      "code": "VALIDATION_FAILED",
+      "message": "limit: must be between 1 and 200",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K",
+      "details": {
+        "field": "limit"
+      }
+    }
+  }
+}

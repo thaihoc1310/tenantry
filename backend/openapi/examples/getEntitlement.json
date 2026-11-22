@@ -1,0 +1,47 @@
+{
+  "responses": {
+    "200": {
+      "entitlement": {
+        "maxMembers": 20,
+        "maxGroups": 10,
+        "maxWorkspacesTotal": 8
+      },
+      "clusterGrants": [
+        {
+          "id": "grant-01jd3m7a1b2c3d4e5f6g7h8j9k",
+          "isDefault": true,
+          "clusterId": "cluster-a",
+          "maxWorkspaces": 2,
+          "maxNamespacesTotal": 6,
+          "resources": {
+            "requestsCpu": "2",
+            "requestsMemory": "4Gi",
+            "limitsCpu": "4",
+            "limitsMemory": "8Gi",
+            "pods": 20,
+            "requestsStorage": "20Gi"
+          },
+          "sharedPoolIds": [
+            "shared-general"
+          ],
+          "networkPoolIds": [
+            "onboarding-pod-network"
+          ],
+          "allowedStorageClasses": [
+            "standard"
+          ]
+        }
+      ]
+    },
+    "403": {
+      "code": "FORBIDDEN",
+      "message": "requires OrgOwner or OrgAdmin",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K"
+    },
+    "409": {
+      "code": "ORG_NOT_ACTIVE",
+      "message": "the organization is not approved yet, so it has no entitlement",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K"
+    }
+  }
+}
