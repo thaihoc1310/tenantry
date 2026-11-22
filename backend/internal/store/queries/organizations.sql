@@ -76,3 +76,12 @@ RETURNING *;
 -- name: CreateEntitlement :exec
 INSERT INTO organization_entitlements (org_id, max_members, max_groups, max_workspaces_total)
 VALUES ($1, $2, $3, $4);
+
+-- name: GetEntitlement :one
+SELECT * FROM organization_entitlements WHERE org_id = $1;
+
+-- name: CountOrganizationUsage :one
+-- Groups waiting to be removed from Keycloak (tombstones) no longer count.
+SELECT
+  (SELECT count(*) FROM organization_members m WHERE m.org_id = $1)::int AS members,
+  (SELECT count(*) FROM groups g WHERE g.org_id = $1 AND g.deleted_at IS NULL)::int AS groups;

@@ -27,6 +27,7 @@ const (
 	SlugTaken         Code = "SLUG_TAKEN"
 	OrgRequestPending Code = "ORG_REQUEST_PENDING"
 	ClusterNotReady   Code = "CLUSTER_NOT_READY"
+	OrgNotActive      Code = "ORG_NOT_ACTIVE"
 )
 
 type Error struct {

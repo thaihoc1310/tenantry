@@ -27,3 +27,12 @@ SELECT @grant_id, unnest(@pool_ids::text[]);
 -- name: AddGrantNetworkPools :exec
 INSERT INTO cluster_grant_network_pools (grant_id, pool_id)
 SELECT @grant_id, unnest(@pool_ids::text[]);
+
+-- name: ListClusterGrants :many
+-- The default grant first, then by cluster.
+SELECT sqlc.embed(g),
+  array(SELECT pool_id FROM cluster_grant_shared_pools WHERE grant_id = g.id ORDER BY pool_id)::text[] AS shared_pool_ids,
+  array(SELECT pool_id FROM cluster_grant_network_pools WHERE grant_id = g.id ORDER BY pool_id)::text[] AS network_pool_ids
+FROM organization_cluster_grants g
+WHERE g.org_id = $1
+ORDER BY g.is_default DESC, g.cluster_id;

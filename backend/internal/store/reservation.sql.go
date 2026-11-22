@@ -179,6 +179,60 @@ func (q *Queries) GetSharedPools(ctx context.Context, ids []string) ([]GetShared
 	return items, nil
 }
 
+const listClusterGrants = `-- name: ListClusterGrants :many
+SELECT g.id, g.org_id, g.cluster_id, g.is_default, g.max_workspaces, g.max_namespaces_total, g.requests_cpu_milli, g.requests_memory_bytes, g.limits_cpu_milli, g.limits_memory_bytes, g.pods, g.requests_storage_bytes, g.allowed_storage_classes, g.created_at, g.updated_at,
+  array(SELECT pool_id FROM cluster_grant_shared_pools WHERE grant_id = g.id ORDER BY pool_id)::text[] AS shared_pool_ids,
+  array(SELECT pool_id FROM cluster_grant_network_pools WHERE grant_id = g.id ORDER BY pool_id)::text[] AS network_pool_ids
+FROM organization_cluster_grants g
+WHERE g.org_id = $1
+ORDER BY g.is_default DESC, g.cluster_id
+`
+
+type ListClusterGrantsRow struct {
+	OrganizationClusterGrant OrganizationClusterGrant
+	SharedPoolIds            []string
+	NetworkPoolIds           []string
+}
+
+// The default grant first, then by cluster.
+func (q *Queries) ListClusterGrants(ctx context.Context, orgID string) ([]ListClusterGrantsRow, error) {
+	rows, err := q.db.Query(ctx, listClusterGrants, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListClusterGrantsRow
+	for rows.Next() {
+		var i ListClusterGrantsRow
+		if err := rows.Scan(
+			&i.OrganizationClusterGrant.ID,
+			&i.OrganizationClusterGrant.OrgID,
+			&i.OrganizationClusterGrant.ClusterID,
+			&i.OrganizationClusterGrant.IsDefault,
+			&i.OrganizationClusterGrant.MaxWorkspaces,
+			&i.OrganizationClusterGrant.MaxNamespacesTotal,
+			&i.OrganizationClusterGrant.RequestsCpuMilli,
+			&i.OrganizationClusterGrant.RequestsMemoryBytes,
+			&i.OrganizationClusterGrant.LimitsCpuMilli,
+			&i.OrganizationClusterGrant.LimitsMemoryBytes,
+			&i.OrganizationClusterGrant.Pods,
+			&i.OrganizationClusterGrant.RequestsStorageBytes,
+			&i.OrganizationClusterGrant.AllowedStorageClasses,
+			&i.OrganizationClusterGrant.CreatedAt,
+			&i.OrganizationClusterGrant.UpdatedAt,
+			&i.SharedPoolIds,
+			&i.NetworkPoolIds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const shareLockCluster = `-- name: ShareLockCluster :one
 SELECT id, display_name, status, proxy_endpoint, console_url, apps_domain, capabilities, last_health_check, created_at, updated_at FROM clusters WHERE id = $1 FOR SHARE
 `

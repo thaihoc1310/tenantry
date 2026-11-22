@@ -143,6 +143,50 @@ paths:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
+  /organizations/{orgId}/entitlement:
+    parameters:
+      - $ref: "#/components/parameters/orgId"
+    get:
+      operationId: getEntitlement
+      summary: What the organization was granted (OrgOwner or OrgAdmin)
+      description: |
+        The global entitlement and every cluster grant, the default first
+        (PRODUCT-PLAN §5.6). Checked in this order: a non-member gets 404,
+        an OrgMember 403, an organization not yet approved 409 `ORG_NOT_ACTIVE`.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationEntitlement" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/OrgNotActive" }
+
+  /organizations/{orgId}/usage:
+    parameters:
+      - $ref: "#/components/parameters/orgId"
+    get:
+      operationId: getUsage
+      summary: What the organization uses, next to its limits (OrgOwner or OrgAdmin)
+      description: |
+        Two parts (PRODUCT-PLAN §5.6), each number with its limit so a quota
+        bar needs this response only. Organization-wide counts are real (an
+        organization just approved has 1 member and 3 groups); per grant,
+        what its Workspaces hold, zero until Workspaces exist. Same checks
+        as `getEntitlement`.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationUsage" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/OrgNotActive" }
+
   /operations/{operationId}:
     parameters:
       - $ref: "#/components/parameters/operationId"
@@ -360,6 +404,11 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorResponse" }
+    OrgNotActive:
+      description: "`ORG_NOT_ACTIVE`: the organization is Pending or Rejected, so it has no entitlement."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
     IdempotencyKeyReused:
       description: "`IDEMPOTENCY_KEY_REUSED`: the key came before with another method, path or body."
       content:
@@ -394,6 +443,7 @@ components:
         - SLUG_TAKEN
         - ORG_REQUEST_PENDING
         - CLUSTER_NOT_READY
+        - ORG_NOT_ACTIVE
         - INTERNAL
 
     ErrorResponse:
@@ -638,3 +688,69 @@ components:
       additionalProperties: false
       properties:
         reason: { type: string, minLength: 1, maxLength: 500 }
+
+    OrganizationEntitlement:
+      type: object
+      required: [entitlement, clusterGrants]
+      properties:
+        entitlement: { $ref: "#/components/schemas/Entitlement" }
+        clusterGrants:
+          type: array
+          items: { $ref: "#/components/schemas/ClusterGrant" }
+
+    UsageCount:
+      type: object
+      required: [used, limit]
+      properties:
+        used: { type: integer }
+        limit: { type: integer }
+
+    AllocatedCount:
+      type: object
+      required: [allocated, limit, remaining]
+      properties:
+        allocated: { type: integer }
+        limit: { type: integer }
+        remaining: { type: integer }
+
+    AllocatedQuantity:
+      type: object
+      required: [allocated, limit, remaining]
+      properties:
+        allocated: { $ref: "#/components/schemas/Quantity" }
+        limit: { $ref: "#/components/schemas/Quantity" }
+        remaining: { $ref: "#/components/schemas/Quantity" }
+
+    GrantUsage:
+      type: object
+      description: CPU, memory and pods count Shared Workspaces only; the rest count every Workspace (PRODUCT-PLAN §5.2).
+      required: [grantId, clusterId, isDefault, workspaces, namespaces, requestsCpu, requestsMemory, limitsCpu, limitsMemory, pods, requestsStorage]
+      properties:
+        grantId: { type: string }
+        clusterId: { type: string }
+        isDefault: { type: boolean }
+        workspaces: { $ref: "#/components/schemas/AllocatedCount" }
+        namespaces: { $ref: "#/components/schemas/AllocatedCount" }
+        requestsCpu: { $ref: "#/components/schemas/AllocatedQuantity" }
+        requestsMemory: { $ref: "#/components/schemas/AllocatedQuantity" }
+        limitsCpu: { $ref: "#/components/schemas/AllocatedQuantity" }
+        limitsMemory: { $ref: "#/components/schemas/AllocatedQuantity" }
+        pods: { $ref: "#/components/schemas/AllocatedCount" }
+        requestsStorage: { $ref: "#/components/schemas/AllocatedQuantity" }
+
+    OrganizationUsage:
+      type: object
+      required: [organization, clusterGrants]
+      properties:
+        organization:
+          type: object
+          required: [members, groups, workspaces]
+          properties:
+            members: { $ref: "#/components/schemas/UsageCount" }
+            groups:
+              description: Groups waiting to be removed do not count.
+              allOf: [{ $ref: "#/components/schemas/UsageCount" }]
+            workspaces: { $ref: "#/components/schemas/UsageCount" }
+        clusterGrants:
+          type: array
+          items: { $ref: "#/components/schemas/GrantUsage" }

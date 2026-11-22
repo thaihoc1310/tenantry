@@ -207,3 +207,47 @@ func ActivePolicy(ctx context.Context, q *store.Queries) (p Policy, ok bool, err
 	}
 	return Policy{DefaultClusterID: row.DefaultClusterID, EntitlementTemplate: row.EntitlementTemplate, GrantTemplate: row.GrantTemplate}, true, nil
 }
+
+// Grants returns orgID's grants, the default first.
+func Grants(ctx context.Context, q *store.Queries, orgID string) ([]Grant, error) {
+	rows, err := q.ListClusterGrants(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Grant, 0, len(rows))
+	for _, r := range rows {
+		g := r.OrganizationClusterGrant
+		out = append(out, Grant{ID: g.ID, OrgID: g.OrgID, IsDefault: g.IsDefault, GrantSpec: GrantSpec{
+			ClusterID: g.ClusterID, MaxWorkspaces: g.MaxWorkspaces, MaxNamespacesTotal: g.MaxNamespacesTotal,
+			Resources: Resources{
+				RequestsCPUMilli: g.RequestsCpuMilli, RequestsMemoryBytes: g.RequestsMemoryBytes,
+				LimitsCPUMilli: g.LimitsCpuMilli, LimitsMemoryBytes: g.LimitsMemoryBytes,
+				Pods: g.Pods, RequestsStorageBytes: g.RequestsStorageBytes,
+			},
+			SharedPoolIDs: nonNil(r.SharedPoolIds), NetworkPoolIDs: nonNil(r.NetworkPoolIds),
+			AllowedStorageClasses: nonNil(g.AllowedStorageClasses),
+		}})
+	}
+	return out, nil
+}
+
+// Allocation is what an organization's Workspaces hold of one grant, in the
+// grant's scopes (PRODUCT-PLAN §5.2): CPU, memory and pods count Shared
+// Workspaces only.
+type Allocation struct {
+	GrantID    string
+	Workspaces int32
+	Namespaces int32
+	Resources  Resources
+}
+
+// Allocations returns, for each grant, what its Workspaces hold.
+//
+// ponytail: zero until the workspaces table exists (M7); then the sums go here.
+func Allocations(grants []Grant) []Allocation {
+	out := make([]Allocation, len(grants))
+	for i, g := range grants {
+		out[i] = Allocation{GrantID: g.ID}
+	}
+	return out
+}

@@ -47,6 +47,25 @@ func (q *Queries) ApproveOrganization(ctx context.Context, id string) (Organizat
 	return i, err
 }
 
+const countOrganizationUsage = `-- name: CountOrganizationUsage :one
+SELECT
+  (SELECT count(*) FROM organization_members m WHERE m.org_id = $1)::int AS members,
+  (SELECT count(*) FROM groups g WHERE g.org_id = $1 AND g.deleted_at IS NULL)::int AS groups
+`
+
+type CountOrganizationUsageRow struct {
+	Members int32
+	Groups  int32
+}
+
+// Groups waiting to be removed from Keycloak (tombstones) no longer count.
+func (q *Queries) CountOrganizationUsage(ctx context.Context, orgID string) (CountOrganizationUsageRow, error) {
+	row := q.db.QueryRow(ctx, countOrganizationUsage, orgID)
+	var i CountOrganizationUsageRow
+	err := row.Scan(&i.Members, &i.Groups)
+	return i, err
+}
+
 const createEntitlement = `-- name: CreateEntitlement :exec
 INSERT INTO organization_entitlements (org_id, max_members, max_groups, max_workspaces_total)
 VALUES ($1, $2, $3, $4)
@@ -103,6 +122,23 @@ func (q *Queries) CreateOrganizationRequest(ctx context.Context, arg CreateOrgan
 		&i.Status,
 		&i.ReviewNote,
 		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getEntitlement = `-- name: GetEntitlement :one
+SELECT org_id, max_members, max_groups, max_workspaces_total, updated_at FROM organization_entitlements WHERE org_id = $1
+`
+
+func (q *Queries) GetEntitlement(ctx context.Context, orgID string) (OrganizationEntitlement, error) {
+	row := q.db.QueryRow(ctx, getEntitlement, orgID)
+	var i OrganizationEntitlement
+	err := row.Scan(
+		&i.OrgID,
+		&i.MaxMembers,
+		&i.MaxGroups,
+		&i.MaxWorkspacesTotal,
 		&i.UpdatedAt,
 	)
 	return i, err
