@@ -53,7 +53,7 @@ var (
 
 // New describes an operation to start.
 type New struct {
-	OrgID         string
+	OrgID         string // empty for an operation on a cluster itself (sharedpool.update)
 	ResourceType  string // e.g. Workspace
 	ResourceID    string
 	Type          string // e.g. workspace.create
@@ -64,8 +64,11 @@ type New struct {
 // Create starts an operation in Pending.
 func Create(ctx context.Context, q *store.Queries, n New) (store.Operation, error) {
 	arg := store.CreateOperationParams{
-		ID: id.New(id.Operation), OrgID: n.OrgID, ResourceType: n.ResourceType, ResourceID: n.ResourceID,
+		ID: id.New(id.Operation), ResourceType: n.ResourceType, ResourceID: n.ResourceID,
 		Type: n.Type, CorrelationID: n.CorrelationID,
+	}
+	if n.OrgID != "" {
+		arg.OrgID = &n.OrgID
 	}
 	if n.CreatedBy != "" {
 		arg.CreatedBy = &n.CreatedBy
@@ -137,7 +140,7 @@ func (s *Service) Retry(ctx context.Context, userID string, platformAdmin bool, 
 			return err
 		}
 		return audit.Record(ctx, q, audit.Event{
-			Actor: userID, OrgID: op.OrgID, Action: audit.OperationRetry, TargetType: "Operation", TargetID: op.ID,
+			Actor: userID, OrgID: deref(op.OrgID), Action: audit.OperationRetry, TargetType: "Operation", TargetID: op.ID,
 			// A Platform Admin acting on an organization they are not a member of.
 			Detail: map[string]any{"type": op.Type, "asPlatformAdmin": role == ""},
 		})
@@ -185,4 +188,11 @@ func (s *Service) AdminList(ctx context.Context, state, cursor string, pageSize 
 		p.NextCursor = p.Items[pageSize-1].ID
 	}
 	return p, nil
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

@@ -1722,10 +1722,10 @@ components:
 
     Operation:
       type: object
-      required: [id, orgId, resourceType, resourceId, type, state, progress, correlationId, createdAt, updatedAt]
+      required: [id, resourceType, resourceId, type, state, progress, correlationId, createdAt, updatedAt]
       properties:
         id: { type: string }
-        orgId: { type: string }
+        orgId: { type: string, description: "Absent on an operation on a cluster itself, e.g. sharedpool.update; only a Platform Admin sees those" }
         resourceType: { type: string, description: e.g. Workspace }
         resourceId: { type: string }
         type: { type: string, description: e.g. workspace.create }

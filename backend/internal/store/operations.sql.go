@@ -17,7 +17,7 @@ RETURNING id, org_id, resource_type, resource_id, type, state, progress, error_c
 
 type CreateOperationParams struct {
 	ID            string
-	OrgID         string
+	OrgID         *string
 	ResourceType  string
 	ResourceID    string
 	Type          string

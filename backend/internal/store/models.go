@@ -156,7 +156,7 @@ type OnboardingPolicy struct {
 
 type Operation struct {
 	ID            string
-	OrgID         string
+	OrgID         *string
 	ResourceType  string
 	ResourceID    string
 	Type          string
@@ -279,4 +279,51 @@ type User struct {
 	SyncAttempts int32
 	NextSyncAt   time.Time
 	LastError    string
+}
+
+type Workspace struct {
+	ID                   string
+	OrgID                string
+	ClusterID            string
+	ClusterGrantID       string
+	Slug                 string
+	K8sName              string
+	DisplayName          string
+	State                string
+	RequestsCpuMilli     int64
+	RequestsMemoryBytes  int64
+	LimitsCpuMilli       int64
+	LimitsMemoryBytes    int64
+	Pods                 int32
+	RequestsStorageBytes int64
+	NamespaceQuota       int32
+	ComputeMode          string
+	SharedPoolID         *string
+	DesiredGeneration    int64
+	ObservedGeneration   int64
+	Conditions           []byte
+	DeletedAt            *time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
+type WorkspaceGroupBinding struct {
+	WorkspaceID string
+	GroupID     string
+	OrgID       string
+	Role        string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type WorkspaceNamespace struct {
+	ID            string
+	WorkspaceID   string
+	ClusterID     string
+	Name          string
+	Source        string
+	State         string
+	UsageSnapshot []byte
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }

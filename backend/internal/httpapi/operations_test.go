@@ -60,7 +60,7 @@ func TestOperations(t *testing.T) {
 			if err := json.Unmarshal(rec.Body.Bytes(), &op); err != nil {
 				t.Fatal(err)
 			}
-			if op.State != c.wantState || op.OrgId != "org-acme" || op.CorrelationId != "req-1" ||
+			if op.State != c.wantState || op.OrgId == nil || *op.OrgId != "org-acme" || op.CorrelationId != "req-1" ||
 				op.CreatedBy == nil || *op.CreatedBy != "usr-alice" {
 				t.Fatalf("got %+v", op)
 			}

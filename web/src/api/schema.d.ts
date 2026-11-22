@@ -1220,7 +1220,8 @@ export interface components {
         };
         Operation: {
             id: string;
-            orgId: string;
+            /** @description Absent on an operation on a cluster itself, e.g. sharedpool.update; only a Platform Admin sees those */
+            orgId?: string;
             /** @description e.g. Workspace */
             resourceType: string;
             resourceId: string;
