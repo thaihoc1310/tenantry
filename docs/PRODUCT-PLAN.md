@@ -44,6 +44,7 @@
 32. **Kịch bản demo thống nhất số liệu và chạy được trên lab 4 node**: Solar Shared 2 CPU/4Gi (limits 4/8Gi); node dedicated là `wk3` rút khỏi shared pool (reservable 2,5 CPU), Water 1 + Green 1, Workspace thứ ba 1 CPU bị từ chối (5.4, 6.3, 28).
 33. **Quota của Workspace là một quota chung cho mọi Namespace** (`Tenant.spec.rules[].quota[]`, Capsule sinh `GlobalResourceQuota` và chặn ở admission), không chia trước theo Namespace; đã đo trên lab là không vượt trần kể cả khi tạo Pod đồng thời (5.4).
 34. **Gỡ user khỏi group không còn logout user trên Keycloak**: Keycloak chạy lại group mapper khi refresh (đã kiểm ở M4), nên token kế tiếp đã mất group; bỏ logout để user không bị đăng xuất khỏi mọi nơi (9.3; thay cho điểm 3).
+35. **Annotation của Namespace giữ bằng metadata managed của Capsule, không dùng `forbiddenAnnotations`**: đã thử trên lab, `forbiddenAnnotations` từ chối cả annotation Capsule tự gắn nên Namespace Dedicated không tạo được. Namespace Shared có `defaultTolerations` rỗng và whitelist chỉ gồm các taint `node.kubernetes.io/*`; `ComputeReady` của Shared chỉ cần pool có node Ready; node dedicated bị cordon vẫn giữ label/taint (6.4, 7.3, 18).
 
 ### v0.6 → v0.7
 
@@ -673,7 +674,7 @@ workspaces.tenantry.io/ws-01jxyz=true
 Capsule Tenant dùng selector membership này. Vị trí Pod được ép bằng hai admission plugin có sẵn của kube-apiserver (bật từ M1), cấu hình qua annotation Namespace mà tenant không sửa được:
 
 - `PodNodeSelector` trộn selector của Namespace vào mọi Pod, và kubelet kiểm lại `nodeSelector` khi nhận Pod, nên kể cả Pod tự đặt `spec.nodeName` cũng không chạy được ngoài pool/node của Workspace. Selector với key khác không bị từ chối, Pod chỉ nằm `Pending`;
-- `PodTolerationRestriction` (annotation `defaultTolerations` + `tolerationsWhitelist`, whitelist gồm các taint `node.kubernetes.io/*`) inject toleration của Organization vào Namespace Dedicated (từ M8) và từ chối toleration ngoài whitelist, kể cả toleration của Organization khác;
+- `PodTolerationRestriction` (annotation `defaultTolerations` + `tolerationsWhitelist`, whitelist gồm các taint `node.kubernetes.io/*`) inject toleration của Organization vào Namespace Dedicated (từ M8) và từ chối toleration ngoài whitelist, kể cả toleration của Organization khác; Namespace Shared có `defaultTolerations` rỗng, whitelist chỉ các taint `node.kubernetes.io/*`;
 - label/taint `tenantry.io/*` và `workspaces.tenantry.io/*` trên Node chỉ ServiceAccount `tenantry-operator` được đổi (ValidatingAdmissionPolicy, M8);
 - system/control-plane node không mang label pool hay membership nên không Pod tenant nào khớp selector.
 
@@ -744,7 +745,7 @@ Mỗi Workspace có một Calico IPPool:
 - Shared mode dùng node selector của shared pool đã chọn;
 - Dedicated mode dùng selector theo immutable Workspace ID trên node đã chọn;
 - Namespace của Workspace có annotation chọn đúng pool;
-- Capsule cấm tenant sửa annotation của Namespace: `namespaceOptions.forbiddenAnnotations` của Tenant phủ `cni.projectcalico.org/*` và `scheduler.alpha.kubernetes.io/{node-selector,defaultTolerations,tolerationsWhitelist}`;
+- Capsule giữ annotation của Namespace: `cni.projectcalico.org/ipv4pools` và ba annotation `scheduler.alpha.kubernetes.io/{node-selector,defaultTolerations,tolerationsWhitelist}` là metadata managed trong `Tenant.spec.rules[]` (tenant sửa thì Capsule đặt lại), `cni.projectcalico.org/ipv6pools` bị rule deny metadata;
 - Pod không được tự chọn IP: ValidatingAdmissionPolicy `tenantry-tenant-pod-network` (chart operator, M9) từ chối Pod của tenant trong Namespace tenant mang annotation `cni.projectcalico.org/ipv4pools`, `ipv6pools`, `ipAddrs`, `ipAddrsNoIpam` hoặc `floatingIPs`.
 
 Một shared pool có thể được nhiều IPPool cùng chọn. Namespace annotation quyết định Pod của Workspace lấy IP từ pool nào. IPPool chỉ tồn tại trong Cluster chứa Workspace.
@@ -1645,7 +1646,7 @@ Không silently force-delete PVC/finalizer từ phía user.
 | Shared pool membership | CRD phụ `PlatformSharedPool` → operator gắn/gỡ label node `tenantry.io/compute-pool=<pool-id>` theo `spec.nodes` (trước M6: script `deploy/cluster/10-nodes.sh` gắn tạm) | M6 |
 | Shared compute | Tenant nodeSelector tới shared pool (annotation `PodNodeSelector` trên Namespace) | M8 |
 | Dedicated node selection | NodeReservation + org label/taint (`PlatformNodeGrant`) + Workspace membership label + Namespace annotation `PodNodeSelector` và `PodTolerationRestriction` (`defaultTolerations`, `tolerationsWhitelist` gồm cả `node.kubernetes.io/*`); VAP chỉ cho SA `tenantry-operator` đổi label/taint `tenantry.io/*`, `workspaces.tenantry.io/*` trên Node | M8 |
-| NetworkAllocation | Calico IPPool + Namespace annotation qua `Tenant.namespaceOptions.additionalMetadata`; `forbiddenAnnotations` của Tenant cấm `cni.projectcalico.org/*` và `scheduler.alpha.kubernetes.io/{node-selector,defaultTolerations,tolerationsWhitelist}`; VAP `tenantry-tenant-pod-network` chặn Pod của tenant mang annotation Calico (`ipv4pools`, `ipv6pools`, `ipAddrs`, `ipAddrsNoIpam`, `floatingIPs`) | M9 |
+| NetworkAllocation | Calico IPPool + Namespace annotation qua `Tenant.namespaceOptions.additionalMetadata`; annotation Calico và scheduler của Namespace là metadata managed trong `Tenant.spec.rules[]`, `ipv6pools` bị deny; VAP `tenantry-tenant-pod-network` chặn Pod của tenant mang annotation Calico (`ipv4pools`, `ipv6pools`, `ipAddrs`, `ipAddrsNoIpam`, `floatingIPs`) | M9 |
 | Network baseline | GlobalTenantResource NetworkPolicy, thuộc sub-reconciler `network` | M9 |
 | Storage allow-list | Capsule StorageClass allowed list (`Tenant.spec.storageClasses.allowed`) | M6 |
 | Route (`spec.routes`) | Ingress do controller dựng trong Namespace của tenant; ValidatingAdmissionPolicy `tenantry-tenant-ingress-lockdown` chặn Ingress và tài nguyên cert-manager **chỉ với caller `oidc:`** (namespace controller và garbage collector vẫn xóa được Ingress khi xóa Namespace) | M11 |
