@@ -254,3 +254,59 @@ export function cleanupAfterAll() {
     await cleanUp()
   })
 }
+
+// ---- Keycloak tokens of the kubectl client --------------------------------
+// The kubectl client is public: authorization code with PKCE and a loopback
+// redirect, as kubelogin does. The browser context is logged in to Keycloak,
+// so the code comes back at once.
+const issuer = 'https://auth.tenantry.site/realms/tenantry'
+const loopback = 'http://localhost:8000'
+
+function b64url(bytes: ArrayBuffer | Uint8Array): string {
+  return Buffer.from(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)).toString('base64url')
+}
+
+export async function kubectlTokens(
+  portal: Page,
+): Promise<{ id_token: string; refresh_token: string; access_token: string }> {
+  const page = await portal.context().newPage() // same Keycloak session, the portal tab stays where it is
+  const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)))
+  const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))
+  const q = new URLSearchParams({
+    client_id: 'kubectl',
+    response_type: 'code',
+    scope: 'openid',
+    redirect_uri: loopback,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    state: b64url(crypto.getRandomValues(new Uint8Array(8))),
+  })
+  // Nothing listens on the loopback address: the navigation fails there, and
+  // the code is read from the request (page.route does not see redirects).
+  const back = page.waitForRequest((r) => r.url().startsWith(loopback))
+  await page.goto(`${issuer}/protocol/openid-connect/auth?${q}`).catch(() => {})
+  const code = new URL((await back).url()).searchParams.get('code') ?? ''
+  expect(code).not.toBe('')
+  await page.close()
+  return token({
+    grant_type: 'authorization_code',
+    client_id: 'kubectl',
+    code,
+    redirect_uri: loopback,
+    code_verifier: verifier,
+  })
+}
+
+export async function token(form: Record<string, string>) {
+  const res = await fetch(`${issuer}/protocol/openid-connect/token`, {
+    method: 'POST',
+    body: new URLSearchParams(form),
+  })
+  expect(res.status, await res.clone().text()).toBe(200)
+  return (await res.json()) as { id_token: string; refresh_token: string; access_token: string }
+}
+
+export function groupsOf(jwt: string): string[] {
+  const claims = JSON.parse(Buffer.from(jwt.split('.')[1]!, 'base64url').toString()) as { groups?: string[] }
+  return claims.groups ?? []
+}
