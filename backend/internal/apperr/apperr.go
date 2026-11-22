@@ -69,6 +69,10 @@ const (
 	// Network (PRODUCT-PLAN §7).
 	CIDROutsideAllowedPool Code = "CIDR_OUTSIDE_ALLOWED_POOL" // a requested block outside the pool
 	NetworkPoolExhausted   Code = "NETWORK_POOL_EXHAUSTED"    // no free block of that length left
+
+	// Routes (PRODUCT-PLAN §7.6).
+	RouteQuotaExceeded Code = "ROUTE_QUOTA_EXCEEDED" // the Workspace has 20 Routes
+	RouteHostnameTaken Code = "ROUTE_HOSTNAME_TAKEN" // another Route holds the hostname
 )
 
 type Error struct {

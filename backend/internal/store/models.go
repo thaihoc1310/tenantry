@@ -356,3 +356,18 @@ type WorkspaceNodeReservation struct {
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 }
+
+type WorkspaceRoute struct {
+	ID          string
+	WorkspaceID string
+	Namespace   string
+	Name        string
+	Hostname    string
+	ServiceName string
+	ServicePort int32
+	State       string
+	Message     string
+	CreatedBy   *string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}

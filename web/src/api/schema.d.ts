@@ -903,6 +903,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workspaces/{workspaceId}/routes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        /** Routes of the Workspace (anyone who sees the Workspace) */
+        get: operations["listWorkspaceRoutes"];
+        put?: never;
+        /**
+         * Publish a Service of the Workspace on the apps domain (OrgOwner, OrgAdmin, or a member of a group holding TenantOwner)
+         * @description The hostname is `<name>-<k8sName>.<apps domain>`, put together here
+         *     (PRODUCT-PLAN §7.6): its first label must fit 63 characters. The
+         *     controller builds the Ingress with the platform's wildcard
+         *     certificate; nothing of TLS lands in the Namespace. Answers 202 with
+         *     the `route.create` operation. A Route only says the Ingress exists:
+         *     a Service without Pods answers 503.
+         */
+        post: operations["createWorkspaceRoute"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces/{workspaceId}/routes/{routeId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+                routeId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Take a Route down (OrgOwner, OrgAdmin, or a member of a group holding TenantOwner)
+         * @description Answers 202 with the `route.delete` operation; the hostname is free once the Ingress is gone.
+         */
+        delete: operations["deleteWorkspaceRoute"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workspaces/{workspaceId}/kubeconfig": {
         parameters: {
             query?: never;
@@ -1682,7 +1733,7 @@ export interface components {
          * @description Stable error codes the UI switches on (IMPLEMENTATION-PLAN §3.3). Grows with the endpoints.
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "METHOD_NOT_ALLOWED" | "IDEMPOTENCY_KEY_REUSED" | "RATE_LIMITED" | "SLUG_TAKEN" | "ORG_REQUEST_PENDING" | "CLUSTER_NOT_READY" | "ORG_NOT_ACTIVE" | "ENTITLEMENT_EXCEEDED" | "INVITATION_INVALID" | "INVITATION_EMAIL_MISMATCH" | "TRANSFER_NOT_ALLOWED" | "RECIPIENT_NOT_ORG_ADMIN" | "TRANSFER_INVALID" | "LEAVE_NOT_ALLOWED" | "OWNER_USER_NOT_FOUND" | "ENTITLEMENT_BELOW_USAGE" | "CIDR_OVERLAP" | "CLUSTER_NOT_GRANTED" | "LAST_OWNER_BINDING" | "GROUP_SYNC_PENDING" | "WORKSPACE_NOT_READY" | "CLUSTER_GRANT_QUOTA_EXCEEDED" | "CLUSTER_GRANT_BELOW_ALLOCATION" | "WORKSPACE_QUOTA_BELOW_USAGE" | "ORGANIZATION_NOT_EMPTY" | "COMPUTE_POOL_CAPACITY_EXCEEDED" | "DEDICATED_NODE_NOT_GRANTED" | "DEDICATED_NODE_NOT_READY" | "DEDICATED_NODE_INSUFFICIENT_CAPACITY" | "CIDR_OUTSIDE_ALLOWED_POOL" | "NETWORK_POOL_EXHAUSTED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "METHOD_NOT_ALLOWED" | "IDEMPOTENCY_KEY_REUSED" | "RATE_LIMITED" | "SLUG_TAKEN" | "ORG_REQUEST_PENDING" | "CLUSTER_NOT_READY" | "ORG_NOT_ACTIVE" | "ENTITLEMENT_EXCEEDED" | "INVITATION_INVALID" | "INVITATION_EMAIL_MISMATCH" | "TRANSFER_NOT_ALLOWED" | "RECIPIENT_NOT_ORG_ADMIN" | "TRANSFER_INVALID" | "LEAVE_NOT_ALLOWED" | "OWNER_USER_NOT_FOUND" | "ENTITLEMENT_BELOW_USAGE" | "CIDR_OVERLAP" | "CLUSTER_NOT_GRANTED" | "LAST_OWNER_BINDING" | "GROUP_SYNC_PENDING" | "WORKSPACE_NOT_READY" | "CLUSTER_GRANT_QUOTA_EXCEEDED" | "CLUSTER_GRANT_BELOW_ALLOCATION" | "WORKSPACE_QUOTA_BELOW_USAGE" | "ORGANIZATION_NOT_EMPTY" | "COMPUTE_POOL_CAPACITY_EXCEEDED" | "DEDICATED_NODE_NOT_GRANTED" | "DEDICATED_NODE_NOT_READY" | "DEDICATED_NODE_INSUFFICIENT_CAPACITY" | "CIDR_OUTSIDE_ALLOWED_POOL" | "NETWORK_POOL_EXHAUSTED" | "ROUTE_QUOTA_EXCEEDED" | "ROUTE_HOSTNAME_TAKEN" | "INTERNAL";
         ErrorResponse: {
             code: components["schemas"]["ErrorCode"];
             message: string;
@@ -1889,6 +1940,40 @@ export interface components {
             groupId: string;
             groupName: string;
             role: components["schemas"]["WorkspaceRole"];
+        };
+        WorkspaceRouteInput: {
+            /** @description A Namespace of the Workspace, by its full name */
+            namespace: string;
+            name: string;
+            /** @description A Service in that Namespace */
+            service: string;
+            port: number;
+        };
+        WorkspaceRoute: {
+            id: string;
+            namespace: string;
+            name: string;
+            hostname: string;
+            /** @description https://<hostname> */
+            url: string;
+            service: string;
+            port: number;
+            /**
+             * @description architecture/04-state-machines §9.3
+             * @enum {string}
+             */
+            state: "Desired" | "Creating" | "Active" | "Deleting";
+            /** @description Why the controller could not build the Ingress; empty when it did */
+            message: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        WorkspaceRouteList: {
+            items: components["schemas"]["WorkspaceRoute"][];
+        };
+        WorkspaceRouteChange: {
+            route: components["schemas"]["WorkspaceRoute"];
+            operation: components["schemas"]["Operation"];
         };
         ConsoleLink: {
             /** @description The cluster's Headlamp, opened in the Workspace's first Namespace when it has one */
@@ -4275,6 +4360,122 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    listWorkspaceRoutes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceRouteList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    createWorkspaceRoute: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description A UUID the client generates once per intended change and sends again
+                 *     on every retry of it (IMPLEMENTATION-PLAN §3.4). A repeat of a request
+                 *     that succeeded gets the stored response, marked `Idempotent-Replayed:
+                 *     true`, and changes nothing. A request that failed stores nothing, so
+                 *     it can be corrected and sent again under the same key. Keys are per
+                 *     user and kept 24 hours.
+                 */
+                "Idempotency-Key"?: components["parameters"]["idempotencyKey"];
+            };
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceRouteInput"];
+            };
+        };
+        responses: {
+            /** @description Accepted; the cluster follows */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceRouteChange"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /**
+             * @description `WORKSPACE_NOT_READY`: the Workspace is not Ready or Degraded, an operation on it is under way,
+             *     or the Namespace is not Active yet (`details.field` = `namespace`).
+             *     `ROUTE_QUOTA_EXCEEDED`: the Workspace has 20 Routes.
+             *     `ROUTE_HOSTNAME_TAKEN`: another Route holds the hostname (`details.field` = `name`).
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            422: components["responses"]["IdempotencyKeyReused"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteWorkspaceRoute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+                routeId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted; the cluster follows */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceRouteChange"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `WORKSPACE_NOT_READY`: the Workspace is not Ready or Degraded, or an operation on it is under way. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
         };
     };
     getWorkspaceKubeconfig: {

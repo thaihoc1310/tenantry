@@ -1,0 +1,20 @@
+{
+  "responses": {
+    "200": {
+      "items": [
+        {
+          "id": "rte-01jsol",
+          "namespace": "acme-solar-frontend",
+          "name": "web",
+          "hostname": "web-acme-solar.mvp.tenantry.site",
+          "url": "https://web-acme-solar.mvp.tenantry.site",
+          "service": "web",
+          "port": 80,
+          "state": "Desired",
+          "message": "",
+          "createdAt": "2026-11-23T10:00:00Z"
+        }
+      ]
+    }
+  }
+}

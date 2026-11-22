@@ -134,6 +134,9 @@ func (s *Syncer) syncWorkspace(ctx context.Context, cr v1.PlatformWorkspace) err
 		if err := s.syncNamespaces(ctx, q, ws, cr); err != nil {
 			return err
 		}
+		if err := syncRoutes(ctx, q, ws, cr); err != nil {
+			return err
+		}
 		usage, err := usageJSON(cr.Status.Usage)
 		if err != nil {
 			return err
@@ -292,6 +295,12 @@ func (s *Syncer) syncNamespaces(ctx context.Context, q *store.Queries, ws store.
 		if err := q.RecordNamespace(ctx, store.RecordNamespaceParams{ID: row.ID, State: state, UsageSnapshot: usage}); err != nil {
 			return err
 		}
+		// A Namespace gone takes its Routes with it (04-state-machines §9.3).
+		if state == "Deleted" {
+			if err := q.DeleteRoutesInNamespace(ctx, store.DeleteRoutesInNamespaceParams{WorkspaceID: ws.ID, Namespace: row.Name}); err != nil {
+				return err
+			}
+		}
 	}
 	for name, obs := range observed {
 		if !strings.HasPrefix(name, ws.K8sName+"-") {
@@ -305,6 +314,42 @@ func (s *Syncer) syncNamespaces(ctx context.Context, q *store.Queries, ws store.
 			ID: id.New(id.Namespace), WorkspaceID: ws.ID, ClusterID: ws.ClusterID, Name: name,
 			Source: string(obs.Source), UsageSnapshot: usage,
 		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// syncRoutes brings workspace_routes in line with status.routes
+// (04-state-machines §9.3): a Route whose Ingress is ready becomes Active,
+// one being deleted that is gone becomes Deleted, and one the controller
+// could not build keeps its state with the controller's words.
+func syncRoutes(ctx context.Context, q *store.Queries, ws store.Workspace, cr v1.PlatformWorkspace) error {
+	observed := map[string]v1.RouteStatus{}
+	for _, r := range cr.Status.Routes {
+		observed[r.Name] = r
+	}
+	rows, err := q.ListWorkspaceRoutes(ctx, ws.ID)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		obs, present := observed[row.Name]
+		state, message := row.State, ""
+		switch {
+		case row.State == "Deleting":
+			if !present {
+				state = "Deleted"
+			}
+		case present && obs.Ready:
+			state = "Active"
+		case present:
+			message = obs.Message
+		}
+		if state == row.State && message == row.Message {
+			continue
+		}
+		if err := q.RecordRoute(ctx, store.RecordRouteParams{ID: row.ID, State: state, Message: message}); err != nil {
 			return err
 		}
 	}

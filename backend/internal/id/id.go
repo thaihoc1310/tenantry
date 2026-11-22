@@ -22,6 +22,7 @@ const (
 	Namespace         = "ns"
 	NodeReservation   = "noderes"
 	NetworkAllocation = "netalloc"
+	Route             = "rte"
 )
 
 // ULID returns the ULID part of an id made by New.

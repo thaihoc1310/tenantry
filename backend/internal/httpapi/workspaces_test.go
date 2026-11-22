@@ -1228,6 +1228,10 @@ func TestValidateAndAudit(t *testing.T) {
 	if rec := createWorkspace(h, owner, "zeta", workspaceBody("solar", admins, devs, "")); rec.Code != 202 {
 		t.Fatalf("create after validate: %d %s", rec.Code, rec.Body)
 	}
+	// The slug is taken now: validate says so as the create would.
+	if rec := validate(workspaceBody("solar", admins, devs, "")); rec.Code != 409 || errorBody(t, rec).Code != oapi.SLUGTAKEN {
+		t.Fatalf("validate a taken slug: %d %s", rec.Code, rec.Body)
+	}
 
 	rec = asAdmin(h, owner, http.MethodGet, "/api/v1/organizations/zeta/audit-events?limit=1", "", "")
 	var l oapi.AuditEventList
@@ -1334,5 +1338,121 @@ func TestKubeconfigAndConsole(t *testing.T) {
 	}
 	if kube(owner).Code != 200 {
 		t.Error("a kubeconfig needs no Ready cluster")
+	}
+}
+
+func TestWorkspaceRoutes(t *testing.T) {
+	h, db, _, owner, admins, devs := workspaceOrg(t)
+	ctx := context.Background()
+	rec := createWorkspace(h, owner, "zeta", workspaceBody("solar", admins, devs, ""))
+	var got oapi.WorkspaceAccepted
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	id := got.Workspace.Id
+	settle(t, db, id)
+	post := func(token, body string) *httptest.ResponseRecorder {
+		return asAdmin(h, token, http.MethodPost, "/api/v1/workspaces/"+id+"/routes", newKey(), body)
+	}
+	route := func(name string) string {
+		return fmt.Sprintf(`{"namespace":"zeta-solar-frontend","name":%q,"service":"web","port":80}`, name)
+	}
+
+	// The Namespace is not Active yet.
+	if rec := post(owner, route("web")); rec.Code != 409 || errorBody(t, rec).Code != oapi.WORKSPACENOTREADY {
+		t.Fatalf("namespace not Active: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := db.Exec(ctx, `UPDATE workspace_namespaces SET state = 'Active' WHERE workspace_id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	// bob is a Developer: he sees Routes, he does not make them.
+	if rec := post(sessionOf("usr-bob"), route("web")); rec.Code != 403 {
+		t.Fatalf("Developer creates a Route: %d", rec.Code)
+	}
+	for body, field := range map[string]string{
+		route("Web"):                   "name",
+		route(strings.Repeat("a", 53)): "name", // a-…-zeta-solar is 64 characters
+		`{"namespace":"zeta-solar-frontend","name":"web","service":"9web","port":80}`: "service",
+		`{"namespace":"other-ns","name":"web","service":"web","port":80}`:             "namespace",
+	} {
+		if rec := post(owner, body); rec.Code != 400 || errorBody(t, rec).Details == nil {
+			t.Errorf("%s: %d %s, want 400 on %s", body, rec.Code, rec.Body, field)
+		}
+	}
+
+	rec = post(owner, route("web"))
+	var change oapi.WorkspaceRouteChange
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &change) != nil {
+		t.Fatalf("create route: %d %s", rec.Code, rec.Body)
+	}
+	if change.Route.Hostname != "web-zeta-solar.apps.test" || change.Route.Url != "https://web-zeta-solar.apps.test" ||
+		change.Route.State != "Desired" || change.Operation.Type != "route.create" {
+		t.Fatalf("route %+v", change)
+	}
+	var payload []byte
+	if err := db.QueryRow(ctx, `SELECT payload FROM outbox_events WHERE operation_id = $1`, change.Operation.Id).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	var cr v1.PlatformWorkspace
+	if err := json.Unmarshal(payload, &cr); err != nil || len(cr.Spec.Routes) != 1 ||
+		cr.Spec.Routes[0] != (v1.WorkspaceRoute{Name: "web", Namespace: "zeta-solar-frontend", Host: "web-zeta-solar.apps.test", Service: "web", Port: 80}) {
+		t.Fatalf("spec.routes %+v %v", cr.Spec.Routes, err)
+	}
+	// One operation at a time; then the same name again holds the same hostname.
+	if rec := post(owner, route("api")); rec.Code != 409 || errorBody(t, rec).Code != oapi.WORKSPACENOTREADY {
+		t.Fatalf("during an operation: %d", rec.Code)
+	}
+	settle(t, db, id)
+	if rec := post(owner, route("web")); rec.Code != 409 || errorBody(t, rec).Code != oapi.ROUTEHOSTNAMETAKEN {
+		t.Fatalf("same hostname: %d %s", rec.Code, rec.Body)
+	}
+	// 20 Routes at most.
+	for i := range 19 {
+		if _, err := db.Exec(ctx, `INSERT INTO workspace_routes (id, workspace_id, namespace, name, hostname, service_name, service_port)
+			VALUES ($1, $2, 'zeta-solar-frontend', $3, $3 || '.apps.test', 'web', 80)`, fmt.Sprintf("rte-%d", i), id, fmt.Sprintf("r%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rec := post(owner, route("api")); rec.Code != 409 || errorBody(t, rec).Code != oapi.ROUTEQUOTAEXCEEDED {
+		t.Fatalf("21st Route: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := db.Exec(ctx, `DELETE FROM workspace_routes WHERE id LIKE 'rte-%' AND id <> $1`, change.Route.Id); err != nil {
+		t.Fatal(err)
+	}
+
+	// Anyone who sees the Workspace lists them.
+	rec = asAdmin(h, sessionOf("usr-bob"), http.MethodGet, "/api/v1/workspaces/"+id+"/routes", "", "")
+	var list oapi.WorkspaceRouteList
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &list) != nil || len(list.Items) != 1 {
+		t.Fatalf("list: %d %s", rec.Code, rec.Body)
+	}
+
+	// Deleting it takes it out of spec.routes.
+	rec = asAdmin(h, owner, http.MethodDelete, "/api/v1/workspaces/"+id+"/routes/"+change.Route.Id, "", "")
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &change) != nil || change.Route.State != "Deleting" {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body)
+	}
+	if err := db.QueryRow(ctx, `SELECT payload FROM outbox_events WHERE operation_id = $1`, change.Operation.Id).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	var after v1.PlatformWorkspace // omitempty: a fresh value, or the old routes stay
+	if err := json.Unmarshal(payload, &after); err != nil || len(after.Spec.Routes) != 0 {
+		t.Fatalf("spec.routes after delete %+v", after.Spec.Routes)
+	}
+	settle(t, db, id)
+
+	// A Route goes with its Namespace.
+	if _, err := db.Exec(ctx, `UPDATE workspace_routes SET state = 'Deleted' WHERE workspace_id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	if rec := post(owner, route("web")); rec.Code != 202 {
+		t.Fatalf("again after the old one is gone: %d %s", rec.Code, rec.Body)
+	}
+	settle(t, db, id)
+	if rec := asAdmin(h, owner, http.MethodDelete, "/api/v1/workspaces/"+id+"/namespaces/zeta-solar-frontend", "", ""); rec.Code != 202 {
+		t.Fatalf("delete namespace: %d %s", rec.Code, rec.Body)
+	}
+	if n := count(t, db, `SELECT count(*) FROM workspace_routes WHERE workspace_id = $1 AND state <> 'Deleted'`, id); n != 0 {
+		t.Fatalf("routes left after their namespace: %d", n)
 	}
 }

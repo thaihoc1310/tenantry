@@ -112,6 +112,10 @@ func (s *Service) DeleteNamespace(ctx context.Context, userID, wsID, name, corre
 		if ns, err = q.SetNamespaceState(ctx, store.SetNamespaceStateParams{ID: ns.ID, State: nsDeleting}); err != nil {
 			return err
 		}
+		// Its Routes leave spec.routes in the same version (04-state-machines §9.3).
+		if err := q.DeleteRoutesInNamespace(ctx, store.DeleteRoutesInNamespaceParams{WorkspaceID: ws.ID, Namespace: ns.Name}); err != nil {
+			return err
+		}
 		op, err := beginUpdate(ctx, q, ws, "namespace.delete", userID, correlationID)
 		if err != nil {
 			return err

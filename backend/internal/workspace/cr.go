@@ -59,6 +59,10 @@ func BuildCR(ctx context.Context, q *store.Queries, ws store.Workspace) (*v1.Pla
 	if err != nil {
 		return nil, err
 	}
+	routes, err := q.ListWorkspaceRoutes(ctx, ws.ID)
+	if err != nil {
+		return nil, err
+	}
 	classes, err := q.GetGrantStorageClasses(ctx, ws.ClusterGrantID)
 	if err != nil {
 		return nil, err
@@ -123,6 +127,14 @@ func BuildCR(ctx context.Context, q *store.Queries, ws store.Workspace) (*v1.Pla
 		case n.Source == SourcePortal:
 			cr.Spec.Namespaces = append(cr.Spec.Namespaces, strings.TrimPrefix(n.Name, prefix))
 		}
+	}
+	for _, r := range routes {
+		if r.State == routeDeleting {
+			continue // its Ingress goes
+		}
+		cr.Spec.Routes = append(cr.Spec.Routes, v1.WorkspaceRoute{
+			Name: r.Name, Namespace: r.Namespace, Host: r.Hostname, Service: r.ServiceName, Port: r.ServicePort,
+		})
 	}
 	return cr, nil
 }

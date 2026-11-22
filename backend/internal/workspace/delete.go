@@ -85,6 +85,10 @@ func Release(ctx context.Context, q *store.Queries, ws store.Workspace, opID str
 	if _, err := q.ResyncGroupMembers(ctx, groups); err != nil {
 		return err
 	}
+	// Its Routes free their hostnames now; the cluster has no Ingress left.
+	if err := q.DeleteWorkspaceRoutes(ctx, ws.ID); err != nil {
+		return err
+	}
 	if opID != "" {
 		if _, _, err := operation.Move(ctx, q, opID, operation.Succeeded, "", ""); err != nil {
 			return err

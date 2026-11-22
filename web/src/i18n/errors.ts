@@ -136,6 +136,14 @@ export const errorText: Record<ErrorCode | 'NETWORK', Text> = {
     en: 'The network pool has no free address block of this size. Ask a Platform Admin.',
     vi: 'Network pool không còn dải địa chỉ trống cỡ này. Hãy hỏi Platform Admin.',
   },
+  ROUTE_QUOTA_EXCEEDED: {
+    en: 'This Workspace has 20 Routes, as many as allowed. Delete one first.',
+    vi: 'Workspace đã có 20 Route, tối đa cho phép. Hãy xóa bớt một Route trước.',
+  },
+  ROUTE_HOSTNAME_TAKEN: {
+    en: 'Another Route already uses this address. Choose another name.',
+    vi: 'Một Route khác đã dùng địa chỉ này. Hãy chọn tên khác.',
+  },
   INTERNAL: {
     en: 'Something went wrong on our side. Your data is safe; try again in a moment.',
     vi: 'Hệ thống gặp lỗi. Dữ liệu của bạn vẫn an toàn; thử lại sau ít phút.',

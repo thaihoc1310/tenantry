@@ -421,6 +421,81 @@ func TestDegradedWhileUpdating(t *testing.T) {
 	}
 }
 
+// Routes follow status.routes (04-state-machines §9.3): ready → Active, not
+// ready → the controller's words, deleted and gone → Deleted, and a
+// Namespace gone takes its Routes.
+func TestRoutesFollowTheStatus(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	c := e.create("solar")
+	ns := v1.NamespaceStatus{Name: "acme-solar-frontend", Source: v1.SourcePortal}
+	e.report("acme-solar", v1.PhaseReady, readyConds, ns)
+	e.sync()
+	route := func(name string) workspace.RouteChange {
+		t.Helper()
+		ch, err := e.ws.CreateRoute(ctx, "usr-ann", c.Workspace.ID, workspace.NewRoute{Namespace: "acme-solar-frontend", Name: name, Service: "web", Port: 80}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.deliver()
+		return ch
+	}
+	state := func(id string) (st, msg string) {
+		t.Helper()
+		if err := e.db.QueryRow(ctx, `SELECT state, message FROM workspace_routes WHERE id = $1`, id).Scan(&st, &msg); err != nil {
+			t.Fatal(err)
+		}
+		return st, msg
+	}
+	status := func(routes ...v1.RouteStatus) {
+		cr := e.cluster.get(k8s.Workspaces, "acme-solar")
+		e.cluster.setStatus(k8s.Workspaces, "acme-solar", &v1.PlatformWorkspaceStatus{
+			Phase: v1.PhaseReady, ObservedGeneration: cr.GetGeneration(), Conditions: readyConds,
+			Namespaces: []v1.NamespaceStatus{ns}, Routes: routes,
+		})
+		e.sync()
+	}
+
+	web := route("web")
+	status(v1.RouteStatus{Name: "web", Namespace: "acme-solar-frontend", Ready: false, Message: "Service web not found"})
+	if st, msg := state(web.Route.ID); st != "Desired" || msg != "Service web not found" {
+		t.Fatalf("not ready: %s %q", st, msg)
+	}
+	status(v1.RouteStatus{Name: "web", Namespace: "acme-solar-frontend", Ready: true})
+	if st, msg := state(web.Route.ID); st != "Active" || msg != "" || e.op(web.Operation.ID).State != "Succeeded" {
+		t.Fatalf("ready: %s %q, operation %s", st, msg, e.op(web.Operation.ID).State)
+	}
+
+	ch, err := e.ws.DeleteRoute(ctx, "usr-ann", c.Workspace.ID, web.Route.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.deliver()
+	status(v1.RouteStatus{Name: "web", Namespace: "acme-solar-frontend", Ready: true}) // the Ingress not gone yet
+	if st, _ := state(web.Route.ID); st != "Deleting" {
+		t.Fatalf("before the Ingress is gone: %s", st)
+	}
+	status()
+	if st, _ := state(web.Route.ID); st != "Deleted" || e.op(ch.Operation.ID).State != "Succeeded" {
+		t.Fatalf("after: %s", st)
+	}
+
+	// A Namespace deleted with kubectl: its Routes go with it.
+	if _, err := e.db.Exec(ctx, `UPDATE workspace_namespaces SET source = 'kubectl' WHERE name = 'acme-solar-frontend'`); err != nil {
+		t.Fatal(err)
+	}
+	api := route("api")
+	status(v1.RouteStatus{Name: "api", Namespace: "acme-solar-frontend", Ready: true})
+	cr := e.cluster.get(k8s.Workspaces, "acme-solar")
+	e.cluster.setStatus(k8s.Workspaces, "acme-solar", &v1.PlatformWorkspaceStatus{
+		Phase: v1.PhaseReady, ObservedGeneration: cr.GetGeneration(), Conditions: readyConds,
+	})
+	e.sync()
+	if st, _ := state(api.Route.ID); st != "Deleted" {
+		t.Fatalf("route of a vanished namespace: %s", st)
+	}
+}
+
 func unstructuredString(obj map[string]any, path ...string) (string, bool, error) {
 	cur := any(obj)
 	for _, p := range path {

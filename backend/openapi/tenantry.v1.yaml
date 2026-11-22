@@ -1158,6 +1158,88 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
 
+  /workspaces/{workspaceId}/routes:
+    parameters:
+      - $ref: "#/components/parameters/workspaceId"
+    get:
+      operationId: listWorkspaceRoutes
+      summary: Routes of the Workspace (anyone who sees the Workspace)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceRouteList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createWorkspaceRoute
+      security: [{ session: [], csrf: [] }]
+      summary: Publish a Service of the Workspace on the apps domain (OrgOwner, OrgAdmin, or a member of a group holding TenantOwner)
+      description: |
+        The hostname is `<name>-<k8sName>.<apps domain>`, put together here
+        (PRODUCT-PLAN §7.6): its first label must fit 63 characters. The
+        controller builds the Ingress with the platform's wildcard
+        certificate; nothing of TLS lands in the Namespace. Answers 202 with
+        the `route.create` operation. A Route only says the Ingress exists:
+        a Service without Pods answers 503.
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkspaceRouteInput" }
+      responses:
+        "202":
+          description: Accepted; the cluster follows
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceRouteChange" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: |
+            `WORKSPACE_NOT_READY`: the Workspace is not Ready or Degraded, an operation on it is under way,
+            or the Namespace is not Active yet (`details.field` = `namespace`).
+            `ROUTE_QUOTA_EXCEEDED`: the Workspace has 20 Routes.
+            `ROUTE_HOSTNAME_TAKEN`: another Route holds the hostname (`details.field` = `name`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /workspaces/{workspaceId}/routes/{routeId}:
+    parameters:
+      - $ref: "#/components/parameters/workspaceId"
+      - name: routeId
+        in: path
+        required: true
+        schema: { type: string, maxLength: 64 }
+    delete:
+      operationId: deleteWorkspaceRoute
+      security: [{ session: [], csrf: [] }]
+      summary: Take a Route down (OrgOwner, OrgAdmin, or a member of a group holding TenantOwner)
+      description: Answers 202 with the `route.delete` operation; the hostname is free once the Ingress is gone.
+      responses:
+        "202":
+          description: Accepted; the cluster follows
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceRouteChange" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`WORKSPACE_NOT_READY`: the Workspace is not Ready or Degraded, or an operation on it is under way."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
   /workspaces/{workspaceId}/kubeconfig:
     parameters:
       - $ref: "#/components/parameters/workspaceId"
@@ -2372,6 +2454,8 @@ components:
         - DEDICATED_NODE_INSUFFICIENT_CAPACITY
         - CIDR_OUTSIDE_ALLOWED_POOL
         - NETWORK_POOL_EXHAUSTED
+        - ROUTE_QUOTA_EXCEEDED
+        - ROUTE_HOSTNAME_TAKEN
         - INTERNAL
 
     ErrorResponse:
@@ -2662,6 +2746,49 @@ components:
         groupId: { type: string }
         groupName: { type: string }
         role: { $ref: "#/components/schemas/WorkspaceRole" }
+
+    WorkspaceRouteInput:
+      type: object
+      required: [namespace, name, service, port]
+      additionalProperties: false
+      properties:
+        namespace: { type: string, maxLength: 63, description: "A Namespace of the Workspace, by its full name" }
+        name: { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" }
+        service: { type: string, minLength: 1, maxLength: 63, description: A Service in that Namespace }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+
+    WorkspaceRoute:
+      type: object
+      required: [id, namespace, name, hostname, url, service, port, state, message, createdAt]
+      properties:
+        id: { type: string }
+        namespace: { type: string }
+        name: { type: string }
+        hostname: { type: string }
+        url: { type: string, description: "https://<hostname>" }
+        service: { type: string }
+        port: { type: integer }
+        state:
+          type: string
+          enum: [Desired, Creating, Active, Deleting]
+          description: architecture/04-state-machines §9.3
+        message: { type: string, description: "Why the controller could not build the Ingress; empty when it did" }
+        createdAt: { type: string, format: date-time }
+
+    WorkspaceRouteList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/WorkspaceRoute" }
+
+    WorkspaceRouteChange:
+      type: object
+      required: [route, operation]
+      properties:
+        route: { $ref: "#/components/schemas/WorkspaceRoute" }
+        operation: { $ref: "#/components/schemas/Operation" }
 
     ConsoleLink:
       type: object

@@ -1,0 +1,42 @@
+{
+  "request": {
+    "namespace": "acme-solar-frontend",
+    "name": "web",
+    "service": "web",
+    "port": 80
+  },
+  "responses": {
+    "202": {
+      "route": {
+        "id": "rte-01jsol",
+        "namespace": "acme-solar-frontend",
+        "name": "web",
+        "hostname": "web-acme-solar.mvp.tenantry.site",
+        "url": "https://web-acme-solar.mvp.tenantry.site",
+        "service": "web",
+        "port": 80,
+        "state": "Desired",
+        "message": "",
+        "createdAt": "2026-11-23T10:00:00Z"
+      },
+      "operation": {
+        "id": "op-01jrte",
+        "orgId": "org-01jacme",
+        "resourceType": "Workspace",
+        "resourceId": "ws-01jsol",
+        "type": "route.create",
+        "state": "Pending",
+        "progress": 0,
+        "correlationId": "req-1",
+        "createdAt": "2026-11-23T10:00:00Z",
+        "updatedAt": "2026-11-23T10:00:00Z"
+      }
+    },
+    "409": {
+      "code": "ROUTE_HOSTNAME_TAKEN",
+      "message": "another Route holds this hostname",
+      "requestId": "req-2",
+      "details": { "field": "name" }
+    }
+  }
+}
