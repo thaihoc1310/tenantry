@@ -96,7 +96,7 @@ stateDiagram-v2
 | `ComputeReady` | Workspace Controller | M8 | Shared: Tenant nodeSelector trỏ đúng pool. Dedicated: node có org label/taint và membership label của Workspace |
 | `DedicatedNodeCapacityReserved` | Platform API | M8 | Chỉ Dedicated: NodeReservation đã commit, node còn `Ready` |
 | `NetworkReady` | Workspace Controller | M9 | Calico IPPool tồn tại đúng CIDR, Namespace annotation được inject, baseline NetworkPolicy replicate |
-| `ProxyAccessReady` | Workspace Controller | M11 | RoleBinding có label reflection để Capsule Proxy lọc đúng; endpoint Proxy trả 200 cho synthetic check |
+| `ProxyAccessReady` | Workspace Controller | M11 | `ProxySetting` `tenantry` có trong Tenant; probe qua Proxy thấy đủ Namespace của Workspace và không thấy Namespace ngoài Tenantry (IMPLEMENTATION-PLAN §4.1 hàng 8); reason `ProxyNotFiltering`, `ProxyUnreachable`, `NoNamespace` |
 
 Cách tính: `Ready` ⇔ mọi Condition áp dụng đều `True` **và** `status.observedGeneration == metadata.generation`. Condition của sub-reconciler chưa xây (cột "Từ") thì không được set và không bắt buộc. `DedicatedNodeCapacityReserved` không áp dụng cho Shared. Synthetic verification trong Cluster thêm vào ở M11 cùng `ProxyAccessReady`.
 

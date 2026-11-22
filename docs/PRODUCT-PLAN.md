@@ -46,6 +46,7 @@
 34. **Gỡ user khỏi group không còn logout user trên Keycloak**: Keycloak chạy lại group mapper khi refresh (đã kiểm ở M4), nên token kế tiếp đã mất group; bỏ logout để user không bị đăng xuất khỏi mọi nơi (9.3; thay cho điểm 3).
 35. **Annotation của Namespace giữ bằng metadata managed của Capsule, không dùng `forbiddenAnnotations`**: đã thử trên lab, `forbiddenAnnotations` từ chối cả annotation Capsule tự gắn nên Namespace Dedicated không tạo được. Namespace Shared có `defaultTolerations` rỗng và whitelist chỉ gồm các taint `node.kubernetes.io/*`; `ComputeReady` của Shared chỉ cần pool có node Ready; node dedicated bị cordon vẫn giữ label/taint (6.4, 7.3, 18).
 36. **Pod chỉ được tạo khi Namespace đã có NetworkPolicy baseline** (VAP `tenantry-tenant-network-ready`): replication tới Namespace mới trễ 4–14s, đo ở M9; xóa IPPool đếm địa chỉ trong IPAMBlock vì Calico không serve WorkloadEndpoint, `:force` không bỏ qua bước này (7.4, 17.4).
+37. **Capsule Proxy bật gate `ProxyClusterScoped`**: bản mặc định để tenant đọc được Node của pool (gồm IP nội bộ và image của tenant khác), đo ở M11; sau khi bật, Node/StorageClass/PV qua Proxy rỗng hoặc 403, portal hiển thị node và allow-list StorageClass. Namespace hiện ra cho Developer/Viewer qua `ProxySetting` do operator tạo; synthetic verification bằng SA probe 0 quyền (17.1 bước 14).
 
 ### v0.6 → v0.7
 
@@ -1581,7 +1582,7 @@ Mọi bước 1–10 chạy trong transaction của request, đã giành `Idempo
 11. provisioning worker apply PlatformWorkspace CR vào Cluster;
 12. controller cấu hình node nếu Dedicated và tạo Capsule Tenant (kèm quota chung), IPPool, RBAC, policy (mỗi phần có từ milestone của nó, xem 25);
 13. đợi mọi Condition áp dụng được chuyển True; Condition của sub-reconciler chưa xây ở milestone hiện tại thì không set và không bắt buộc (`architecture/04-state-machines.md` mục 1.2);
-14. chạy synthetic verification trong đúng Cluster (từ M11);
+14. chạy synthetic verification trong đúng Cluster (từ M11): operator gọi Capsule Proxy bằng token ngắn hạn của SA probe 0 quyền, tối đa 5 phút một lần (30s khi lỗi); Proxy hỏng thì `ProxyAccessReady=False` và Workspace `Degraded`;
 15. chuyển Workspace `Ready`;
 16. portal bật kubeconfig/Headlamp link.
 
