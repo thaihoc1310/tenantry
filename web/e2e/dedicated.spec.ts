@@ -44,7 +44,7 @@ const pod = (ns: string, name: string, nodeName?: string) =>
 
 test('Dedicated Workspaces share a node without overbooking it', async ({ browser }) => {
   test.setTimeout(20 * 60_000)
-  const { owner, admin, slug, admins } = await workspaceOrganization(browser, 'e2edn')
+  const { owner, admin, slug, admins } = await workspaceOrganization(browser, 'e2edn', 3)
   const page = owner.page
   const orgId = (await api(page, 'GET', `/organizations/${slug}`)).body.id
   const created: { id: string; slug: string }[] = []

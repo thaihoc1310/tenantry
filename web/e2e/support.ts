@@ -146,8 +146,9 @@ export async function succeeded(page: Page, opId: string) {
 
 // workspaceOrganization signs up an owner, has the Platform Admin create an
 // active Organization for them with a grant on cluster-a, and waits for its
-// group admins to reach Keycloak, so it can be bound.
-export async function workspaceOrganization(browser: Browser, prefix: string) {
+// group admins to reach Keycloak, so it can be bound. maxWorkspaces bounds
+// both the entitlement and the grant.
+export async function workspaceOrganization(browser: Browser, prefix: string, maxWorkspaces = 2) {
   const owner = await signUp(browser)
   const admin = await logIn(browser, 'admin', adminPassword(), '/admin/organizations')
   const slug = `${prefix}${Date.now().toString(36).slice(-6)}`
@@ -160,10 +161,10 @@ export async function workspaceOrganization(browser: Browser, prefix: string) {
       displayName: `E2E ${slug}`,
       description: 'End-to-end test of Workspaces.',
       ownerEmail: owner.who.email,
-      entitlement: { maxMembers: 5, maxGroups: 5, maxWorkspacesTotal: 2 },
+      entitlement: { maxMembers: 5, maxGroups: 5, maxWorkspacesTotal: maxWorkspaces },
       clusterGrant: {
         clusterId: 'cluster-a',
-        maxWorkspaces: 2,
+        maxWorkspaces,
         maxNamespacesTotal: 6,
         resources: {
           requestsCpu: '2',
