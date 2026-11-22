@@ -202,3 +202,14 @@ export async function deleteWorkspace(page: Page, wsId: string, slug: string, k8
   expect(kubectl('get', 'tenants.capsule.clastix.io', k8sName, '--ignore-not-found')).toBe('')
   expect(kubectl('get', 'namespaces', '-l', `capsule.clastix.io/tenant=${k8sName}`, '-o', 'name')).toBe('')
 }
+
+// networkReady waits until a tenant Namespace of a Workspace with a Pod
+// network has its baseline NetworkPolicy: before that the
+// tenantry-tenant-network-ready policy refuses its Pods (architecture/05 §6).
+export async function networkReady(ns: string) {
+  await until(`the network of ${ns}`, async () =>
+    kubectl('-n', ns, 'get', 'networkpolicy', 'tenant-default-deny', '--ignore-not-found', '-o', 'name')
+      ? true
+      : undefined,
+  )
+}

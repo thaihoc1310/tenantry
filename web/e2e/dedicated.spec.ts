@@ -5,7 +5,16 @@
 // on wk3 only, and a Pod naming another node does not run. The lab is put
 // back as it was (wk3 in the pool, dedicated to nobody) even when a step fails.
 import { expect, test, type Page } from '@playwright/test'
-import { api, deleteWorkspace, kubectl, kubectlIn, succeeded, until, workspaceOrganization } from './support'
+import {
+  api,
+  deleteWorkspace,
+  kubectl,
+  kubectlIn,
+  networkReady,
+  succeeded,
+  until,
+  workspaceOrganization,
+} from './support'
 
 const node = 'fdp-k8s-wk3'
 const reserve = { cpu: '500m', memory: '1536Mi', pods: 10 }
@@ -99,6 +108,7 @@ test('Dedicated Workspaces share a node without overbooking it', async ({ browse
       `--as-group=oidc:${admins.machineName}`,
       '--as-group=system:authenticated',
     ]
+    await networkReady(ns)
     kubectlIn(pod(ns, 'here'), 'apply', '-f', '-', ...asOwner)
     const placed = await until('the Pod scheduled', async () => {
       const n = kubectl('-n', ns, 'get', 'pod', 'here', '-o', 'jsonpath={.spec.nodeName}').trim()

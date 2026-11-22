@@ -4,7 +4,16 @@
 // leaves no Namespace, volume claim or Tenant, and gives its share back to
 // the grant. Pods state requests, as every Pod of a Tenant must.
 import { expect, test } from '@playwright/test'
-import { api, deleteWorkspace, kubectl, kubectlIn, succeeded, until, workspaceOrganization } from './support'
+import {
+  api,
+  deleteWorkspace,
+  kubectl,
+  kubectlIn,
+  networkReady,
+  succeeded,
+  until,
+  workspaceOrganization,
+} from './support'
 
 const pod = (ns: string, name: string, cpu: string) =>
   JSON.stringify({
@@ -83,6 +92,7 @@ test('quota, resize, cordon and delete of a Workspace on the cluster', async ({ 
   let volume = ''
   try {
     await succeeded(page, res.body.operation.id)
+    await networkReady(ns)
 
     // 300m does not fit in a quota of 200m: Capsule says so.
     const refused = apply(pod(ns, 'big', '300m'))

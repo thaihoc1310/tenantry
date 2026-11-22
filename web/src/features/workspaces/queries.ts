@@ -147,3 +147,18 @@ export function useRetry() {
     unwrap(api.POST('/operations/{operationId}:retry', { params: { path: { operationId: opId } } })),
   )
 }
+
+// What is left in a network pool, and the Organization's own blocks
+// (OrgOwner and OrgAdmins only).
+export function useNetworkAvailability(org: MaybeRefOrGetter<string>, pool: MaybeRefOrGetter<string | undefined>) {
+  return useQuery({
+    queryKey: computed(() => ['network-availability', toValue(org), toValue(pool)]),
+    queryFn: () =>
+      unwrap(
+        api.GET('/organizations/{orgId}/network-pools/{poolId}/availability', {
+          params: { path: { orgId: toValue(org), poolId: toValue(pool)! } },
+        }),
+      ),
+    enabled: computed(() => !!toValue(pool)),
+  })
+}

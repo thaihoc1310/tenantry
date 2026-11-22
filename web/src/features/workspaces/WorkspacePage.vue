@@ -13,6 +13,7 @@ import { showFailure } from '@/app/failure'
 import { when } from '@/app/format'
 import ConditionTimeline from '@/components/ConditionTimeline.vue'
 import ComputeDetail from './ComputeDetail.vue'
+import NetworkDetail from './NetworkDetail.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import KeyValues from '@/components/KeyValues.vue'
@@ -55,6 +56,7 @@ const tabs = [
   ['overview', 'Overview'],
   ['resources', 'Resources'],
   ['compute', 'Compute'],
+  ['network', 'Network'],
   ['danger', 'Danger zone'],
 ] as const
 const tab = computed(() => (route.query.tab as string) || 'overview')
@@ -353,6 +355,17 @@ const usable = computed(() => ['Ready', 'Degraded'].includes(ws.value?.state ?? 
         <p class="t-explain">
           Pods of this Workspace can only be scheduled on its {{ ws.compute.mode === 'Shared' ? 'pool' : 'node' }}. A
           Pod that asks for another node is refused. The mode cannot be changed after creation.
+        </p>
+      </template>
+
+      <!-- Network -->
+      <template v-else-if="tab === 'network'">
+        <TPanel title="Pod network">
+          <NetworkDetail :org-slug="orgSlug" :ws="ws" :manages="manages" />
+        </TPanel>
+        <p class="t-explain">
+          The address block cannot be changed while Pods are running. After the Workspace is deleted, the block stays
+          unused for a while before it is given out again.
         </p>
       </template>
 
