@@ -587,7 +587,7 @@ flowchart LR
 
   subgraph TENANT["Tenant acme-solar (Workspace Controller render)"]
     TSC["storageClasses.allowed [standard]<br/>(Capsule từ chối PVC với class khác)"]
-    RP["Tenant acme-solar resourceQuotas scope Tenant<br/>hard.requests.storage 100Gi chung mọi Namespace<br/>+ persistentvolumeclaims (object count, tùy chọn)"]
+    RP["Tenant acme-solar rules[].quota → GlobalResourceQuota<br/>hard.requests.storage 100Gi chung mọi Namespace<br/>+ persistentvolumeclaims (object count, tùy chọn)"]
     WSA --> TSC
     WSA --> RP
   end

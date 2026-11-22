@@ -42,7 +42,7 @@
 30. **Trạng thái Cluster đặt tay ở MVP**, kể cả `Registered → Ready`; duyệt Organization và tạo grant cần Cluster `Ready` (5.2.1, 6.1).
 31. **Cấp dedicated node**: node không còn Pod tenant nào, kể cả Pod Shared của chính Organization; quy trình bớt khỏi pool → drain → uncordon → cấp (6.3).
 32. **Kịch bản demo thống nhất số liệu và chạy được trên lab 4 node**: Solar Shared 2 CPU/4Gi (limits 4/8Gi); node dedicated là `wk3` rút khỏi shared pool (reservable 2,5 CPU), Water 1 + Green 1, Workspace thứ ba 1 CPU bị từ chối (5.4, 6.3, 28).
-33. **Quota của Workspace là một quota chung cho mọi Namespace** (`Tenant.spec.resourceQuotas` scope `Tenant`), không chia trước theo Namespace; chấp nhận giới hạn tạo Pod đồng thời có thể vượt nhẹ (5.4).
+33. **Quota của Workspace là một quota chung cho mọi Namespace** (`Tenant.spec.rules[].quota[]`, Capsule sinh `GlobalResourceQuota` và chặn ở admission), không chia trước theo Namespace; đã đo trên lab là không vượt trần kể cả khi tạo Pod đồng thời (5.4).
 34. **Gỡ user khỏi group không còn logout user trên Keycloak**: Keycloak chạy lại group mapper khi refresh (đã kiểm ở M4), nên token kế tiếp đã mất group; bỏ logout để user không bị đăng xuất khỏi mọi nơi (9.3; thay cho điểm 3).
 
 ### v0.6 → v0.7
@@ -204,7 +204,7 @@ Workspace không phải một cluster riêng. Các workload cần CRD/operator c
 | Node placement | Tenant node selector + `PodNodeSelector` |
 | Pod CIDR | Calico IPPool riêng cho Solar/Water |
 | Network isolation | NetworkPolicy chỉ cho traffic cùng tenant và DNS |
-| Resource budget | Capsule `Tenant.spec.resourceQuotas` scope `Tenant` (một quota chung cho Workspace, 5.4) |
+| Resource budget | Capsule `Tenant.spec.rules[].quota[]` → `GlobalResourceQuota` (một quota chung cho Workspace, 5.4) |
 | Workload guardrail | Registry, QoS, Service type, metadata lock |
 | Monitoring | Prometheus/Grafana cho Capsule và Proxy |
 | Verification | Bash test RBAC, node, CIDR, network và policy |
@@ -465,12 +465,12 @@ namespaceQuota: 3
 
 Controller trong Cluster render thành:
 
-- **một quota chung cho mọi Namespace của Workspace**: `Tenant.spec.resourceQuotas` với `scope: Tenant`, `hard` = allocation của Workspace (requests/limits CPU/RAM, `pods`, `requests.storage`). Capsule tạo ResourceQuota trong từng Namespace, cộng usage của mọi Namespace và hạ `hard` của các ResourceQuota đó khi tổng chạm trần, nên Namespace nào cũng dùng được phần đang trống, dù tạo bằng portal, `kubectl` hay Headlamp (4.5): Capsule áp quota cho mọi Namespace của Tenant ngay khi Namespace xuất hiện, platform không phải làm gì thêm. Không chia trước theo Namespace, để không có tài nguyên nằm không;
+- **một quota chung cho mọi Namespace của Workspace**: `Tenant.spec.rules[].quota[]` của Capsule 0.15, `hard` = allocation của Workspace (requests/limits CPU/RAM, `pods`, `requests.storage`). Capsule sinh một `GlobalResourceQuota` cho Tenant và kiểm ở webhook lúc admission trên tổng của mọi Namespace, nên Namespace nào cũng dùng được phần đang trống, dù tạo bằng portal, `kubectl` hay Headlamp (4.5): Capsule áp quota cho mọi Namespace của Tenant ngay khi Namespace xuất hiện, platform không phải làm gì thêm. Không chia trước theo Namespace, để không có tài nguyên nằm không;
 - LimitRange mặc định;
 - object-count ResourceQuota nếu cần;
 - Capsule Namespace quota (`namespaceQuota`).
 
-Giới hạn của `spec.resourceQuotas` scope `Tenant`: Capsule chỉnh `hard` bằng controller chứ không chặn ở webhook, nên Pod tạo **đồng thời** ở hai Namespace có thể cùng lọt và tổng vượt trần một chút (Capsule tự ghi nhận điều này). Với Shared, đó vẫn nằm trong tinh thần soft allocation. Với Dedicated, phần vượt có thể lấn vào capacity đã giữ cho Workspace khác trên cùng node (kube-scheduler vẫn không xếp quá allocatable của node); ghi vào known limitations của luận văn. Trên Capsule 0.15.2 của lab (đã thử ở M6), `spec.resourceQuotas` vẫn chạy nhưng đã deprecated. Bản thay thế là `spec.rules[].quota[]`: một ResourceQuota chung cho mọi Namespace mà rule chọn, Capsule sinh `GlobalResourceQuota` và ghi sổ (`quantityledgers`) trước lúc admission, nên có thể hết hẳn độ vượt nói trên. Đầu M7 đo cả hai cách trên lab: chọn `rules[].quota` nếu nó chặn đúng khi tạo Pod đồng thời, khi đó giới hạn vượt trần ở trên không còn; nếu cả hai đều không dùng được thì dự phòng là ResourcePool chia đều theo `namespaceQuota` (cách lab cũ đã chạy). Cách nào thì vẫn là một quota chung cho cả Workspace.
+Chọn cơ chế này sau khi đo trên Capsule 0.15.2 của lab (Tenant hard `requests.cpu: 1`, hai Namespace, bắn đồng thời 12 Pod 300m, đúng ra chỉ 3 Pod được vào): `rules[].quota` cho đúng 3 Pod ở cả 3 lần chạy, Pod thứ tư bị webhook từ chối với message nêu rõ `hard`, `projected` và `exceededBy`; còn `spec.resourceQuotas` scope `Tenant` (cách cũ, đã deprecated) chỉnh `hard` bằng controller sau khi Pod đã vào nên lọt 5–6 Pod, vượt trần 50–80%. Vì vậy quota chung không còn giới hạn "tạo đồng thời thì vượt", và cam kết giữ chỗ cứng của Dedicated (6.3) đứng được.
 
 Không cho giảm quota xuống dưới usage/reservation hiện tại. Với Dedicated mode, allocation cũng không được vượt remaining reservable capacity của node đã chọn. Phía Admin, giảm ClusterGrant theo quy tắc ở 5.5.
 
@@ -1635,7 +1635,7 @@ Không silently force-delete PVC/finalizer từ phía user.
 | Developer binding | additional RoleBinding → custom developer ClusterRole | M6 |
 | Viewer binding | additional RoleBinding → custom viewer ClusterRole | M6 |
 | RoleBinding do tenant tự tạo | ValidatingAdmissionPolicy `tenantry-tenant-rolebinding-subjects`: với caller `oidc:`, mọi subject phải là group `oidc:org_<ULID của Organization sở hữu Tenant>:...` hoặc ServiceAccount trong Namespace có tiền tố `<tên Tenant>-`; nhờ vậy contract thu hồi quyền (9.3) đứng vững | M11 |
-| Resource allocation | Quota chung `Tenant.spec.resourceQuotas` scope `Tenant` + LimitRange/quota policy (sub-reconciler `policy`, 5.4) | M7 |
+| Resource allocation | Quota chung `Tenant.spec.rules[].quota[]` + LimitRange/quota policy (sub-reconciler `policy`, 5.4) | M7 |
 | Dedicated Guaranteed QoS | LimitRange mỗi Namespace: `default` = `defaultRequest` và `maxLimitRequestRatio: {cpu: 1, memory: 1}` cho Container | M8 |
 | Namespace quota | `Tenant.spec.namespaceOptions.quota` | M6 |
 | Cluster selection | CR chỉ được apply vào đúng Cluster đó | M6 |

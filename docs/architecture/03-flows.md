@@ -526,7 +526,7 @@ sequenceDiagram
   end
   K8S->>CTRL: Watch event PlatformWorkspace generation=1
   CTRL->>CAP: Apply Tenant acme-solar: owners (group Owner + SA operator), additionalRoleBindings Developer/Viewer, nodeSelector pool (từ M8)
-  CTRL->>CAP: Tenant resourceQuotas scope Tenant 2 CPU / 4Gi, limits 4 CPU / 8Gi, 20 pods
+  CTRL->>CAP: Tenant rules quota (GlobalResourceQuota) 2 CPU / 4Gi, limits 4 CPU / 8Gi, 20 pods
   CTRL->>CAL: Apply IPPool acme-solar cidr 10.240.12.0/24 (từ M9)
   CTRL->>CAP: Apply TenantResource NetworkPolicy baseline (từ M9)
   CTRL->>K8S: Create Namespace acme-solar-frontend theo spec.namespaces

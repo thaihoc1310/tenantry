@@ -92,7 +92,7 @@ stateDiagram-v2
 | `CapsuleTenantReady` | Workspace Controller | M6 | Tenant `acme-solar` tồn tại; `namespaceOptions`, `storageClasses.allowed` và rules registry/QoS/Service (gồm cấm `NodePort`/`LoadBalancer`/`ExternalName`) render đúng generation |
 | `IdentityBindingsReady` | Workspace Controller | M6 | Owner/Developer/Viewer binding render xong; group subject đã tồn tại trong Keycloak (`Synced`) |
 | `ResourcesReserved` | Platform API | M7 | Phần giữ trên ClusterGrant đã commit |
-| `PolicyReady` | Workspace Controller | M7 | Quota chung `Tenant.spec.resourceQuotas` scope `Tenant` ([5.4]), LimitRange, Pod Security label đã áp |
+| `PolicyReady` | Workspace Controller | M7 | Quota chung `Tenant.spec.rules[].quota[]` → `GlobalResourceQuota` ([5.4]), LimitRange, Pod Security label đã áp |
 | `ComputeReady` | Workspace Controller | M8 | Shared: Tenant nodeSelector trỏ đúng pool. Dedicated: node có org label/taint và membership label của Workspace |
 | `DedicatedNodeCapacityReserved` | Platform API | M8 | Chỉ Dedicated: NodeReservation đã commit, node còn `Ready` |
 | `NetworkReady` | Workspace Controller | M9 | Calico IPPool tồn tại đúng CIDR, Namespace annotation được inject, baseline NetworkPolicy replicate |
@@ -149,7 +149,7 @@ stateDiagram-v2
 | `Running` (type `workspace.delete`) | Condition `Deleting=False` reason `BlockedByFinalizer`: Namespace ở `Terminating` quá ngưỡng vì finalizer/PVC/PV chưa release | `Blocked` | Message của Condition `Deleting` liệt kê object đang giữ, chép vào `workspaces.conditions`; portal hiển thị |
 | `Failed` | `POST /operations/{id}:retry` bởi OrgOwner/OrgAdmin của Organization sở hữu hoặc Platform Admin | `Pending` | Event chưa giao được đặt lại `attempts = 0` và giao ngay. Nếu lỗi do controller báo (mọi event đã giao), service ghi event apply mới với `spec.retryNonce` mới trong payload (generation mới), để controller reconcile lại và worker phân biệt được status sau retry. **Không** tạo reservation/CIDR mới |
 | `Blocked` | `POST /operations/{id}:retry` (cùng actor như trên) | `Running` | Controller thử lại bước delete; object còn kẹt thì báo `Blocked` lần nữa |
-| `Blocked` | `POST /operations/{id}:force` bởi Platform Admin | `Running` | Worker patch annotation `tenantry.io/force-delete=true`; controller xóa finalizer của object kẹt; audit event `force` bắt buộc |
+| `Blocked` | `POST /operations/{id}:force` bởi Platform Admin | `Running` | Worker patch annotation `tenantry.io/force-delete=true`; controller thôi chờ Namespace kẹt và đi tiếp tới xóa Tenant (ghi Event), không gỡ finalizer của PVC vì operator không có quyền trên PVC; object còn kẹt do Platform Admin dọn bằng tay; audit event `force` bắt buộc |
 
 Ràng buộc: mỗi Workspace có tối đa một Operation ở `Pending`/`Running`/`Blocked`; request mới trả `WORKSPACE_NOT_READY` (mục 1.1). Operation `Failed` không tự sang `Succeeded`. Operation không thuộc Organization nào (`sharedpool.update`, `org_id` NULL) chỉ Platform Admin xem và retry.
 
