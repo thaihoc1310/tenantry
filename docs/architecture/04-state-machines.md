@@ -52,7 +52,7 @@ stateDiagram-v2
   Provisioning --> Failed : Condition False quá ngưỡng
   Failed --> Provisioning : retry Operation
   Ready --> Degraded : drift (node Overcommitted, Condition False)
-  Updating --> Degraded : reconcile lỗi sau khi apply
+  Updating --> Degraded : Operation Failed (phase Failed của CR hoặc quá timeout)
   Degraded --> Updating : user sửa (resize, đổi binding) hoặc retry
   Degraded --> Ready : drift được xử lý, Condition về True
 ```
@@ -71,7 +71,7 @@ stateDiagram-v2
 | `Provisioning` | Condition False quá ngưỡng thời gian/retry của Operation | `Failed` | Operation `Failed` kèm Condition/component lỗi; **giữ** row Workspace (phần giữ trên grant), NodeReservation và NetworkAllocation (mục 3.2) |
 | `Ready` | Thay đổi sinh generation CR mới: `PATCH /workspaces/{id}` (display name, resources, `namespaceQuota`), `PUT`/`DELETE` binding, thêm/xóa Namespace hoặc Route. Resize chạy lại validation và lock trong cùng transaction | `Updating` | Operation mới `Pending`; cột tài nguyên của Workspace đổi ngay; NodeReservation tăng thì nâng amount ngay, giảm thì giữ amount cũ (mục 3.1) |
 | `Updating` | Worker thấy `observedGeneration == generation` và Condition True | `Ready` | Operation `Succeeded`; nếu là giảm Dedicated, worker hạ amount NodeReservation trong cùng transaction |
-| `Updating` | Reconcile lỗi sau khi apply (ví dụ quota chung không giảm được vì usage) | `Degraded` | Operation `Failed`; Condition chỉ rõ component; NodeReservation giữ amount cũ |
+| `Updating` | Operation `Failed`: CR báo phase `Failed` (lỗi không tự hết, ví dụ quota chung không giảm được vì usage) hoặc Condition False quá `TENANTRY_OPERATION_TIMEOUT` (10 phút) | `Degraded` | Operation `Failed` (`RECONCILE_FAILED` hoặc `RECONCILE_TIMEOUT`); Condition chỉ rõ component; NodeReservation giữ amount cũ. Phase `Degraded` của CR trong lúc `Provisioning`/`Updating` **không** kết thúc Operation: Workspace giữ state, Operation giữ `Running` và hiển thị message của Condition đang False, vì Capsule có lỗi replicate tạm thời tự hết sau vài giây (đo ở M12). `Degraded` do drift khi đang `Ready` giữ nguyên như dòng dưới |
 | `Ready` / `Degraded` | `POST /workspaces/{id}:cordon` bởi OrgOwner/OrgAdmin; Operation `workspace.cordon` `Succeeded` | `Cordoned` | CR `spec.cordoned: true` → `Tenant.spec.cordoned`; mutation của tenant bị Capsule chặn, workload vẫn chạy. Trong lúc Operation chạy Workspace giữ state cũ |
 | `Cordoned` | `POST /workspaces/{id}:uncordon` bởi OrgOwner/OrgAdmin; Operation `workspace.uncordon` `Succeeded` | `Ready` | Ngược lại; Condition False thì đi tiếp sang `Degraded` |
 | `Ready` / `Cordoned` / `Degraded` / `Failed` | `DELETE` kèm confirm gõ lại slug Workspace (`water`); portal đã hiển thị số Namespace/PVC sẽ mất | `Deleting` | Operation `workspace.delete` `Pending`; NodeReservation `Pending`/`Active` → `Releasing`; NetworkAllocation `Allocated → Releasing` (từ M9). Thu quyền tenant và dọn Cluster là việc của finalizer (mục 10) |
