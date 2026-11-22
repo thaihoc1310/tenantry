@@ -67,7 +67,7 @@ flowchart TB
   end
 
   subgraph Central["Central plane (MVP: system pool của Cluster A)"]
-    SPA["Portal Web<br/>React + TS, SPA tĩnh"]:::ui
+    SPA["Portal Web<br/>Vue + TS, SPA tĩnh"]:::ui
     API["Platform API<br/>Go modular monolith<br/>REST /api/v1, BFF session"]:::svc
     PW["Provisioning Worker<br/>đọc outbox → apply CR<br/>watch CR status → DB"]:::svc
     GS["Group Sync Worker<br/>DB group → Keycloak"]:::svc

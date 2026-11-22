@@ -60,8 +60,8 @@ Tài liệu này trả lời bốn câu hỏi: code đặt ở đâu (mục 2), 
 │   │   ├── render/              # pure functions: spec → object mong muốn (unit test được, không cần cluster)
 │   │   └── observe/             # Namespace watch → status.namespaces, node/cert/IPPool observation
 │   └── config/                  # CRD, RBAC, ClusterRole tenantry:tenant-developer/viewer, kustomize base
-├── web/                         # React + TypeScript SPA (Vite)
-│   ├── src/{app,features,components,api}/   # api/ = TS client generated từ OpenAPI
+├── web/                         # Vue 3 + TypeScript SPA (Vite), mục 6
+│   ├── src/{app,features,components,api,i18n}/   # api/ = TS client generated từ OpenAPI
 │   └── e2e/                     # Playwright
 ├── deploy/
 │   ├── Dockerfile.backend       # một image, 4 binary; Deployment chọn binary bằng command
@@ -130,7 +130,7 @@ Toàn bộ bước 9–10 của spec §17.1 nằm trong **một** transaction, t
 
 ```sql
 BEGIN;
-SELECT ... FROM organization_cluster_grants WHERE org_id=$1 AND cluster_id=$2 FOR UPDATE;   -- 1. grant
+SELECT ... FROM organization_cluster_grants WHERE org_id=$1 AND cluster_id=$2 FOR UPDATE;   -- 1. grant (CPU/RAM/Pod chỉ so với Σ Workspace Shared; Workspace, Namespace, storage so với mọi Workspace)
 SELECT ... FROM shared_compute_pools       WHERE id=$3 FOR UPDATE;                          -- 2a. Shared (soft: Σ ≤ ratio × reservable; phải khóa ghi vì pool dùng chung giữa nhiều grant)
 SELECT ... FROM dedicated_node_grants      WHERE id=$3 FOR UPDATE;                          -- 2b. Dedicated (hard: Σ active + new ≤ reservable)
 SELECT ... FROM network_pools              WHERE id=$4 FOR UPDATE;                          -- 3. pool; overlap check trên network_allocations của cùng cluster_id
@@ -234,16 +234,17 @@ Finalizer `tenantry.io/workspace` thực thi thứ tự spec §17.4 bước 4–
 - Watch `Namespace` với predicate label `capsule.clastix.io/tenant=<tenant>` (Capsule gắn) → map về PlatformWorkspace cùng tên → ghi `status.namespaces[{name, source}]`; `source=portal` nếu có trong `spec.namespaces`, ngược lại `kubectl`.
 - Đồng thời watch Tenant, IPPool, Ingress, Node (chỉ node có label `tenantry.io/dedicated-org`) bằng `Owns()`/`Watches()` với handler map về CR.
 
-### 4.5 Hai CRD phụ: `PlatformNodeGrant` và `PlatformSharedPool`
+### 4.5 Ba CRD phụ: `PlatformNodeGrant`, `PlatformSharedPool`, `PlatformNodeInventory`
 
-Credential của worker chỉ có quyền trên CRD `tenantry.io`, không đọc hay patch Node. Mọi thứ central plane cần biết hoặc cần làm với Node đi qua hai CRD nhỏ do worker apply và operator reconcile:
+Credential của worker chỉ có quyền trên CRD `tenantry.io`, không đọc hay patch Node. Mọi thứ central plane cần biết hoặc cần làm với Node đi qua ba CRD nhỏ do worker apply và operator reconcile:
 
 | CRD (`tenantry.io/v1alpha1`) | Spec | Operator làm | Status trả về |
 |---|---|---|---|
 | `PlatformNodeGrant` | `nodeName`, `organizationId` | Kiểm node `Ready`, không phải system node, không còn Pod tenant của Organization khác; gắn label + taint `tenantry.io/dedicated-org=<org-id>`; gỡ khi CR bị xóa | Condition `Ready` (reason `NodeNotReady`/`NodeNotClean` kèm danh sách Pod), `allocatable` của node |
-| `PlatformSharedPool` | `nodeSelector` | Chỉ quan sát | Số node `Ready`, tổng `allocatable` của pool |
+| `PlatformSharedPool` | `nodes` (tên node) | Gắn label `tenantry.io/compute-pool=<pool-id>` lên node trong danh sách, gỡ khỏi node ngoài danh sách; từ chối node là control-plane, system hoặc đang dedicated. Không đuổi Pod | Condition `Ready` (reason `NodeNotEligible` kèm tên node), số node `Ready`, tổng `allocatable` của pool |
+| `PlatformNodeInventory` (một object mỗi cụm) | rỗng | Chỉ quan sát | Mỗi node: tên, `Ready`, schedulable, loại (control-plane, system, worker), `allocatable` |
 
-Worker chép status về `dedicated_node_grants` và `shared_compute_pools.capacity_snapshot`; đó là nguồn của capacity math và drift `Overcommitted`. Cùng kênh với `PlatformWorkspace` nên Phase 2 (Cluster Agent) không phải đổi gì.
+Worker chép status về `dedicated_node_grants`, `shared_compute_pools.capacity_snapshot` và `cluster_nodes`; đó là nguồn của capacity math và drift `Overcommitted`. Cùng kênh với `PlatformWorkspace` nên Phase 2 (Cluster Agent) không phải đổi gì.
 
 ---
 
@@ -314,9 +315,50 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
 
 ## 6. Frontend
 
-- **Stack**: React 19 + TypeScript + Vite; state server bằng TanStack Query; router TanStack Router hoặc React Router (đề xuất React Router vì quen thuộc).
-- **Component library**: **Mantine** (đề xuất) — TypeScript-first, có sẵn Stepper/Form/Notifications/Modal/Table đủ cho wizard 12 bước và admin CRUD, theming nhẹ, MIT; tránh phải tự thiết kế component (spec §13.2).
+### 6.1 Stack
+
+| Việc | Chọn | Lý do |
+|---|---|---|
+| Framework | **Vue 3** + TypeScript, component viết dạng SFC với `<script setup lang="ts">` | Người làm dự án biết Vue; một kiểu viết duy nhất cho mọi component |
+| Build, dev server | Vite | Chuẩn của hệ Vue; proxy `/api` và `/auth` về API local (mục 10) |
+| Router | Vue Router | Router chính thức |
+| Dữ liệu từ server | TanStack Query (bản Vue) | Cache, refetch, trạng thái loading/error cho mọi lời gọi API; không tự viết lại các thứ đó trong từng màn |
+| Client API | `openapi-typescript` sinh kiểu từ `openapi.yaml`, gọi qua `openapi-fetch` | Kiểu request/response và enum mã lỗi luôn khớp backend; `make generate` sinh lại |
+| Component | **Element Plus** | Có sẵn Steps, Form kèm validation, Table, Dialog, Notification đủ cho wizard 12 bước và admin CRUD; dòng 2.x ổn định, tài liệu và ví dụ nhiều; tránh phải tự thiết kế component (spec §13.2) |
+| Test | Vitest + Vue Test Utils cho logic và component; Playwright cho luồng thật trên cụm | |
+| Kiểm kiểu, lint | `vue-tsc`, ESLint, Prettier | Chạy trong CI và pre-commit |
+
+- Dùng bản ổn định mới nhất của từng thư viện lúc dựng khung; phiên bản cụ thể nằm trong `package.json` và lockfile, không ghi ở tài liệu này.
+- Đã cân nhắc PrimeVue (nhiều component nhất, nhưng form cần thêm gói riêng) và Naive UI (cộng đồng nhỏ, phát hành thưa). Không đổi thư viện component giữa chừng.
+- **Không dùng Pinia** lúc đầu: dữ liệu server nằm trong TanStack Query, Organization đang chọn nằm trong URL, state của wizard nằm trong một composable. Thêm store khi có state dùng chung mà ba chỗ đó không chứa được.
+- Không SSR, không Nuxt: portal là SPA tĩnh do nginx phục vụ, mọi trang đều sau đăng nhập.
+
+### 6.2 Cấu trúc `web/src`
+
+```text
+api/          client sinh từ OpenAPI + một file bọc: gắn X-CSRF-Token, bắt 401, đổi lỗi thành ApiError(code, message, requestId)
+app/          main.ts, router, layout (thanh trên, org switcher, menu), guard đăng nhập và guard admin
+features/     mỗi vùng nghiệp vụ một thư mục: onboarding, organizations, members, groups, workspaces, routes, admin, operations
+components/   component dùng chung nhiều feature: QuotaBar, StatusBadge, ConditionTimeline, ErrorState, EmptyState, ConfirmByName
+i18n/         bảng mã lỗi → câu hiển thị (vi/en)
+```
+
+Mockup của mọi màn hình, dựng bằng chính Vue và Element Plus với dữ liệu mẫu, nằm ở `docs/design/mockups/` (mở `index.html`). Bộ component dùng chung ở đó (`StatusTag`, `QuotaMeter`, `PageHeader`, `Panel`, `KeyValues`, `ConditionTimeline`, `EmptyState`, `ErrorState`, `ConfirmByName`, `CopyField`) là bản mẫu cho `components/`; code thật viết lại thành SFC, không chép file mockup.
+
+Trong một feature: trang (`*Page.vue`), component riêng của feature, và một file `queries.ts` chứa mọi lời gọi API của feature dưới dạng composable (`useOrganizations()`, `useApproveOrganization()`). Component không gọi `fetch` trực tiếp.
+
+### 6.3 Quy ước
+
 - **Auth**: SPA không giữ token; `GET /api/v1/me` để biết user, org list, có `platform-admin` hay không. Login = chuyển tới `/auth/login`; logout = `POST /auth/logout`; gặp `401` thì chuyển tới `/auth/login`. Mọi request ghi gửi header `X-CSRF-Token` lấy từ cookie `tenantry_csrf`. Phía server: `architecture/06-security-and-identity.md` mục 3.
+- **Lỗi**: mọi lỗi API hiển thị mã ổn định (`SLUG_TAKEN`, `QUOTA_EXCEEDED`…) kèm câu giải thích tra từ `i18n/` và `requestId`. Lỗi gắn với một trường thì hiện ngay dưới trường đó; lỗi khác hiện bằng Notification. Mã lỗi lấy từ enum của OpenAPI, nên UI, backend và test E2E dùng chung một nguồn.
+- **Ba trạng thái của mọi màn có dữ liệu**: đang tải (skeleton), rỗng (`EmptyState` có câu giải thích và hành động kế tiếp), lỗi (`ErrorState` có nút thử lại). Danh sách bắt buộc ở `architecture/07-ux-wireflow.md` mục 5.
+- **Request ghi** gửi `Idempotency-Key` sinh một lần cho mỗi lần mở form, để bấm lại hay mạng chập chờn không tạo hai bản ghi.
+- **Nút bị khóa phải nói lý do** (tooltip hoặc dòng chữ bên cạnh): hết quota, Cluster đang `Maintenance`, không đủ quyền.
+- **Hành động phá hủy** (xóa Workspace, xóa Namespace, xóa Organization) dùng `ConfirmByName`: gõ lại tên mới bấm được.
+- **Giao diện**: theme mặc định của Element Plus, không thiết kế riêng; bố cục dùng được từ 1280px trở lên, không tối ưu cho điện thoại. Chữ trên giao diện là tiếng Anh; câu giải thích lỗi có cả tiếng Việt và tiếng Anh.
+
+### 6.4 Route và màn hình
+
 - **Routes** mirror IA spec §19 (đây là nơi định nghĩa route; `architecture/07-ux-wireflow.md` vẽ lại theo luồng):
 
 ```text
@@ -333,14 +375,15 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
 /orgs/:orgSlug/audit
 /invitations/:token                     accept
 /ownership-transfers/:token             accept
-/admin/organizations | /admin/clusters | /admin/onboarding-policy | /admin/grants | /admin/operations | /admin/health
+/admin/organizations | /admin/clusters | /admin/onboarding-policy | /admin/grants (danh sách) | /admin/grants/:orgSlug/:clusterId (sửa một grant) | /admin/operations | /admin/health
 ```
 
 - Admin area chỉ render khi `me.platformAdmin === true`; backend vẫn check (spec §10.1).
 - **Operation status**: `GET /api/v1/operations/{id}/events` SSE **(đề xuất; spec cho phép poll/SSE)**, fallback polling 2s; hiển thị timeline conditions theo tên condition thật.
 - **Wizard**: mỗi bước gọi `POST .../workspaces:validate` với payload hiện tại để hiện lỗi sớm; bước Dedicated hiển thị node card (reservable/reserved/remaining, capacity state, disable + lý do); bước network mặc định Auto, Advanced mới lộ pool/prefix/CIDR kèm số địa chỉ khả dụng.
 - **Empty/error states** spec §19.2 là checklist trong Playwright, không chỉ happy path.
-- Test: Vitest + Testing Library cho component/logic; Playwright cho flow login → wizard → Ready trên lab.
+- **State của wizard** nằm trong một composable `useWorkspaceWizard()` (một object reactive + hàm chuyển bước), test bằng Vitest không cần render.
+- Test: Vitest + Vue Test Utils cho component/logic; Playwright cho flow login → wizard → Ready trên lab.
 
 ---
 
@@ -416,7 +459,7 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
      - Duyệt là một transaction: `Active`, entitlement, ClusterGrant đầy đủ (quota, compute mode, shared pool, NetworkPool), 3 group mặc định `admins/developers/viewers`, Owner vào `admins`, audit. Từ chối: `Rejected` + `review_note`, nhả slug.
      - Ranh giới với milestone sau: group nằm ở `sync_status=Pending` cho tới khi Group Sync Worker có ở M4. Pool ở M3 chỉ có bảng và dữ liệu seed; API và UI quản lý pool, capacity math thuộc M5.
   5. `GET /me`, `GET /organizations`, `/entitlement`, `/usage` (usage = 0 lúc này).
-  6. **Web**: `web/` dùng Vite, React, Mantine, React Router, TanStack Query, client TypeScript sinh từ OpenAPI (`make generate`). Gồm layout, login redirect, màn trống "xin tạo Organization" (báo `SLUG_TAKEN` tại chỗ), trạng thái yêu cầu (chờ, hoặc bị từ chối kèm lý do), org switcher, Overview hiển thị grant/quota, trang Admin duyệt yêu cầu.
+  6. **Web**: dựng khung `web/` theo mục 6 (Vue 3, Vite, Vue Router, TanStack Query, Element Plus, client TypeScript sinh từ OpenAPI bằng `make generate`), kèm bộ component dùng chung `ErrorState`, `EmptyState`, `QuotaBar`, `StatusBadge`. Gồm layout, login redirect, màn trống "xin tạo Organization" (báo `SLUG_TAKEN` tại chỗ), trạng thái yêu cầu (chờ, hoặc bị từ chối kèm lý do), org switcher, Overview hiển thị grant/quota, trang Admin duyệt yêu cầu.
   7. **Deploy lên cụm**:
      - Chart `tenantry-web` (nginx); Ingress `portal.tenantry.site` đưa `/api` và `/auth` vào API, còn lại vào web.
      - Secret chứa client secret của `portal` và khóa mã hóa phiên do script sinh, không vào repo. Seed chạy trong cụm.
@@ -452,23 +495,23 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
 
 - **Mục tiêu**: Platform Admin cấp và điều chỉnh tài nguyên qua UI; capacity math có test.
 - **Công việc**:
-  1. Migration `dedicated_node_grants` (bảng pool và bảng nối với grant đã có từ M3, kèm dữ liệu seed).
-  2. Endpoint §16.5 admin (`RequirePlatformAdmin` đã có từ M3): organizations (tạo thẳng Org + Owner + grant ban đầu; approve/reject đã có từ M3), entitlement, clusters (register/patch trạng thái `Registered/Ready/Maintenance/Unavailable`), onboarding-policy, cluster-grants PUT/DELETE (chặn giảm dưới allocation, chặn delete khi còn Workspace), dedicated-nodes, shared-pools, network-pools.
-  3. `reservation` capacity math: `reservable/reserved/remaining`, capacity state, soft ratio Shared; snapshot allocatable của node/pool do worker chép từ status của hai CRD phụ (mục 4.5); trước khi operator có ở M6, `tenantry-seed` nhập snapshot tay.
+  1. Migration `dedicated_node_grants`, `cluster_nodes` (bảng pool và bảng nối với grant đã có từ M3, kèm dữ liệu seed).
+  2. Endpoint §16.5 admin (`RequirePlatformAdmin` đã có từ M3): organizations (tạo thẳng Org + Owner + grant ban đầu; approve/reject đã có từ M3), entitlement, clusters (register/patch trạng thái `Registered/Ready/Maintenance/Unavailable`), onboarding-policy, cluster-grants PUT/DELETE (chặn giảm dưới allocation, chặn delete khi còn Workspace), dedicated-nodes, shared-pools (kể cả thêm/bớt node, spec §6.2), danh sách node của Cluster, network-pools. Quy tắc sửa grant theo spec §5.5.
+  3. `reservation` capacity math: `reservable/reserved/remaining`, capacity state, soft ratio Shared; snapshot allocatable của node/pool do worker chép từ status của các CRD phụ (mục 4.5); trước khi operator có ở M6, `tenantry-seed` nhập snapshot và danh sách node bằng tay, và việc thêm/bớt node của pool mới chỉ ghi DB + Operation chờ.
   4. Grant dedicated node: API ghi `dedicated_node_grants` (`node_state=NotReady`) + Operation `node.grant` + outbox. Việc kiểm Pod lạ (spec §6.3) và gắn label/taint là của operator, làm ở M8.
   5. Catalog endpoint §16.3 phía Org (filter theo grant, sanitize node).
   6. Web: khu Admin (Organizations, Cluster registry, Onboarding policy, Grants, Pools/Nodes/NetworkPools), trang Granted Clusters phía Org.
 - **Đầu ra kiểm chứng**: Admin tạo Org `acme` + Owner + grant; ghi nhận grant node `wk3` cho `acme` (node dùng được từ M8); Org thấy remaining capacity; user thường gọi `/admin/*` bị 403.
 - **Test bắt buộc**: unit capacity math + transition `Overcommitted`; unit CIDR pool validation; integration grant reduce dưới allocation bị chặn; authz admin.
 - **Phụ thuộc**: M4.
-- **Rủi ro chính**: nhiều form CRUD admin ăn thời gian UI — dùng bảng/form generic của Mantine, không làm đẹp.
+- **Rủi ro chính**: nhiều form CRUD admin ăn thời gian UI — dùng bảng/form có sẵn của Element Plus, không làm đẹp.
 - **Ước lượng**: L.
 
 ### M6 — CRD + Controller
 
 - **Mục tiêu**: outbox → CR → Capsule Tenant Ready; Namespace từ portal xuất hiện trong cluster.
 - **Công việc**:
-  1. kubebuilder scaffold `operator/`, types `PlatformWorkspace` theo §14.2 và hai CRD phụ (mục 4.5, ở mức báo `allocatable` về status), CRD gen, chart `tenantry-operator` (RBAC operator: tenants/resourcepools/ippools/certificates/namespaces/nodes...).
+  1. kubebuilder scaffold `operator/`, types `PlatformWorkspace` theo §14.2 và ba CRD phụ (mục 4.5, ở mức báo `allocatable` và danh sách node về status), CRD gen, chart `tenantry-operator` (RBAC operator: tenants/resourcepools/ippools/certificates/namespaces/nodes...).
   2. ClusterRole `tenantry:tenant-developer`, `tenantry:tenant-viewer` (spec §10.5) trong chart, permission matrix `kubectl auth can-i` test.
   3. `render/` + sub-reconciler `tenant`, `namespaces`, `rbac`; conditions `CapsuleTenantReady`, `IdentityBindingsReady`; `status.namespaces` observation.
   4. Finalizer khung (xóa Namespace → Tenant), chưa network/node.
@@ -549,7 +592,7 @@ Các loop không liên quan nghiệp vụ — chúng chỉ chung một hình d�
 - **Đầu ra kiểm chứng**: Alice làm toàn bộ Phần 2–3 của demo (spec §28) không dùng curl/YAML.
 - **Test bắt buộc**: Vitest cho wizard state; Playwright: wizard Shared → Ready, wizard Dedicated bị chặn khi thiếu capacity, mỗi state §19.2 có screenshot.
 - **Phụ thuộc**: M8, M9.
-- **Rủi ro chính**: scope creep UI; giữ Mantine default, không custom design.
+- **Rủi ro chính**: scope creep UI; giữ theme mặc định của Element Plus, không custom design.
 - **Ước lượng**: L.
 
 ### M11 — Access & ingress
@@ -667,7 +710,7 @@ gantt
 | Render | spec → Tenant/IPPool/Ingress/NetworkPolicy golden files | `operator/internal/render` |
 | Keycloak mapping | machine name, group claim → subject `oidc:` | `backend/internal/keycloak` |
 | OpenAPI contract | examples validate theo schema | `backend/openapi` |
-| Frontend | wizard reducer, error code map, form validation | `web/src` (Vitest) |
+| Frontend | wizard composable, error code map, form validation | `web/src` (Vitest) |
 
 ### 9.2 Integration (chạy trên PR, vài phút)
 
@@ -735,11 +778,11 @@ make realm-export / realm-import
 | 4 | Phụ thuộc admission `PodNodeSelector` của kubeadm | Placement không enforce nếu plugin tắt | Test bắt buộc kiểm tra plugin bật; Capsule rule chặn nodeName/toleration làm lớp hai | M8 |
 | 5 | Calico IPAM release chậm khi delete | Delete kéo dài, CIDR bị giữ | Timeout + `Blocked` rõ ràng; quarantine; đo thời gian thật | M9 |
 | 6 | JWT header quá lớn khi user nhiều group (Proxy/Traefik/Headlamp) | 431/WebSocket lỗi | Giới hạn group theo entitlement `maxGroups`; test ở M11 | M11 |
-| 7 | Scope creep UI (đẹp, chart, iframe) | Trễ M10 | Mantine mặc định; cắt theo §26.2; wizard trước, dashboard sau | M10 |
+| 7 | Scope creep UI (đẹp, chart, iframe) | Trễ M10 | Element Plus mặc định; cắt theo §26.2; wizard trước, dashboard sau | M10 |
 | 8 | Race/overbook không bắt được trong test | Sai luận điểm reservation | Test concurrency với `-race` lặp; exclusion constraint + partial unique index như lưới an toàn | M7–M9 |
 | 9 | Cụm phải mở ra internet (80/443) và phụ thuộc Cloudflare + Let's Encrypt | Không xin/gia hạn được cert thì HTTPS hỏng | DNS-01 không cần gọi vào cụm; thử trên staging trước; cert có hạn 90 ngày, cert-manager tự gia hạn | M1, M11 |
 | 10 | Lab cluster nhỏ không đủ cho benchmark 50 Workspace | Không có số liệu | Workspace benchmark không chạy workload; đo control plane; ghi rõ giới hạn | M12 |
-| 11 | Hai CRD phụ (mục 4.5) làm operator lớn thêm | Trễ M6/M8 | Reconciler của CRD phụ rất nhỏ (một object, không finalizer phức tạp); `PlatformSharedPool` chỉ quan sát | M6, M8 |
+| 11 | Ba CRD phụ (mục 4.5) làm operator lớn thêm | Trễ M6/M8 | Reconciler của CRD phụ rất nhỏ (một object, không finalizer phức tạp); `PlatformNodeInventory` chỉ quan sát, `PlatformSharedPool` chỉ gắn và gỡ một label | M6, M8 |
 | 12 | Drift giữa OpenAPI, DB và CR khi sửa spec | Bug tích hợp | Generate-check trong CI; một PR đổi contract phải đổi cả ba nơi | mọi M |
 
 ---
@@ -758,6 +801,6 @@ Số thứ tự được code trích dẫn (`IMPLEMENTATION-PLAN §12, decision 
 | 6 | Codegen/ORM | oapi-codegen (strict server, router chi) + sqlc + pgx v5; migration bằng goose; TS: openapi-typescript + openapi-fetch |
 | 7 | Push trạng thái operation | SSE `GET /operations/{id}/events`, fallback polling 2s; không WebSocket |
 | 8 | Outbox tuning | poll 1s, batch 10, backoff 1s→5m, 10 lỗi liên tiếp → Operation `Failed`; resync CR status 5 phút; CIDR quarantine 10 phút |
-| 9 | Cách gắn label/taint dedicated node và đọc allocatable | Hai CRD phụ `PlatformNodeGrant` và `PlatformSharedPool` do operator reconcile (mục 4.5); worker vẫn chỉ đụng CRD `tenantry.io` |
+| 9 | Cách gắn label/taint dedicated node và đọc allocatable | Ba CRD phụ `PlatformNodeGrant`, `PlatformSharedPool` và `PlatformNodeInventory` do operator reconcile (mục 4.5); worker vẫn chỉ đụng CRD `tenantry.io` |
 | 10 | Deploy artefact | 3 Helm chart riêng (`tenantry-backend`, `tenantry-operator`, `tenantry-web`) + overlay kustomize lab; 3 image: một cho cả 4 binary của `backend/` (Deployment chọn binary bằng `command`), một cho operator, một cho web (nginx static) |
 | 11 | Redis | Không dùng: phiên, idempotency và hàng đợi đều ở PostgreSQL (`architecture/06-security-and-identity.md` mục 3.3) |

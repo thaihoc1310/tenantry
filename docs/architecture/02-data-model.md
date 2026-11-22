@@ -217,14 +217,12 @@ erDiagram
     bigint limits_memory_bytes
     int pods
     bigint requests_storage_bytes
-    text[] allowed_compute_modes
     text[] allowed_storage_classes
   }
   shared_compute_pools {
     text id PK
     text cluster_id FK
     text name
-    jsonb node_selector
     numeric allocation_overcommit_ratio
     jsonb system_reserve
     jsonb capacity_snapshot
@@ -233,6 +231,18 @@ erDiagram
   cluster_grant_shared_pools {
     text grant_id FK
     text pool_id FK
+  }
+  cluster_nodes {
+    text cluster_id PK
+    text node_name PK
+    text kind "ControlPlane|System|Worker"
+    bool ready
+    bool schedulable
+    bigint allocatable_cpu_milli
+    bigint allocatable_memory_bytes
+    int allocatable_pods
+    text shared_pool_id FK "nullable: pool Admin đã chọn"
+    timestamptz observed_at
   }
   dedicated_node_grants {
     text id PK
@@ -255,7 +265,6 @@ erDiagram
     cidr[] cidrs
     int default_prefix_length
     int[] allowed_prefix_lengths
-    text[] allowed_compute_modes
   }
   cluster_grant_network_pools {
     text grant_id FK
@@ -265,6 +274,8 @@ erDiagram
   clusters ||--o{ shared_compute_pools : ""
   clusters ||--o{ dedicated_node_grants : ""
   clusters ||--o{ network_pools : ""
+  clusters ||--o{ cluster_nodes : ""
+  shared_compute_pools ||--o{ cluster_nodes : "node của pool"
   organization_cluster_grants ||--o{ cluster_grant_shared_pools : ""
   shared_compute_pools ||--o{ cluster_grant_shared_pools : ""
   organization_cluster_grants ||--o{ cluster_grant_network_pools : ""
@@ -279,12 +290,15 @@ erDiagram
 | Node chỉ dedicated cho một org | `UNIQUE (cluster_id, node_name)` |
 | Pool/NodeGrant/NetworkPool trong grant phải cùng `cluster_id` với grant | service + integration test |
 | Pool riêng chỉ vào grant của đúng org | service khi Admin gán |
-| Không giảm grant dưới tổng allocation hiện tại | transaction: lock grant, `SUM` cột tài nguyên của `workspaces` so với giá trị mới |
+| Không giảm grant dưới tổng allocation hiện tại | transaction: lock grant, `SUM` cột tài nguyên của `workspaces` so với giá trị mới; CPU/RAM/Pod chỉ cộng Workspace Shared (plan 5.5) |
+| Node thuộc tối đa một pool | một cột `cluster_nodes.shared_pool_id` |
+| Node không vừa thuộc pool vừa dedicated | service: lock row `cluster_nodes` của node trước khi thêm vào pool hoặc tạo `dedicated_node_grants`; operator từ chối lần nữa trên Cluster |
+| Compute mode dùng được | suy ra: Shared khi grant có `cluster_grant_shared_pools`, Dedicated khi có `dedicated_node_grants` của org trên cluster; không có cột riêng |
 | Không revoke node grant còn reservation chưa `Released` | `FK ON DELETE RESTRICT` từ `workspace_node_reservations` + check state |
 
 **Điểm cần review**
 
-- `capacity_snapshot` của shared pool và `allocatable_*` của dedicated node là **dữ liệu chép từ Kubernetes**. Controller báo qua status của CR phụ (`PlatformNodeGrant` cho dedicated node, `PlatformSharedPool` cho shared pool), worker chép về DB — worker không đọc Node trực tiếp. Chênh lệch với reservation → `Overcommitted`.
+- `capacity_snapshot` của shared pool và `allocatable_*` của dedicated node là **dữ liệu chép từ Kubernetes**. Controller báo qua status của CR phụ (`PlatformNodeGrant` cho dedicated node, `PlatformSharedPool` cho shared pool, `PlatformNodeInventory` cho danh sách node trong `cluster_nodes`), worker chép về DB — worker không đọc Node trực tiếp. Chênh lệch với reservation → `Overcommitted`.
 - `onboarding_policies.grant_template` là JSON điền sẵn vào form duyệt; grant đã cấp là snapshot, đổi policy sau đó không ảnh hưởng [5.2.1].
 
 ## 4. Vùng Workspace & Allocation

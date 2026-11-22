@@ -66,7 +66,7 @@ flowchart TB
 - Phase 2 tách central plane (Portal, API, worker, PostgreSQL, Keycloak) sang một cụm riêng. Mỗi cụm tenant vẫn giữ một system pool nhỏ cho thành phần theo cụm: Capsule, Capsule Proxy, operator, Traefik, cert-manager, Headlamp.
 - Cluster demo tối thiểu cần bao nhiêu node: 1 control-plane + 1–2 system + 2 shared + 1 dedicated = 5–6 node; đủ tài nguyên lab không?
 - Trên dedicated node, system DaemonSet cần toleration cho taint `tenantry.io/dedicated-org` — phải thêm vào Helm values của Calico/monitoring, và tính vào `systemReserve`. `csi-nfs-node` mặc định đã tolerate mọi taint, chỉ cần tính vào `systemReserve`.
-- Có cho phép một node vừa là shared pool vừa là dedicated không? Plan hàm ý không (grant yêu cầu node sạch); nên enforce ở API.
+- Một node không bao giờ vừa thuộc shared pool vừa là dedicated (plan 6.3). Central plane không đọc Node, nên chỗ chặn là controller của `PlatformNodeGrant`: node còn mang label `tenantry.io/compute-pool` thì từ chối grant, cùng nhánh với system node (`03-flows.md` mục 2b). Platform Admin chọn node của shared pool trên portal; operator gắn và gỡ label theo `PlatformSharedPool.spec.nodes` và cũng từ chối node đang dedicated (plan 6.2).
 
 ---
 
@@ -242,6 +242,7 @@ flowchart TB
 |---|---|---|
 | Ý nghĩa allocation | Trần ResourcePool (quota) | Giữ chỗ trên node cụ thể |
 | Ceiling | `ratio × (allocatable − systemReserve)`, ratio per pool | `allocatable − systemReserve`, ratio = 1 |
+| Trừ vào quota CPU/RAM/Pod của ClusterGrant | Có | Không; chỉ số Workspace, Namespace và storage tính chung |
 | Ai chia sẻ | Mọi Organization có pool trong grant | Chỉ Workspace của Organization được grant node |
 | QoS | `requests < limits` theo ratio policy của pool | `requests = limits` bắt buộc |
 | Khi vượt | `COMPUTE_POOL_CAPACITY_EXCEEDED` | `DEDICATED_NODE_INSUFFICIENT_CAPACITY` |
@@ -263,7 +264,7 @@ flowchart TB
 flowchart TB
   subgraph CL["Cluster A: supernet 10.240.0.0/16 (Pod CIDR tenant)"]
     direction TB
-    subgraph ONB["NetworkPool onboarding-pod-network<br/>organizationId = null (pool chung)<br/>cidrs 10.240.0.0/18 (giả định chia supernet)<br/>defaultPrefixLength 24, allowedComputeModes Shared"]
+    subgraph ONB["NetworkPool onboarding-pod-network<br/>organizationId = null (pool chung)<br/>cidrs 10.240.0.0/18 (giả định chia supernet)<br/>defaultPrefixLength 24"]
       P1["10.240.1.0/24 → Workspace globex-demo"]
       P2["10.240.2.0/24 → Workspace initech-lab"]
       PF["... free /24 ..."]

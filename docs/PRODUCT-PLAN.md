@@ -15,7 +15,7 @@
 3. **Hệ quả của thu hồi quyền được ghi rõ**: logout trên Keycloak đăng xuất user ở mọi nơi; chỉ thực hiện khi group bị gỡ đang có binding Workspace.
 4. **`Idempotency-Key`** lưu ở bảng riêng theo `(user, key)`, ghi cùng transaction với thay đổi.
 5. **Không dùng Redis**, ghi thành quyết định có lý do (13.2, ADR 21).
-6. **Central plane không đọc Node**: việc kiểm node sạch, gắn label/taint và đọc capacity đi qua hai CRD phụ `PlatformNodeGrant`, `PlatformSharedPool`; cấp dedicated node trở thành một Operation.
+6. **Central plane không đọc Node**: việc kiểm node sạch, gắn label/taint và đọc capacity đi qua các CRD phụ `PlatformNodeGrant`, `PlatformSharedPool` (và `PlatformNodeInventory`, xem điểm 17); cấp dedicated node trở thành một Operation.
 7. **Storage dùng `csi-driver-nfs`** thay cho NFS subdir provisioner (đã ngừng phát hành từ 2023); vẫn là NFS, StorageClass `standard` không đổi. Lý do ở `architecture/05-network-and-scheduling.md` mục 9.
 8. **Route thay cho Ingress do tenant tự viết.** Platform sở hữu toàn bộ đường vào HTTP: user tạo Route trên portal (Namespace, tên, Service, cổng), operator dựng Ingress; tenant bị chặn ghi Ingress. Hostname phẳng `<tên>-<org>-<ws>.mvp.tenantry.site`, một wildcard cert chung do platform giữ thay cho cert từng Workspace. Bỏ `allowedIngressClasses` khỏi ClusterGrant (7.6).
 9. **Domain thật `tenantry.site` và Let's Encrypt** thay cho `tenantry.example` và CA nội bộ của lab; DNS ở Cloudflare.
@@ -23,6 +23,11 @@
 11. **Custom domain** có quy tắc nghiệp vụ (xác minh TXT, cert tự xin), làm sau Route cơ bản (7.6).
 12. **Tài liệu**: mỗi chủ đề một nơi định nghĩa. Mục 15 (database) và phần state của mục 17 chuyển hẳn sang `architecture/`; `architecture/*` đã theo mô hình "xin tạo Organization" của v0.7.
 13. **Thư xác minh email đi vào hộp thư giả trong cụm (Mailpit)** ở MVP. Keycloak vẫn bắt xác minh email khi tự đăng ký, vì lời mời tin vào email của phiên; chỉ việc gửi thư ra ngoài là chưa làm. Đổi sang SMTP thật là cấu hình realm. Chi tiết ở `architecture/06-security-and-identity.md` mục 3.
+14. **Frontend dùng Vue 3** thay cho React; thư viện component là Element Plus. Stack và quy ước ở `IMPLEMENTATION-PLAN.md` mục 6.
+15. **Quota CPU/RAM/Pod của ClusterGrant chỉ tính Workspace Shared.** Workspace Dedicated chỉ bị giới hạn bởi dung lượng của chính node đã cấp cho Organization; số Workspace, số Namespace và storage vẫn tính cho cả hai mode (5.2, 5.3).
+16. **Bỏ `allowedComputeModes` khỏi ClusterGrant, onboarding policy và NetworkPool.** Mode được suy ra: Shared khi grant có shared pool, Dedicated khi Organization có dedicated node trên Cluster (5.2). NetworkPool không phân biệt mode; cần tách dải địa chỉ theo mode thì tạo hai pool.
+17. **Platform Admin thêm/bớt node của shared pool trên portal.** Operator gắn và gỡ label pool; một CRD phụ thứ ba `PlatformNodeInventory` báo danh sách node của Cluster về central plane (6.2). Một node hoặc thuộc một pool, hoặc là dedicated, không bao giờ cả hai.
+18. **Quy tắc sửa ClusterGrant** được ghi rõ (5.5): grant là trần cho việc giữ chỗ về sau, sửa grant không bao giờ đụng tới Workspace đang chạy.
 
 ### v0.6 → v0.7
 
@@ -348,18 +353,15 @@ organizationId: org-01jabc
 clusterId: cluster-a
 displayName: Cluster A
 isDefault: true
-maxWorkspaces: 5
-maxNamespacesTotal: 30
+maxWorkspaces: 5            # mọi Workspace, cả hai mode
+maxNamespacesTotal: 30      # mọi Workspace, cả hai mode
 resources:
-  requests.cpu: "20"
+  requests.cpu: "20"        # CPU/RAM/Pod: chỉ Workspace Shared
   requests.memory: 40Gi
   limits.cpu: "30"
   limits.memory: 60Gi
   pods: 200
-  requests.storage: 500Gi
-allowedComputeModes:
-  - Shared
-  - Dedicated
+  requests.storage: 500Gi   # mọi Workspace, cả hai mode
 sharedPoolRefs:
   - shared-general
 dedicatedNodeGrantRefs:
@@ -370,6 +372,10 @@ allowedNetworkPoolRefs:
 allowedStorageClasses:
   - standard
 ```
+
+**Phạm vi của từng con số.** `requests/limits` CPU, RAM và `pods` là quota của phần **Shared**: chúng giới hạn tổng allocation của các Workspace Shared, vì ở shared pool Organization dùng chung node với người khác và cần một trần. Workspace Dedicated **không** trừ vào các số này: node đã thuộc riêng Organization, nên trần duy nhất là dung lượng còn lại của node (6.3). `maxWorkspaces`, `maxNamespacesTotal` và `requests.storage` tính cho mọi Workspace, vì chúng không gắn với node (storage nằm trên NFS dùng chung).
+
+**Compute mode được suy ra, không có cờ riêng.** Organization dùng được Shared khi grant có ít nhất một `sharedPoolRefs`; dùng được Dedicated khi có ít nhất một `DedicatedNodeGrant` trên Cluster đó. Grant không có shared pool thì các số CPU/RAM/Pod không có ý nghĩa và form ẩn chúng đi.
 
 Một Organization có một hoặc nhiều ClusterGrant; đúng một grant được đánh dấu mặc định. Nếu chỉ có một grant, portal preselect Cluster đó (trường hợp mặc định của MVP). Nếu có nhiều grant, OrgOwner chọn Cluster khi tạo Workspace.
 
@@ -387,7 +393,6 @@ resources:
   limits.memory: 8Gi
   pods: 20
   requests.storage: 20Gi
-allowedComputeModes: [Shared]
 sharedPoolRefs: [shared-general]
 allowedNetworkPoolRefs: [onboarding-pod-network]
 ```
@@ -400,7 +405,8 @@ Khi tạo hoặc resize Workspace trong Cluster đã chọn:
 
 ```text
 workspace.cluster_id thuộc ClusterGrant của Organization
-sum(workspace allocations trong grant) <= grant resource entitlement
+count(workspaces), sum(namespace quota), sum(storage) của mọi Workspace trong grant <= grant
+Shared:    sum(CPU/RAM/Pod của các Workspace Shared trong grant) <= grant resources
 Shared:    sum(workspace allocations trên pool) <= allocationOvercommitRatio × (pool allocatable - system reserve)
 Dedicated: dedicated node thuộc đúng org + cluster; sum(active reservations trên node) + reservation mới <= allocatable - system reserve  (ratio cố định = 1)
 workspace CIDR thuộc NetworkPool của grant và không overlap allocation khác trong Cluster
@@ -432,6 +438,21 @@ Controller trong Cluster render thành:
 - Capsule Namespace quota.
 
 Không cho giảm quota xuống dưới usage/reservation hiện tại. Với Dedicated mode, allocation cũng không được vượt remaining reservable capacity của node đã chọn. Đối xứng ở phía Admin: **không thể giảm ClusterGrant xuống dưới tổng allocation hiện tại** của các Workspace trong grant; muốn thu hồi, Organization phải tự thu gọn/xóa Workspace trước.
+
+### 5.5 Sửa ClusterGrant
+
+Grant là **trần cho việc giữ chỗ**, không phải thứ Pod đang dùng. Mỗi Workspace đã lấy phần của mình ra khỏi grant lúc tạo hoặc resize, và phần đó nằm trong ResourcePool của Workspace trên Cluster. Vì vậy sửa grant không gửi gì xuống Cluster và không bao giờ đụng tới Workspace đang chạy; nó chỉ quyết định Organization còn tạo thêm hoặc nới rộng được bao nhiêu.
+
+Quy tắc khi Platform Admin lưu grant (`PUT .../cluster-grants/{clusterId}`), kiểm trong một transaction có lock grant:
+
+- mỗi con số phải ≥ tổng đã giữ chỗ tương ứng (CPU/RAM/Pod: tổng của Workspace Shared; Workspace, Namespace, storage: tổng của mọi Workspace); thấp hơn thì từ chối `CLUSTER_GRANT_BELOW_ALLOCATION` kèm con số tối thiểu. Muốn thu hồi nhiều hơn, Organization phải tự thu gọn hoặc xóa Workspace trước;
+- không gỡ một shared pool khỏi grant khi còn Workspace Shared của Organization trên pool đó;
+- không gỡ một NetworkPool khỏi grant khi còn Workspace giữ CIDR trong pool đó;
+- gỡ một StorageClass khỏi danh sách chỉ chặn PVC **mới**; PVC đang có giữ nguyên;
+- xóa grant bị chặn khi còn Workspace hoặc dedicated node trên Cluster đó;
+- mọi lần sửa ghi audit kèm giá trị trước và sau.
+
+Portal hiện số tối thiểu ngay dưới từng ô, và trước khi lưu hiện bảng "trước → sau" của những ô đã đổi để Admin xác nhận.
 
 MVP dùng hai resource profile rõ ràng:
 
@@ -501,12 +522,17 @@ tenantry.io/compute-pool=shared-general
 ```yaml
 id: shared-general
 clusterId: cluster-a
-nodeSelector:
-  tenantry.io/compute-pool: shared-general
+nodes: [wk2, wk3]            # operator gắn label tenantry.io/compute-pool=shared-general
 allocationOvercommitRatio: 3.0
 systemReserve: {cpu: "2", memory: 8Gi, pods: 30}
 capacitySnapshot: {allocatableCpu: "24", allocatableMemory: 96Gi, pods: 330}
 ```
+
+**Node của pool do Platform Admin chọn trên portal.** Portal hiện danh sách node của Cluster (operator báo về qua CRD phụ `PlatformNodeInventory`, vì central plane không đọc Node); Admin thêm hoặc bớt node của pool, operator gắn hoặc gỡ label. Quy tắc:
+
+- chỉ node **tự do** mới thêm được: `Ready`, không phải control-plane hay system node, chưa thuộc pool nào và chưa là dedicated node của Organization nào;
+- bớt node làm dung lượng pool giảm; bị từ chối `COMPUTE_POOL_CAPACITY_EXCEEDED` nếu sau khi bớt tổng allocation vượt `ratio × reservable`;
+- gỡ label **không** đuổi Pod đang chạy trên node (Kubernetes chỉ xét nodeSelector lúc xếp Pod). Admin tự drain node nếu muốn lấy hẳn node ra; portal nhắc điều này trước khi lưu.
 
 Nếu Cluster có nhiều shared pool, ClusterGrant quyết định Organization được dùng pool nào. Portal auto-select khi chỉ có một pool.
 
@@ -549,6 +575,7 @@ Quy tắc:
 
 - node grant phải thuộc đúng Organization và ClusterGrant;
 - node phải `Ready`, schedulable và không phải system/control-plane node;
+- node **không thuộc compute pool nào** (không mang label `tenantry.io/compute-pool`): một node hoặc nằm trong một shared pool, hoặc là dedicated node, không bao giờ cả hai. Màn cấp node chỉ liệt kê node tự do. Muốn chuyển node từ shared pool sang dedicated, Platform Admin bớt node khỏi pool trên portal (6.2), drain node, rồi mới grant;
 - khi grant, node **không được còn tenant workload của Organization khác** (Platform Admin cordon/drain trước; operator trong Cluster kiểm tra Pod trên node, chưa sạch thì Operation cấp node thất bại kèm danh sách Pod lạ);
 - chỉ tenant workload của Organization được schedule lên node; CNI, CSI, monitoring và system DaemonSet vẫn có thể chạy;
 - MVP cho mỗi Dedicated Workspace chọn đúng **một node cụ thể**;
@@ -630,9 +657,6 @@ cidrs:
   - 10.240.0.0/16
 defaultPrefixLength: 24
 allowedPrefixLengths: [20, 21, 22, 23, 24]
-allowedComputeModes:
-  - Shared
-  - Dedicated
 ```
 
 NetworkPool luôn thuộc một Cluster; `organizationId` là tùy chọn. Pool **riêng** (có `organizationId`) chỉ được đưa vào grant của đúng Organization đó. Pool **chung** (`organizationId = null`, ví dụ `onboarding-pod-network`) được nhiều grant tham chiếu; vì allocation luôn per-Workspace và overlap check chạy theo Cluster nên hai Organization dùng chung pool vẫn không đụng CIDR.
@@ -1136,7 +1160,7 @@ MVP: central plane chạy trên system pool của Cluster A; provisioning worker
 ### 13.2 Tech stack
 
 - Backend/worker: Go;
-- frontend: React + TypeScript;
+- frontend: Vue 3 + TypeScript;
 - API: REST `/api/v1` + OpenAPI;
 - database: PostgreSQL;
 - auth: Keycloak OIDC;
@@ -1384,7 +1408,9 @@ PUT    /api/v1/admin/onboarding-policy
 PUT    /api/v1/admin/organizations/{orgId}/cluster-grants/{clusterId}
 DELETE /api/v1/admin/organizations/{orgId}/cluster-grants/{clusterId}
 PUT    /api/v1/admin/organizations/{orgId}/cluster-grants/{clusterId}/dedicated-nodes   # trả operation: operator kiểm node rồi mới gắn label/taint
+GET    /api/v1/admin/clusters/{clusterId}/nodes                       # danh sách node operator báo về: tự do, thuộc pool nào, dedicated cho ai
 POST   /api/v1/admin/clusters/{clusterId}/shared-pools
+PUT    /api/v1/admin/clusters/{clusterId}/shared-pools/{poolId}       # ratio, system reserve, danh sách node; đổi node thì trả operation
 POST   /api/v1/admin/clusters/{clusterId}/network-pools
 ```
 
@@ -1399,6 +1425,7 @@ POST   /internal/v1/clusters/{clusterId}/workspace-status
 API mutation trả operation ID nếu có Kubernetes reconciliation. Error có stable code; danh sách đầy đủ là enum `ErrorCode` trong `backend/openapi/tenantry.v1.yaml`. Ví dụ:
 
 - `CLUSTER_GRANT_CPU_QUOTA_EXCEEDED`;
+- `CLUSTER_GRANT_BELOW_ALLOCATION`;
 - `CLUSTER_NOT_GRANTED`;
 - `CLUSTER_NOT_READY`;
 - `COMPUTE_POOL_CAPACITY_EXCEEDED`;
@@ -1422,11 +1449,11 @@ Một quy tắc xuyên suốt: nếu provisioning thất bại sau khi DB đã c
 1. authorize OrgOwner/OrgAdmin;
 2. validate Workspace name;
 3. validate Cluster thuộc ClusterGrant và đang `Ready`;
-4. validate compute mode được grant;
+4. validate compute mode dùng được: Shared cần shared pool trong grant, Dedicated cần node grant của Organization;
 5. Shared: validate shared pool; Dedicated: validate node grant `Ready` và remaining capacity;
 6. validate at least một Owner group;
 7. validate group thuộc Organization và đã sync Keycloak;
-8. validate global entitlement và ClusterGrant resource budget;
+8. validate global entitlement và ClusterGrant: số Workspace, Namespace, storage cho mọi mode; CPU/RAM/Pod chỉ với Shared;
 9. trong một database transaction, lock ClusterGrant, DedicatedNodeGrant nếu có và NetworkPool allocation range;
 10. tạo ClusterGrant reservation, NodeReservation nếu Dedicated, NetworkAllocation, Workspace, Operation và outbox; commit tất cả hoặc không commit gì;
 11. provisioning worker apply PlatformWorkspace CR vào Cluster;
@@ -2102,7 +2129,7 @@ Mỗi ADR ghi context, decision, alternatives, consequences và validation/test.
 20. mỗi Cluster có Headlamp service/subdomain, portal mở qua Keycloak SSO; không iframe/fork;
 21. invitation bằng link trong portal; email thật là stretch;
 22. portal quản lý Namespace; workload giao Headlamp/kubectl;
-23. Go + React + PostgreSQL + controller-runtime;
+23. Go + Vue + PostgreSQL + controller-runtime;
 24. roadmap theo milestone M0–M12 (Phase 1) rồi M13–M15 (Phase 2 multi-cluster);
 25. tên sản phẩm `Tenantry`; API group/label prefix `tenantry.io`;
 26. user xin tạo Organization (`Pending`, tối đa một yêu cầu mỗi user), Admin duyệt kèm grant hoặc từ chối kèm lý do; Admin cũng tạo thẳng Org kèm Owner + grant;

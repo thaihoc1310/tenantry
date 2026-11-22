@@ -13,7 +13,7 @@ Tên và alias được giữ nguyên trong mọi sơ đồ; sơ đồ nào khô
 | Alias | Tên trong sơ đồ | Vai trò trong Tenantry |
 |---|---|---|
 | `U` | User / Browser | Người dùng cuối, OrgOwner, Platform Admin hoặc trình duyệt của họ |
-| `SPA` | Portal SPA | Frontend React, gọi Platform API qua cookie phiên |
+| `SPA` | Portal SPA | Frontend Vue, gọi Platform API qua cookie phiên |
 | `API` | Platform API | Backend Go kiêm BFF: authz, validation, reservation, operation, phiên |
 | `DB` | PostgreSQL | Source of truth cho product state, outbox, phiên portal |
 | `KC` | Keycloak | Account, OIDC, group claim, realm role `platform-admin` |
@@ -244,7 +244,7 @@ sequenceDiagram
   PW->>K8S: Apply PlatformNodeGrant nodegrant-a1 (node, org id)
   K8S->>CTRL: Watch event
   CTRL->>K8S: GET node, LIST pod trên node
-  alt Node NotReady, cordoned hoặc là system node
+  alt Node NotReady, cordoned hoặc thuộc compute pool (system, shared)
     CTRL->>K8S: status Ready=False reason NodeNotReady
     PW->>DB: operations Failed DEDICATED_NODE_NOT_READY
   else Còn tenant pod của Organization khác
