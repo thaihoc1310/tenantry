@@ -871,6 +871,15 @@ func TestDeleteOrganization(t *testing.T) {
 	if trail := auditTrail(t, db, "organization.delete"); len(trail) != 1 {
 		t.Fatalf("audit %+v", trail)
 	}
+	// Its slug is free again: a new request takes it, as another organization.
+	rec = asAdmin(h, owner, http.MethodPost, "/api/v1/organizations", newKey(), `{"slug":"zeta","displayName":"Zeta again"}`)
+	var again oapi.Organization
+	if rec.Code != 201 || json.Unmarshal(rec.Body.Bytes(), &again) != nil || again.Id == orgID || again.Status != "Pending" {
+		t.Fatalf("a new request for the slug: %d %s", rec.Code, rec.Body)
+	}
+	if rec := asAdmin(h, owner, http.MethodGet, "/api/v1/organizations/"+orgID, "", ""); rec.Code != 404 {
+		t.Fatalf("the deleted organization by id: %d", rec.Code)
+	}
 }
 
 // Changing a grant's storage classes renders every Workspace of it again:
