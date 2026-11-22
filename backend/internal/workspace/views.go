@@ -3,6 +3,8 @@ package workspace
 import (
 	"context"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/thaihoc1310/tenantry/backend/internal/apperr"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
 )
@@ -55,4 +57,20 @@ func (s *Service) Operations(ctx context.Context, userID, wsID, cursor string, p
 		p.NextCursor = p.Items[pageSize-1].ID
 	}
 	return p, nil
+}
+
+// NodeGrantOf is the node grant a Dedicated Workspace reserves on; "" for a
+// Shared one.
+func (s *Service) NodeGrantOf(ctx context.Context, ws store.Workspace) (string, error) {
+	if ws.ComputeMode != ComputeDedicated {
+		return "", nil
+	}
+	// In the request's transaction: a create answers before it commits.
+	var grant string
+	err := store.InTx(ctx, s.db, func(tx pgx.Tx) error {
+		r, err := s.q.WithTx(tx).GetNodeReservation(ctx, ws.ID)
+		grant = r.NodeGrantID
+		return err
+	})
+	return grant, err
 }

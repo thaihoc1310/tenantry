@@ -12,6 +12,7 @@ import AppShell from '@/app/AppShell.vue'
 import { showFailure } from '@/app/failure'
 import { when } from '@/app/format'
 import ConditionTimeline from '@/components/ConditionTimeline.vue'
+import ComputeDetail from './ComputeDetail.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import KeyValues from '@/components/KeyValues.vue'
@@ -53,6 +54,7 @@ const current = computed(() => live.data.value ?? latest.value)
 const tabs = [
   ['overview', 'Overview'],
   ['resources', 'Resources'],
+  ['compute', 'Compute'],
   ['danger', 'Danger zone'],
 ] as const
 const tab = computed(() => (route.query.tab as string) || 'overview')
@@ -334,6 +336,24 @@ const usable = computed(() => ['Ready', 'Degraded'].includes(ws.value?.state ?? 
             <el-button type="primary" :loading="patch.isPending.value" @click="resize">Resize</el-button>
           </template>
         </el-dialog>
+      </template>
+
+      <!-- Compute -->
+      <template v-else-if="tab === 'compute'">
+        <TPanel title="Where the Pods run">
+          <ComputeDetail v-if="manages" :org-slug="orgSlug" :ws="ws" />
+          <KeyValues
+            v-else
+            :items="[
+              ['Mode', ws.compute.mode === 'Shared' ? 'Shared nodes' : 'Dedicated node'],
+              ['Placement', ws.compute.sharedPoolId ?? ws.compute.dedicatedNodeGrantId ?? ''],
+            ]"
+          />
+        </TPanel>
+        <p class="t-explain">
+          Pods of this Workspace can only be scheduled on its {{ ws.compute.mode === 'Shared' ? 'pool' : 'node' }}. A
+          Pod that asks for another node is refused. The mode cannot be changed after creation.
+        </p>
       </template>
 
       <!-- Danger zone -->

@@ -17,7 +17,7 @@ func (s server) ListWorkspaces(ctx context.Context, req oapi.ListWorkspacesReque
 	}
 	out := oapi.WorkspaceList{Items: make([]oapi.Workspace, 0, len(rows))}
 	for _, ws := range rows {
-		w, err := toWorkspace(ws)
+		w, err := s.toWorkspace(ctx, ws)
 		if err != nil {
 			return nil, err
 		}
@@ -52,7 +52,7 @@ func (s server) CreateWorkspace(ctx context.Context, req oapi.CreateWorkspaceReq
 	if err != nil {
 		return nil, err
 	}
-	w, err := toWorkspace(c.Workspace)
+	w, err := s.toWorkspace(ctx, c.Workspace)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +67,7 @@ func (s server) GetWorkspace(ctx context.Context, req oapi.GetWorkspaceRequestOb
 	if err != nil {
 		return nil, err
 	}
-	w, err := toWorkspace(ws)
+	w, err := s.toWorkspace(ctx, ws)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +101,20 @@ func toWorkspaceResources(in oapi.WorkspaceResources) (workspace.Resources, erro
 	return r, nil
 }
 
-func toWorkspace(ws store.Workspace) (oapi.Workspace, error) {
+// toWorkspace is a Workspace as the API shows it, with its node grant when Dedicated.
+func (s server) toWorkspace(ctx context.Context, ws store.Workspace) (oapi.Workspace, error) {
+	w, err := toWorkspaceRow(ws)
+	if err != nil {
+		return w, err
+	}
+	g, err := s.workspaces.NodeGrantOf(ctx, ws)
+	if g != "" {
+		w.Compute.DedicatedNodeGrantId = &g
+	}
+	return w, err
+}
+
+func toWorkspaceRow(ws store.Workspace) (oapi.Workspace, error) {
 	limitsCPU, limitsMem := formatCPU(ws.LimitsCpuMilli), formatBytes(ws.LimitsMemoryBytes)
 	w := oapi.Workspace{
 		Id: ws.ID, OrgId: ws.OrgID, ClusterId: ws.ClusterID, Slug: ws.Slug, K8sName: ws.K8sName,
@@ -234,7 +247,7 @@ func (s server) PatchWorkspace(ctx context.Context, req oapi.PatchWorkspaceReque
 	if err != nil {
 		return nil, err
 	}
-	out, err := toChange(c)
+	out, err := s.toChange(ctx, c)
 	if err != nil || c.Operation == nil {
 		return oapi.PatchWorkspace200JSONResponse(out), err
 	}
@@ -246,7 +259,7 @@ func (s server) CordonWorkspace(ctx context.Context, req oapi.CordonWorkspaceReq
 	if err != nil {
 		return nil, err
 	}
-	out, err := toChange(c)
+	out, err := s.toChange(ctx, c)
 	if err != nil || c.Operation == nil {
 		return oapi.CordonWorkspace200JSONResponse(out), err
 	}
@@ -258,15 +271,15 @@ func (s server) UncordonWorkspace(ctx context.Context, req oapi.UncordonWorkspac
 	if err != nil {
 		return nil, err
 	}
-	out, err := toChange(c)
+	out, err := s.toChange(ctx, c)
 	if err != nil || c.Operation == nil {
 		return oapi.UncordonWorkspace200JSONResponse(out), err
 	}
 	return oapi.UncordonWorkspace202JSONResponse(out), nil
 }
 
-func toChange(c workspace.Changed) (oapi.WorkspaceChange, error) {
-	w, err := toWorkspace(c.Workspace)
+func (s server) toChange(ctx context.Context, c workspace.Changed) (oapi.WorkspaceChange, error) {
+	w, err := s.toWorkspace(ctx, c.Workspace)
 	out := oapi.WorkspaceChange{Workspace: w}
 	if c.Operation != nil {
 		op := toOperation(*c.Operation)
@@ -280,7 +293,7 @@ func (s server) DeleteWorkspace(ctx context.Context, req oapi.DeleteWorkspaceReq
 	if err != nil {
 		return nil, err
 	}
-	out, err := toChange(c)
+	out, err := s.toChange(ctx, c)
 	return oapi.DeleteWorkspace202JSONResponse(out), err
 }
 
