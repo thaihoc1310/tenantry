@@ -14,6 +14,7 @@ import {
   cleanUp,
   cleanupAfterAll,
   deleteWorkspace,
+  groupsOf,
   kubectlTokens,
   member,
   networkReady,
@@ -258,14 +259,13 @@ test('someone taken out of a group loses the portal at once and Kubernetes withi
   expect([200, 204], JSON.stringify(r.body)).toContain(r.status)
   // The portal: at once.
   expect((await api(joe.page, 'GET', `/workspaces/${solar.id}`)).status).toBe(404)
-  await until('Joe out of developers in Keycloak', async () => {
-    const g = await api(page, 'GET', `/organizations/${slug}/groups`)
-    const dev = (g.body.items as { id: string; members: { userId: string }[] }[]).find((x) => x.id === developers.id)!
-    return dev.members.some((m) => m.userId === joe.userId) ? undefined : true
+  // Keycloak follows within a minute: a new token has no developers group and gets nothing.
+  const machine = (groups as { id: string; machineName?: string }[]).find((g) => g.id === developers.id)!.machineName!
+  const after = await until('a token without developers', async () => {
+    const t = (await kubectlTokens(joe.page)).id_token
+    return groupsOf(t).includes(machine) ? undefined : t
   })
-  // A new token has no developers group and gets nothing.
-  const after = await kubectlTokens(joe.page)
-  expect(kubectlAs(after.id_token, '', '-n', solar.ns, 'get', 'pods').ok).toBe(false)
+  expect(kubectlAs(after, '', '-n', solar.ns, 'get', 'pods').ok).toBe(false)
   // The token issued before works until it expires, and not after.
   const end = await until(
     'the old token refused',
