@@ -279,6 +279,43 @@ service_path() {
   rm -f "${manifest}"
   return "${ok}"
 }
+# Capsule Proxy reads API discovery once at start and exits if an
+# APIService is down (values/capsule-proxy.yaml).
+apiservices_available() {
+  local down
+  down="$(kubectl get apiservices -o jsonpath='{range .items[*]}{.metadata.name}={.status.conditions[?(@.type=="Available")].status}{"\n"}{end}' | grep -v '=True$')"
+  [[ -z "${down}" ]] || { echo "not Available: ${down}"; return 1; }
+}
+# through_proxy TOKEN PATH: the HTTP status and body of a GET through Capsule Proxy.
+through_proxy() {
+  curl -sS --max-time 10 "${ca_args[@]}" -H "Authorization: Bearer $1" -w '\n%{http_code}' "https://${KUBE_HOST}$2"
+}
+# proxy_view: the operator's probe, a member of a Workspace's Tenant through
+# its ProxySetting, sees that Workspace's Namespace through Capsule Proxy
+# and no Node: an empty list, and 403 for a Node, its subresources, the
+# watch and its metrics (architecture/05 §8).
+proxy_view() {
+  local ws=cluster-verify-proxy token out ok=0 node
+  read -r node _ <<<"${SHARED_NODES}"
+  kubectl apply -f "${CLUSTER_DIR}/manifests/verify-proxy.yaml" >/dev/null || return 1
+  if ! kubectl wait "platformworkspace/${ws}" --for=condition=ProxyAccessReady --timeout=2m >/dev/null; then
+    echo "ProxyAccessReady: $(kubectl get platformworkspace "${ws}" -o jsonpath='{.status.conditions[?(@.type=="ProxyAccessReady")].message}')"; ok=1
+  fi
+  if [[ "${ok}" == 0 ]]; then
+    token="$(kubectl -n tenantry-operator create token tenantry-proxy-probe --duration=10m)" || ok=1
+    out="$(through_proxy "${token}" /api/v1/namespaces | python3 -c 'import json, sys; *b, code = sys.stdin.read().split("\n"); print(code, sorted(i["metadata"]["name"] for i in json.loads("\n".join(b))["items"]))')"
+    [[ "${out}" == "200 ['${ws}-web']" ]] || { echo "Namespaces through the proxy: ${out}"; ok=1; }
+    out="$(through_proxy "${token}" /api/v1/nodes | python3 -c 'import json, sys; *b, code = sys.stdin.read().split("\n"); d = json.loads("\n".join(b)); print(code, len(d.get("items") or []))')"
+    [[ "${out}" == "200 0" || "${out}" == 403* ]] || { echo "Node list through the proxy: ${out}"; ok=1; }
+    for path in "/api/v1/nodes/${node}" "/api/v1/nodes/${node}/status" "/api/v1/nodes/${node}/proxy/healthz" \
+      "/api/v1/watch/nodes" "/apis/metrics.k8s.io/v1beta1/nodes/${node}"; do
+      out="$(through_proxy "${token}" "${path}" | tail -1)"
+      [[ "${out}" == 403 ]] || { echo "${path} through the proxy: ${out}, want 403"; ok=1; }
+    done
+  fi
+  kubectl delete -f "${CLUSTER_DIR}/manifests/verify-proxy.yaml" --wait --timeout=2m >/dev/null || ok=1
+  return "${ok}"
+}
 check "the Workspace Operator is ready" field_is deployment/tenantry-operator '{.status.availableReplicas}' 1 tenantry-operator
 check "PlatformNodeInventory reports every node" inventory_complete
 check "Developer and Viewer have the rights of architecture/06 §8, no more" tenant_roles
@@ -286,5 +323,7 @@ check "the operator may not touch certificates or Secrets" \
   no_operator_rights system:serviceaccount:tenantry-operator:tenantry-operator
 check "kube-proxy detects local Pods by interface, not by clusterCIDR" kube_proxy_by_interface
 check "a Pod outside clusterCIDR calls a Service on another node without SNAT" service_path
+check "every APIService is Available" apiservices_available
+check "through Capsule Proxy a Workspace member sees its Namespaces and no Node" proxy_view
 
 exit "${failed}"
