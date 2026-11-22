@@ -809,7 +809,8 @@ Route:
 - **được thao tác**: như Namespace — OrgOwner, OrgAdmin và member của group giữ role `TenantOwner` tại Workspace; Developer/Viewer chỉ xem;
 - tối đa 20 Route mỗi Workspace;
 - khai báo qua `PlatformWorkspace.spec.routes`, controller dựng Ingress và báo về `status.routes` (cùng mô hình với Namespace, mục 4.5);
-- Namespace bị xóa thì Route trong đó bị xóa theo.
+- Namespace bị xóa thì Route trong đó bị xóa theo;
+- như đã làm (M11): Route có `id`, `namespace`, `name`, `hostname`, `url`, `service`, `port`, `state` (`Desired` | `Creating` | `Active` | `Deleting`), `message` (lý do chưa sẵn sàng, từ `status.routes[].message`), `createdAt`; `POST` nhận `{namespace, name, service, port}`, chỉ khi Namespace `Active`; mã lỗi `ROUTE_QUOTA_EXCEEDED`, `ROUTE_HOSTNAME_TAKEN`.
 
 Giới hạn:
 
@@ -1849,6 +1850,14 @@ Không chỉ làm happy-path UI.
 - policy denial count;
 - shared/dedicated node capacity theo Cluster;
 - (Phase 2) Cluster heartbeat/agent version/status.
+
+Như đã làm (M12): mỗi Deployment có Service metrics riêng (HTTP, port 9090, `/metrics`, không đi qua Ingress); operator phục vụ metrics qua HTTPS có authn/authz (`tenantry-operator-metrics:8443`, ClusterRole `tenantry-operator-metrics-reader`). Tên metric:
+- API: `tenantry_api_requests_total{route,method,code}`, `tenantry_api_request_duration_seconds{route,method}` (không tính SSE), `tenantry_api_logins_total{result}`, `tenantry_operation_duration_seconds{type,state}`;
+- Provisioning worker: `tenantry_outbox_deliveries_total{type,result}`, `tenantry_outbox_pending_events{cluster}`, `tenantry_outbox_oldest_pending_seconds{cluster}` (queue lag), `tenantry_network_pool_free_blocks{pool,prefix_length}`, `tenantry_operation_duration_seconds{type="workspace.create"}` (provision duration);
+- Group Sync worker: `tenantry_groupsync_pending{kind}`, `tenantry_groupsync_oldest_pending_seconds{kind}` (sync lag), `tenantry_groupsync_failures_total{kind}`;
+- Operator: `tenantry_workspaces{phase}`, `tenantry_workspace_provision_seconds`, `tenantry_routes{ready}`, `tenantry_shared_pool_ready_nodes`/`allocatable`, `tenantry_workspace_ip_used`/`capacity`, `tenantry_proxy_probes_total{result}` và metric reconcile của controller-runtime.
+
+Prometheus server (retention 24h, không PVC) và Grafana nhẹ chạy trên system pool, namespace `observability`, không Ingress (port-forward); dashboard ở `deploy/observability/`.
 
 ### 21.3 Audit events
 
