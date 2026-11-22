@@ -87,3 +87,28 @@ export async function openReview(admin: Page, slug: string) {
   await row.getByRole('button', { name: 'Review' }).click()
   await expect(admin.getByText('Starting grant on cluster-a')).toBeVisible()
 }
+
+// api calls the Platform API from a logged-in page, with the CSRF header the
+// portal sends and, when given, an Idempotency-Key.
+export async function api(page: Page, method: string, path: string, body?: unknown, idempotencyKey?: string) {
+  return page.evaluate(
+    async ([method, path, body, key]) => {
+      const csrf = document.cookie
+        .split('; ')
+        .find((c) => c.startsWith('__Host-tenantry_csrf='))
+        ?.split('=')[1]
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': decodeURIComponent(csrf ?? ''),
+      }
+      if (key) headers['Idempotency-Key'] = key
+      const res = await fetch('/api/v1' + path, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+      })
+      return { status: res.status, body: res.status === 204 ? null : await res.json() }
+    },
+    [method, path, body, idempotencyKey] as const,
+  )
+}

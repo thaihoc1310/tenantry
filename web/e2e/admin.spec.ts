@@ -6,7 +6,7 @@
 // operator carries out on the node's labels. The lab is put back as it was
 // (wk3 in the pool again, dedicated to nobody) even when a step fails.
 import { expect, test, type Page } from '@playwright/test'
-import { adminPassword, logIn, signUp } from './support'
+import { adminPassword, api, logIn, signUp } from './support'
 
 const shots = process.env.E2E_SHOTS
 async function shot(page: Page, name: string) {
@@ -15,26 +15,6 @@ async function shot(page: Page, name: string) {
 
 const node = 'fdp-k8s-wk3'
 const pool = 'shared-general'
-
-// api calls the Platform API from a logged-in page, with the CSRF header the
-// portal sends.
-async function api(page: Page, method: string, path: string, body?: unknown) {
-  return page.evaluate(
-    async ([method, path, body]) => {
-      const csrf = document.cookie
-        .split('; ')
-        .find((c) => c.startsWith('__Host-tenantry_csrf='))
-        ?.split('=')[1]
-      const res = await fetch('/api/v1' + path, {
-        method,
-        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': decodeURIComponent(csrf ?? '') },
-        body: body === undefined ? undefined : JSON.stringify(body),
-      })
-      return { status: res.status, body: res.status === 204 ? null : await res.json() }
-    },
-    [method, path, body] as const,
-  )
-}
 
 // restore puts wk3 back in the shared pool, after taking it from whoever holds it.
 async function restore(admin: Page, orgId: string | undefined) {
