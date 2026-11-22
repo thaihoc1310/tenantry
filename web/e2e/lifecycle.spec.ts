@@ -80,6 +80,7 @@ test('quota, resize, cordon and delete of a Workspace on the cluster', async ({ 
   )
   expect(res.status, JSON.stringify(res.body)).toBe(202)
   const wsId: string = res.body.workspace.id
+  let volume = ''
   try {
     await succeeded(page, res.body.operation.id)
 
@@ -124,6 +125,10 @@ test('quota, resize, cordon and delete of a Workspace on the cluster', async ({ 
     // A volume to lose with the Workspace.
     const pvc = apply(claim(ns))
     expect(pvc.ok, pvc.out).toBe(true)
+    volume = await until(
+      'the claim bound',
+      async () => kubectl('-n', ns, 'get', 'pvc', 'data', '-o', 'jsonpath={.spec.volumeName}').trim() || undefined,
+    )
     await page.goto(`/orgs/${slug}/workspaces/solar?tab=resources`)
     await expect(page.getByText('Quota of this Workspace')).toBeVisible()
     if (process.env.E2E_SHOTS)
@@ -132,6 +137,11 @@ test('quota, resize, cordon and delete of a Workspace on the cluster', async ({ 
     await deleteWorkspace(page, wsId, 'solar', k8sName)
   }
   expect(kubectl('get', 'pvc', '-A', '--field-selector', `metadata.namespace=${ns}`, '-o', 'name')).toBe('')
+  // Reclaim policy Delete: the volume goes too.
+  if (volume)
+    await until('the volume deleted', async () =>
+      kubectl('get', 'pv', volume, '--ignore-not-found') === '' ? true : undefined,
+    )
   const after = await api(page, 'GET', `/organizations/${slug}/usage`)
   expect(after.body.clusterGrants[0].workspaces.allocated).toBe(0)
 })
