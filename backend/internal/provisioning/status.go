@@ -130,6 +130,13 @@ func (s *Syncer) syncWorkspace(ctx context.Context, cr v1.PlatformWorkspace) err
 		if err := s.syncNamespaces(ctx, q, ws, cr); err != nil {
 			return err
 		}
+		usage, err := usageJSON(cr.Status.Usage)
+		if err != nil {
+			return err
+		}
+		if err := q.RecordWorkspaceUsage(ctx, store.RecordWorkspaceUsageParams{ID: ws.ID, UsageSnapshot: usage}); err != nil {
+			return err
+		}
 
 		conditions, err := json.Marshal(nonNil(cr.Status.Conditions))
 		if err != nil {

@@ -8,6 +8,9 @@ SET conditions = @conditions, observed_generation = @observed_generation, state 
 WHERE id = @id
 RETURNING *;
 
+-- name: RecordWorkspaceUsage :exec
+UPDATE workspaces SET usage_snapshot = @usage_snapshot WHERE id = @id AND usage_snapshot IS DISTINCT FROM @usage_snapshot;
+
 -- name: RecordNamespace :exec
 UPDATE workspace_namespaces SET state = @state, usage_snapshot = @usage_snapshot, updated_at = now() WHERE id = @id;
 

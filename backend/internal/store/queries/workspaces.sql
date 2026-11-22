@@ -168,3 +168,23 @@ SELECT count(*)::int FROM workspaces WHERE org_id = $1 AND state <> 'Deleted';
 UPDATE workspaces SET desired_generation = desired_generation + 1, state = @state, updated_at = now()
 WHERE id = @id
 RETURNING *;
+
+-- name: SharedPoolsInUse :many
+-- Shared pools Workspaces of the grant, not Deleted, run on.
+SELECT DISTINCT shared_pool_id::text FROM workspaces
+WHERE cluster_grant_id = $1 AND state <> 'Deleted' AND shared_pool_id IS NOT NULL
+ORDER BY 1;
+
+-- name: CountGrantWorkspaces :one
+-- Every Workspace row of the grant, Deleted ones waiting for their CIDR's
+-- quarantine included: the grant's foreign key keeps it while any is left.
+SELECT count(*)::int FROM workspaces WHERE cluster_grant_id = $1;
+
+-- name: UpdateWorkspaceSpec :one
+-- A PATCH: display name, quota and namespaceQuota (PRODUCT-PLAN §17.2).
+UPDATE workspaces
+SET display_name = @display_name, requests_cpu_milli = @requests_cpu_milli, requests_memory_bytes = @requests_memory_bytes,
+    limits_cpu_milli = @limits_cpu_milli, limits_memory_bytes = @limits_memory_bytes, pods = @pods,
+    requests_storage_bytes = @requests_storage_bytes, namespace_quota = @namespace_quota, updated_at = now()
+WHERE id = @id
+RETURNING *;

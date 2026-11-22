@@ -52,6 +52,10 @@ const (
 	LastOwnerBinding  Code = "LAST_OWNER_BINDING"  // no group would hold TenantOwner any more
 	GroupSyncPending  Code = "GROUP_SYNC_PENDING"  // a bound group is not in Keycloak yet
 	WorkspaceNotReady Code = "WORKSPACE_NOT_READY" // not Ready, or an operation on it is under way
+
+	// What Workspaces hold of a cluster grant (PRODUCT-PLAN §5.3, §5.5).
+	ClusterGrantQuotaExceeded   Code = "CLUSTER_GRANT_QUOTA_EXCEEDED"   // a create or resize does not fit in the grant
+	ClusterGrantBelowAllocation Code = "CLUSTER_GRANT_BELOW_ALLOCATION" // an Admin's change below what is held
 )
 
 type Error struct {

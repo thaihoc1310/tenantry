@@ -258,6 +258,27 @@ func UpdateGrant(ctx context.Context, q *store.Queries, cur store.OrganizationCl
 	if _, err := CheckGrant(ctx, q, cur.OrgID, g); err != nil {
 		return Grant{}, err
 	}
+	holds, err := Holds(ctx, q, cur.ID)
+	if err != nil {
+		return Grant{}, err
+	}
+	if err := NotBelow(g, holds); err != nil {
+		return Grant{}, err
+	}
+	// A shared pool Shared Workspaces of the grant run on stays (§5.5).
+	used, err := q.SharedPoolsInUse(ctx, cur.ID)
+	if err != nil {
+		return Grant{}, err
+	}
+	for _, p := range used {
+		if !slices.Contains(g.SharedPoolIDs, p) {
+			return Grant{}, &apperr.Error{
+				Code:    apperr.ClusterGrantBelowAllocation,
+				Message: fmt.Sprintf("Shared Workspaces of the organization run on pool %s: it stays in the grant while they do", p),
+				Details: map[string]any{"field": "sharedPoolIds", "sharedPoolId": p},
+			}
+		}
+	}
 	r := g.Resources
 	row, err := q.UpdateClusterGrant(ctx, store.UpdateClusterGrantParams{
 		ID: cur.ID, MaxWorkspaces: g.MaxWorkspaces, MaxNamespacesTotal: g.MaxNamespacesTotal,

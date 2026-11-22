@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -120,8 +121,13 @@ func TestCreateWorkspace(t *testing.T) {
 }
 
 func TestCreateWorkspaceRefusals(t *testing.T) {
-	h, db, _, owner, admins, devs := workspaceOrg(t)
+	h, db, orgID, owner, admins, devs := workspaceOrg(t)
 	ctx := context.Background()
+	// Room for every Workspace below: the grant's limits have their own test.
+	if _, err := db.Exec(ctx, `UPDATE organization_cluster_grants SET max_workspaces = 5, requests_cpu_milli = 8000,
+		limits_cpu_milli = 8000, requests_memory_bytes = 34359738368, limits_memory_bytes = 34359738368, pods = 100 WHERE org_id = $1`, orgID); err != nil {
+		t.Fatal(err)
+	}
 	if rec := createWorkspace(h, owner, "zeta", workspaceBody("solar", admins, devs, "")); rec.Code != 202 {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
 	}
@@ -475,5 +481,83 @@ func TestUsageCountsWorkspaces(t *testing.T) {
 		`{"maxMembers":20,"maxGroups":10,"maxWorkspacesTotal":0}`)
 	if e := errorBody(t, rec); rec.Code != 409 || e.Code != oapi.ENTITLEMENTBELOWUSAGE || (*e.Details)["limit"] != "maxWorkspacesTotal" {
 		t.Fatalf("entitlement below one Workspace: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// A create takes its share of the grant under the grant's lock: two creates
+// that each fit alone but not together end with exactly one Workspace
+// (PRODUCT-PLAN §5.3); the entitlement's maxWorkspacesTotal counts too.
+func TestCreateWorkspaceReservesTheGrant(t *testing.T) {
+	h, db, orgID, owner, admins, devs := workspaceOrg(t)
+	big := `"resources":{"requestsCpu":"1500m","requestsMemory":"1Gi","limitsCpu":"2","limitsMemory":"2Gi","pods":5,"requestsStorage":"1Gi","namespaceQuota":1},"namespaces":[]`
+	codes := make(chan int, 2)
+	var wg sync.WaitGroup
+	for _, slug := range []string{"solar", "wind"} {
+		wg.Go(func() { codes <- createWorkspace(h, owner, "zeta", workspaceBody(slug, admins, devs, big)).Code })
+	}
+	wg.Wait()
+	close(codes)
+	var got []int
+	for c := range codes {
+		got = append(got, c)
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, []int{202, 409}) || count(t, db, `SELECT count(*) FROM workspaces`) != 1 {
+		t.Fatalf("two creates over the grant's CPU: %v", got)
+	}
+	rec := createWorkspace(h, owner, "zeta", workspaceBody("water", admins, devs, big))
+	if e := errorBody(t, rec); rec.Code != 409 || e.Code != oapi.CLUSTERGRANTQUOTAEXCEEDED || (*e.Details)["resource"] != "requestsCpu" ||
+		(*e.Details)["limit"] != "2" || (*e.Details)["allocated"] != "1500m" || (*e.Details)["requested"] != "1500m" {
+		t.Fatalf("over the grant: %d %s", rec.Code, rec.Body)
+	}
+	// The grant allows two Workspaces; the entitlement then only one.
+	small := `"resources":{"requestsCpu":"100m","requestsMemory":"128Mi","limitsCpu":"100m","limitsMemory":"128Mi","pods":1,"requestsStorage":"1Gi","namespaceQuota":1},"namespaces":[]`
+	if rec := createWorkspace(h, owner, "zeta", workspaceBody("water", admins, devs, small)); rec.Code != 202 {
+		t.Fatalf("a small second: %d %s", rec.Code, rec.Body)
+	}
+	if rec := createWorkspace(h, owner, "zeta", workspaceBody("earth", admins, devs, small)); errorBody(t, rec).Code != oapi.CLUSTERGRANTQUOTAEXCEEDED ||
+		(*errorBody(t, rec).Details)["resource"] != "workspaces" {
+		t.Fatalf("a third on a grant of two: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := db.Exec(context.Background(), `UPDATE organization_entitlements SET max_workspaces_total = 2 WHERE org_id = $1;`, orgID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(context.Background(), `UPDATE organization_cluster_grants SET max_workspaces = 5 WHERE org_id = $1`, orgID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := createWorkspace(h, owner, "zeta", workspaceBody("earth", admins, devs, small)); errorBody(t, rec).Code != oapi.ENTITLEMENTEXCEEDED {
+		t.Fatalf("over maxWorkspacesTotal: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// An Admin cannot take a grant below what Workspaces hold, nor take away a
+// pool they run on, nor delete it under them (PRODUCT-PLAN §5.5).
+func TestGrantGuardsWorkspaces(t *testing.T) {
+	h, db, orgID, owner, admins, devs := workspaceOrg(t)
+	if rec := createWorkspace(h, owner, "zeta", workspaceBody("solar", admins, devs, "")); rec.Code != 202 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	admin := newSession(t, db, "usr-alice", "platform-admin")
+	put := func(body string) *httptest.ResponseRecorder {
+		return asAdmin(h, admin, http.MethodPut, "/api/v1/admin/organizations/"+orgID+"/cluster-grants/cluster-a", "", body)
+	}
+	grant := func(cpu, pools string) string {
+		return `{"clusterId":"cluster-a","maxWorkspaces":2,"maxNamespacesTotal":6,
+"resources":{"requestsCpu":"` + cpu + `","requestsMemory":"4Gi","limitsCpu":"4","limitsMemory":"8Gi","pods":20,"requestsStorage":"20Gi"},
+"sharedPoolIds":` + pools + `,"networkPoolIds":["onboarding-pod-network"],"allowedStorageClasses":["standard"]}`
+	}
+	if rec := put(grant("500m", `["shared-general"]`)); rec.Code != 409 || errorBody(t, rec).Code != oapi.CLUSTERGRANTBELOWALLOCATION ||
+		(*errorBody(t, rec).Details)["minimum"] != "1" {
+		t.Fatalf("below what solar holds: %d %s", rec.Code, rec.Body)
+	}
+	if rec := put(grant("2", `[]`)); rec.Code != 409 || (*errorBody(t, rec).Details)["sharedPoolId"] != "shared-general" {
+		t.Fatalf("the pool solar runs on: %d %s", rec.Code, rec.Body)
+	}
+	if rec := put(grant("1", `["shared-general"]`)); rec.Code != 200 {
+		t.Fatalf("down to exactly what is held: %d %s", rec.Code, rec.Body)
+	}
+	rec := asAdmin(h, admin, http.MethodDelete, "/api/v1/admin/organizations/"+orgID+"/cluster-grants/cluster-a", "", "")
+	if rec.Code != 409 || (*errorBody(t, rec).Details)["workspaces"] != 1.0 {
+		t.Fatalf("delete under a Workspace: %d %s", rec.Code, rec.Body)
 	}
 }

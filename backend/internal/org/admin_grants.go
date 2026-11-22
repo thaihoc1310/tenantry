@@ -42,11 +42,11 @@ func lockActive(ctx context.Context, q *store.Queries, orgID string) (store.Orga
 // cluster, and is the default when it is the organization's only one. Every
 // change is audited with the values before and after.
 //
-// ponytail: the guards that need Workspaces come with them: no number below
-// what Workspaces hold (M7, CLUSTER_GRANT_BELOW_ALLOCATION), no shared pool
-// taken away while a Shared Workspace uses it (M8), no network pool while a
-// Workspace holds a CIDR in it (M9), and a storage class change re-renders
-// every Workspace of the grant (M7).
+// No number may go below what Workspaces hold, and no shared pool Shared
+// Workspaces run on may leave (CLUSTER_GRANT_BELOW_ALLOCATION).
+//
+// ponytail: no network pool taken away while a Workspace holds a CIDR in it
+// comes with CIDRs (M9).
 func (s *Service) PutGrant(ctx context.Context, adminID, orgID string, g reservation.GrantSpec) (reservation.Grant, bool, error) {
 	var out reservation.Grant
 	created := false
@@ -102,11 +102,9 @@ func grantOf(ctx context.Context, q *store.Queries, orgID, grantID string) (rese
 	return reservation.Grant{}, ErrNoSuchGrant
 }
 
-// DeleteGrant takes an organization's grant on a cluster away. Not while it
-// holds dedicated nodes there; deleting the default grant makes the oldest
-// one left the default.
-//
-// ponytail: refusing while Workspaces use the grant comes with Workspaces (M7).
+// DeleteGrant takes an organization's grant on a cluster away. Not while
+// Workspaces use it or it holds dedicated nodes there; deleting the default
+// grant makes the oldest one left the default.
 func (s *Service) DeleteGrant(ctx context.Context, adminID, orgID, clusterID string) error {
 	return store.InTx(ctx, s.db, func(tx pgx.Tx) error {
 		q := s.q.WithTx(tx)
@@ -120,6 +118,12 @@ func (s *Service) DeleteGrant(ctx context.Context, adminID, orgID, clusterID str
 		}
 		if err != nil {
 			return err
+		}
+		if n, err := q.CountGrantWorkspaces(ctx, cur.ID); err != nil {
+			return err
+		} else if n > 0 {
+			return &apperr.Error{Code: apperr.Conflict, Details: map[string]any{"workspaces": n},
+				Message: fmt.Sprintf("%d Workspace(s) of the organization use this grant: they go first", n)}
 		}
 		nodes, err := q.CountLiveDedicatedNodes(ctx, store.CountLiveDedicatedNodesParams{OrgID: o.ID, ClusterID: clusterID})
 		if err != nil {

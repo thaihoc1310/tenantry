@@ -1981,6 +1981,8 @@ components:
         - LAST_OWNER_BINDING
         - GROUP_SYNC_PENDING
         - WORKSPACE_NOT_READY
+        - CLUSTER_GRANT_QUOTA_EXCEEDED
+        - CLUSTER_GRANT_BELOW_ALLOCATION
         - INTERNAL
 
     ErrorResponse:

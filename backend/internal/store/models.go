@@ -305,6 +305,7 @@ type Workspace struct {
 	DeletedAt            *time.Time
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
+	UsageSnapshot        []byte
 }
 
 type WorkspaceGroupBinding struct {

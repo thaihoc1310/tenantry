@@ -161,7 +161,7 @@ const recordWorkspaceStatus = `-- name: RecordWorkspaceStatus :one
 UPDATE workspaces
 SET conditions = $1, observed_generation = $2, state = $3, updated_at = now()
 WHERE id = $4
-RETURNING id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at
+RETURNING id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at, usage_snapshot
 `
 
 type RecordWorkspaceStatusParams struct {
@@ -206,8 +206,23 @@ func (q *Queries) RecordWorkspaceStatus(ctx context.Context, arg RecordWorkspace
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.UsageSnapshot,
 	)
 	return i, err
+}
+
+const recordWorkspaceUsage = `-- name: RecordWorkspaceUsage :exec
+UPDATE workspaces SET usage_snapshot = $1 WHERE id = $2 AND usage_snapshot IS DISTINCT FROM $1
+`
+
+type RecordWorkspaceUsageParams struct {
+	UsageSnapshot []byte
+	ID            string
+}
+
+func (q *Queries) RecordWorkspaceUsage(ctx context.Context, arg RecordWorkspaceUsageParams) error {
+	_, err := q.db.Exec(ctx, recordWorkspaceUsage, arg.UsageSnapshot, arg.ID)
+	return err
 }
 
 const runningOperationsOf = `-- name: RunningOperationsOf :many

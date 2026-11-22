@@ -96,6 +96,14 @@ export const errorText: Record<ErrorCode | 'NETWORK', Text> = {
     en: 'The Workspace is busy with another change. Try again once it is Ready.',
     vi: 'Workspace đang bận với một thay đổi khác. Hãy thử lại khi nó Ready.',
   },
+  CLUSTER_GRANT_QUOTA_EXCEEDED: {
+    en: 'This does not fit in what the Organization was granted on the cluster.',
+    vi: 'Yêu cầu vượt phần Organization được cấp trên cluster này.',
+  },
+  CLUSTER_GRANT_BELOW_ALLOCATION: {
+    en: 'The grant cannot go below what the Workspaces already hold.',
+    vi: 'Không thể hạ grant xuống dưới phần các Workspace đang giữ.',
+  },
   INTERNAL: {
     en: 'Something went wrong on our side. Your data is safe; try again in a moment.',
     vi: 'Hệ thống gặp lỗi. Dữ liệu của bạn vẫn an toàn; thử lại sau ít phút.',

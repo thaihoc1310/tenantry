@@ -26,7 +26,7 @@ func (q *Queries) ActiveWorkspaceOperation(ctx context.Context, resourceID strin
 const beginWorkspaceUpdate = `-- name: BeginWorkspaceUpdate :one
 UPDATE workspaces SET desired_generation = desired_generation + 1, state = 'Updating', updated_at = now()
 WHERE id = $1
-RETURNING id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at
+RETURNING id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at, usage_snapshot
 `
 
 // A change that needs a new CR: the next spec version, and Updating until
@@ -58,8 +58,22 @@ func (q *Queries) BeginWorkspaceUpdate(ctx context.Context, id string) (Workspac
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.UsageSnapshot,
 	)
 	return i, err
+}
+
+const countGrantWorkspaces = `-- name: CountGrantWorkspaces :one
+SELECT count(*)::int FROM workspaces WHERE cluster_grant_id = $1
+`
+
+// Every Workspace row of the grant, Deleted ones waiting for their CIDR's
+// quarantine included: the grant's foreign key keeps it while any is left.
+func (q *Queries) CountGrantWorkspaces(ctx context.Context, clusterGrantID string) (int32, error) {
+	row := q.db.QueryRow(ctx, countGrantWorkspaces, clusterGrantID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const countWorkspaceNamespaces = `-- name: CountWorkspaceNamespaces :one
@@ -95,7 +109,7 @@ INSERT INTO workspaces (
     $8, $9, $10, $11,
     $12, $13, $14, $15, $16
 )
-RETURNING id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at
+RETURNING id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at, usage_snapshot
 `
 
 type CreateWorkspaceParams struct {
@@ -161,6 +175,7 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.UsageSnapshot,
 	)
 	return i, err
 }
@@ -251,7 +266,7 @@ func (q *Queries) GetGrantStorageClasses(ctx context.Context, id string) ([]stri
 }
 
 const getWorkspace = `-- name: GetWorkspace :one
-SELECT id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at FROM workspaces WHERE id = $1 AND state <> 'Deleted'
+SELECT id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at, usage_snapshot FROM workspaces WHERE id = $1 AND state <> 'Deleted'
 `
 
 func (q *Queries) GetWorkspace(ctx context.Context, id string) (Workspace, error) {
@@ -281,6 +296,7 @@ func (q *Queries) GetWorkspace(ctx context.Context, id string) (Workspace, error
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.UsageSnapshot,
 	)
 	return i, err
 }
@@ -497,7 +513,7 @@ func (q *Queries) ListWorkspaceNamespaces(ctx context.Context, workspaceID strin
 }
 
 const listWorkspaces = `-- name: ListWorkspaces :many
-SELECT id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at FROM workspaces WHERE org_id = $1 AND state <> 'Deleted' ORDER BY id
+SELECT id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at, usage_snapshot FROM workspaces WHERE org_id = $1 AND state <> 'Deleted' ORDER BY id
 `
 
 func (q *Queries) ListWorkspaces(ctx context.Context, orgID string) ([]Workspace, error) {
@@ -533,6 +549,7 @@ func (q *Queries) ListWorkspaces(ctx context.Context, orgID string) ([]Workspace
 			&i.DeletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.UsageSnapshot,
 		); err != nil {
 			return nil, err
 		}
@@ -545,7 +562,7 @@ func (q *Queries) ListWorkspaces(ctx context.Context, orgID string) ([]Workspace
 }
 
 const listWorkspacesOfMember = `-- name: ListWorkspacesOfMember :many
-SELECT w.id, w.org_id, w.cluster_id, w.cluster_grant_id, w.slug, w.k8s_name, w.display_name, w.state, w.requests_cpu_milli, w.requests_memory_bytes, w.limits_cpu_milli, w.limits_memory_bytes, w.pods, w.requests_storage_bytes, w.namespace_quota, w.compute_mode, w.shared_pool_id, w.desired_generation, w.observed_generation, w.conditions, w.deleted_at, w.created_at, w.updated_at FROM workspaces w
+SELECT w.id, w.org_id, w.cluster_id, w.cluster_grant_id, w.slug, w.k8s_name, w.display_name, w.state, w.requests_cpu_milli, w.requests_memory_bytes, w.limits_cpu_milli, w.limits_memory_bytes, w.pods, w.requests_storage_bytes, w.namespace_quota, w.compute_mode, w.shared_pool_id, w.desired_generation, w.observed_generation, w.conditions, w.deleted_at, w.created_at, w.updated_at, w.usage_snapshot FROM workspaces w
 WHERE w.org_id = $1 AND w.state <> 'Deleted'
   AND EXISTS (
     SELECT 1 FROM workspace_group_bindings b
@@ -595,6 +612,7 @@ func (q *Queries) ListWorkspacesOfMember(ctx context.Context, arg ListWorkspaces
 			&i.DeletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.UsageSnapshot,
 		); err != nil {
 			return nil, err
 		}
@@ -607,7 +625,7 @@ func (q *Queries) ListWorkspacesOfMember(ctx context.Context, arg ListWorkspaces
 }
 
 const lockWorkspace = `-- name: LockWorkspace :one
-SELECT id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at FROM workspaces WHERE id = $1 AND state <> 'Deleted' FOR UPDATE
+SELECT id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at, usage_snapshot FROM workspaces WHERE id = $1 AND state <> 'Deleted' FOR UPDATE
 `
 
 func (q *Queries) LockWorkspace(ctx context.Context, id string) (Workspace, error) {
@@ -637,6 +655,7 @@ func (q *Queries) LockWorkspace(ctx context.Context, id string) (Workspace, erro
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.UsageSnapshot,
 	)
 	return i, err
 }
@@ -692,7 +711,7 @@ func (q *Queries) ResyncGroupMembers(ctx context.Context, groupIds []string) (in
 const retryWorkspace = `-- name: RetryWorkspace :one
 UPDATE workspaces SET desired_generation = desired_generation + 1, state = $1, updated_at = now()
 WHERE id = $2
-RETURNING id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at
+RETURNING id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at, usage_snapshot
 `
 
 type RetryWorkspaceParams struct {
@@ -729,6 +748,7 @@ func (q *Queries) RetryWorkspace(ctx context.Context, arg RetryWorkspaceParams) 
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.UsageSnapshot,
 	)
 	return i, err
 }
@@ -804,6 +824,97 @@ func (q *Queries) ShareLockGroups(ctx context.Context, arg ShareLockGroupsParams
 		return nil, err
 	}
 	return items, nil
+}
+
+const sharedPoolsInUse = `-- name: SharedPoolsInUse :many
+SELECT DISTINCT shared_pool_id::text FROM workspaces
+WHERE cluster_grant_id = $1 AND state <> 'Deleted' AND shared_pool_id IS NOT NULL
+ORDER BY 1
+`
+
+// Shared pools Workspaces of the grant, not Deleted, run on.
+func (q *Queries) SharedPoolsInUse(ctx context.Context, clusterGrantID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, sharedPoolsInUse, clusterGrantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var shared_pool_id string
+		if err := rows.Scan(&shared_pool_id); err != nil {
+			return nil, err
+		}
+		items = append(items, shared_pool_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateWorkspaceSpec = `-- name: UpdateWorkspaceSpec :one
+UPDATE workspaces
+SET display_name = $1, requests_cpu_milli = $2, requests_memory_bytes = $3,
+    limits_cpu_milli = $4, limits_memory_bytes = $5, pods = $6,
+    requests_storage_bytes = $7, namespace_quota = $8, updated_at = now()
+WHERE id = $9
+RETURNING id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at, usage_snapshot
+`
+
+type UpdateWorkspaceSpecParams struct {
+	DisplayName          string
+	RequestsCpuMilli     int64
+	RequestsMemoryBytes  int64
+	LimitsCpuMilli       int64
+	LimitsMemoryBytes    int64
+	Pods                 int32
+	RequestsStorageBytes int64
+	NamespaceQuota       int32
+	ID                   string
+}
+
+// A PATCH: display name, quota and namespaceQuota (PRODUCT-PLAN §17.2).
+func (q *Queries) UpdateWorkspaceSpec(ctx context.Context, arg UpdateWorkspaceSpecParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, updateWorkspaceSpec,
+		arg.DisplayName,
+		arg.RequestsCpuMilli,
+		arg.RequestsMemoryBytes,
+		arg.LimitsCpuMilli,
+		arg.LimitsMemoryBytes,
+		arg.Pods,
+		arg.RequestsStorageBytes,
+		arg.NamespaceQuota,
+		arg.ID,
+	)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ClusterID,
+		&i.ClusterGrantID,
+		&i.Slug,
+		&i.K8sName,
+		&i.DisplayName,
+		&i.State,
+		&i.RequestsCpuMilli,
+		&i.RequestsMemoryBytes,
+		&i.LimitsCpuMilli,
+		&i.LimitsMemoryBytes,
+		&i.Pods,
+		&i.RequestsStorageBytes,
+		&i.NamespaceQuota,
+		&i.ComputeMode,
+		&i.SharedPoolID,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.Conditions,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.UsageSnapshot,
+	)
+	return i, err
 }
 
 const upsertWorkspaceBinding = `-- name: UpsertWorkspaceBinding :exec

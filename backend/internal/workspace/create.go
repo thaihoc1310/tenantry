@@ -96,9 +96,19 @@ func (s *Service) Create(ctx context.Context, userID, orgIDOrSlug string, n New)
 	err = store.InTx(ctx, s.db, func(tx pgx.Tx) error {
 		q := s.q.WithTx(tx)
 		// The entitlement's lock queues every create of the organization, so
-		// the nesting check below cannot race (M7 counts maxWorkspacesTotal here).
-		if _, err := q.LockEntitlement(ctx, o.ID); err != nil {
+		// the count and the nesting check below cannot race.
+		e, err := q.LockEntitlement(ctx, o.ID)
+		if err != nil {
 			return err
+		}
+		if n, err := q.CountWorkspaces(ctx, o.ID); err != nil {
+			return err
+		} else if n+1 > e.MaxWorkspacesTotal {
+			return &apperr.Error{
+				Code:    apperr.EntitlementExceeded,
+				Message: fmt.Sprintf("the organization has %d Workspaces, as many as its entitlement allows", n),
+				Details: map[string]any{"limit": "maxWorkspacesTotal"},
+			}
 		}
 		if other, err := q.NestedWorkspaceSlug(ctx, store.NestedWorkspaceSlugParams{OrgID: o.ID, Slug: n.Slug}); err == nil {
 			return &apperr.Error{
@@ -126,6 +136,15 @@ func (s *Service) Create(ctx context.Context, userID, orgIDOrSlug string, n New)
 		}
 		if cluster.Status != reservation.ClusterReady {
 			return apperr.New(apperr.ClusterNotReady, "the cluster is not Ready")
+		}
+		// What the Workspace takes of the grant, under the grant's lock (§5.3).
+		holds, err := reservation.Holds(ctx, q, grant.ID)
+		if err != nil {
+			return err
+		}
+		share := reservation.Share(n.ComputeMode == ComputeShared, n.Resources.NamespaceQuota, n.Resources.grant())
+		if err := reservation.GrantFits(reservation.FromRow(grant, nil, nil).GrantSpec, holds, share); err != nil {
+			return err
 		}
 		if ok, err := q.GrantHasSharedPool(ctx, store.GrantHasSharedPoolParams{GrantID: grant.ID, PoolID: n.SharedPoolID}); err != nil {
 			return err
@@ -281,6 +300,15 @@ func (n *New) check(orgSlug string) error {
 		return ErrNoOwnerBinding
 	}
 	return nil
+}
+
+// grant is the quota in a grant's terms.
+func (r Resources) grant() reservation.Resources {
+	return reservation.Resources{
+		RequestsCPUMilli: r.RequestsCPUMilli, RequestsMemoryBytes: r.RequestsMemoryBytes,
+		LimitsCPUMilli: r.LimitsCPUMilli, LimitsMemoryBytes: r.LimitsMemoryBytes,
+		Pods: r.Pods, RequestsStorageBytes: r.RequestsStorageBytes,
+	}
 }
 
 // check validates a quota and fills in Dedicated limits (= requests).
