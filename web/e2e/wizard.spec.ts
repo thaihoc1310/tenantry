@@ -200,3 +200,86 @@ test('the wizard creates a Shared Workspace that reaches Ready', async ({ browse
     for (const w of made) await deleteWorkspace(page, w.id, w.slug, `${slug}-${w.slug}`)
   }
 })
+
+// The states of PRODUCT-PLAN §19.2 the wizard shows, each kept as a
+// screenshot. Bringing them about for real would change the shared lab (a
+// cluster in Maintenance, a pool with no block left, a node not Ready), so the
+// answers the page gets are rewritten; the server's own refusals are covered
+// by the API tests and by the test above.
+test('the wizard explains what stops a Workspace', async ({ browser }, info) => {
+  test.setTimeout(5 * 60_000)
+  const { owner, slug } = await workspaceOrganization(browser, 'e2ews9')
+  const page = owner.page
+  const rewrite = (path: string, f: (body: { items: object[] }) => unknown) =>
+    page.route(`**/api/v1${path}`, async (route) => {
+      const r = await route.fetch()
+      await route.fulfill({ response: r, json: f(await r.json()) })
+    })
+  const refuse = (code: string, details: Record<string, unknown>) =>
+    page.route(`**/api/v1/organizations/${slug}/workspaces:validate`, (route) =>
+      route.fulfill({ status: 409, json: { code, message: code, requestId: 'e2e', details } }),
+    )
+
+  // The cluster in Maintenance.
+  await rewrite(`/organizations/${slug}/clusters`, (b) => ({
+    items: b.items.map((c: object) => ({ ...c, status: 'Maintenance' })),
+  }))
+  await page.goto(`/orgs/${slug}/workspaces/new`)
+  await page.locator('#w-name').fill('Moon')
+  await page.locator('.t-wstep', { hasText: 'Cluster and compute' }).click()
+  await expect(page.getByText('is in maintenance')).toBeVisible()
+  await expect(page.getByText('No Ready cluster is granted to the Organization.')).toBeVisible()
+  await shot(page, info, 's1-cluster-maintenance')
+  await page.unrouteAll()
+
+  // No dedicated node Ready.
+  await rewrite(`/organizations/${slug}/clusters/cluster-a/compute-options`, () => ({
+    items: [
+      { mode: 'Shared', available: true },
+      { mode: 'Dedicated', available: true },
+    ],
+  }))
+  await rewrite(`/organizations/${slug}/clusters/cluster-a/dedicated-nodes`, () => ({
+    items: [
+      {
+        id: 'ng-e2e',
+        name: 'fdp-k8s-wk9',
+        nodeState: 'NotReady',
+        capacityState: 'Available',
+        reservable: { cpu: '2', memory: '4Gi', pods: 50 },
+        reserved: { cpu: '0', memory: '0', pods: 0 },
+        remaining: { cpu: '2', memory: '4Gi', pods: 50 },
+        workspaces: [],
+      },
+    ],
+  }))
+  await page.goto(`/orgs/${slug}/workspaces/new`)
+  await page.locator('#w-name').fill('Moon')
+  await page.getByRole('button', { name: 'Continue' }).click()
+  await page.getByRole('button', { name: /Dedicated node/ }).click()
+  await expect(page.getByRole('button', { name: /fdp-k8s-wk9/ })).toBeDisabled()
+  await expect(page.getByText('The node is not ready. Ask a Platform Admin.')).toBeVisible()
+  await page.getByRole('button', { name: 'Continue' }).click()
+  await expect(page.getByText('Choose a node.')).toBeVisible()
+  await shot(page, info, 's2-no-node')
+  await page.unrouteAll()
+
+  // The network pool has no block left.
+  await refuse('NETWORK_POOL_EXHAUSTED', { networkPoolId: 'onboarding-pod-network' })
+  await page.goto(`/orgs/${slug}/workspaces/new`)
+  await page.locator('#w-name').fill('Moon')
+  await page.locator('.t-wstep', { hasText: 'Review' }).click()
+  await expect(page.getByRole('heading', { name: 'Network' })).toBeVisible()
+  await expect(page.getByText('(NETWORK_POOL_EXHAUSTED)')).toBeVisible()
+  await shot(page, info, 's3-pool-exhausted')
+  await page.unrouteAll()
+
+  // The Organization has as many Workspaces as it may.
+  await refuse('ENTITLEMENT_EXCEEDED', { limit: 'maxWorkspacesTotal' })
+  await page.goto(`/orgs/${slug}/workspaces/new`)
+  await page.locator('#w-name').fill('Moon')
+  await page.locator('.t-wstep', { hasText: 'Review' }).click()
+  await expect(page.getByText('(ENTITLEMENT_EXCEEDED)').first()).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Create Workspace' })).toBeDisabled()
+  await shot(page, info, 's4-org-full')
+})

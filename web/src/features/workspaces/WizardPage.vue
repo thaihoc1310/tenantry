@@ -80,6 +80,16 @@ watch(
   { immediate: true },
 )
 
+// The server checks the whole form at every step: until the choices it is
+// filled from have loaded (the owner groups above all), a check would only
+// report what is not chosen yet and hide what is wrong now.
+const loading = computed(
+  () =>
+    !clusters.isSuccess.value ||
+    !groups.isSuccess.value ||
+    (!!f.clusterId && (!modes.isSuccess.value || !pools.isSuccess.value || !nets.isSuccess.value)),
+)
+
 const dedicated = computed(() => f.mode === 'Dedicated')
 const tenant = computed(() => `${props.orgSlug}-${f.slug || 'slug'}`)
 const cluster = computed(() => clusters.data.value?.find((c) => c.id === f.clusterId))
@@ -151,6 +161,7 @@ const mark = (i: number) => (w.visited[i] && i !== w.step.value ? (w.hasError(i)
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
 
 async function move(to: () => Promise<boolean>) {
+  if (loading.value) return
   try {
     await to()
     window.scrollTo(0, 0)
@@ -695,7 +706,7 @@ async function submit() {
             <el-button
               v-if="w.step.value < steps.length - 1"
               type="primary"
-              :loading="w.checking.value"
+              :loading="w.checking.value || loading"
               @click="move(w.next)"
               >Continue</el-button
             >
