@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"time"
 )
 
 const addOrganizationMember = `-- name: AddOrganizationMember :exec
@@ -225,6 +226,20 @@ func (q *Queries) GetUser(ctx context.Context, id string) (User, error) {
 	return i, err
 }
 
+const lastQuarantineEnd = `-- name: LastQuarantineEnd :one
+SELECT a.quarantine_until FROM network_allocations a JOIN workspaces w ON w.id = a.workspace_id
+WHERE w.org_id = $1 AND w.state = 'Deleted' AND a.state = 'Quarantined'
+ORDER BY a.quarantine_until DESC LIMIT 1
+`
+
+// When the last quarantine of the organization's Deleted Workspaces ends.
+func (q *Queries) LastQuarantineEnd(ctx context.Context, orgID string) (*time.Time, error) {
+	row := q.db.QueryRow(ctx, lastQuarantineEnd, orgID)
+	var quarantine_until *time.Time
+	err := row.Scan(&quarantine_until)
+	return quarantine_until, err
+}
+
 const listOrganizationsForAdmin = `-- name: ListOrganizationsForAdmin :many
 SELECT o.id, o.slug, o.display_name, o.description, o.owner_user_id, o.status, o.review_note, o.created_at, o.updated_at, u.email AS owner_email, u.display_name AS owner_display_name
 FROM organizations o
@@ -369,22 +384,25 @@ func (q *Queries) MarkOrganizationDeleted(ctx context.Context, id string) error 
 
 const organizationLeftovers = `-- name: OrganizationLeftovers :one
 SELECT
-  (SELECT count(*) FROM workspaces w WHERE w.org_id = $1)::int AS workspaces,
+  (SELECT count(*) FROM workspaces w WHERE w.org_id = $1 AND w.state <> 'Deleted')::int AS workspaces,
+  (SELECT count(*) FROM workspaces w WHERE w.org_id = $1 AND w.state = 'Deleted')::int AS quarantined_workspaces,
   (SELECT count(*) FROM dedicated_node_grants d WHERE d.org_id = $1 AND d.revoked_at IS NULL)::int AS dedicated_nodes
 `
 
 type OrganizationLeftoversRow struct {
-	Workspaces     int32
-	DedicatedNodes int32
+	Workspaces            int32
+	QuarantinedWorkspaces int32
+	DedicatedNodes        int32
 }
 
 // What keeps an organization from being deleted (04-state-machines §11):
 // any Workspace row, Deleted ones waiting for a quarantine included, and
 // dedicated nodes not revoked.
+// Deleted Workspaces, waiting for their block's quarantine, are counted apart.
 func (q *Queries) OrganizationLeftovers(ctx context.Context, orgID string) (OrganizationLeftoversRow, error) {
 	row := q.db.QueryRow(ctx, organizationLeftovers, orgID)
 	var i OrganizationLeftoversRow
-	err := row.Scan(&i.Workspaces, &i.DedicatedNodes)
+	err := row.Scan(&i.Workspaces, &i.QuarantinedWorkspaces, &i.DedicatedNodes)
 	return i, err
 }
 

@@ -91,9 +91,17 @@ SELECT
 -- What keeps an organization from being deleted (04-state-machines §11):
 -- any Workspace row, Deleted ones waiting for a quarantine included, and
 -- dedicated nodes not revoked.
+-- Deleted Workspaces, waiting for their block's quarantine, are counted apart.
 SELECT
-  (SELECT count(*) FROM workspaces w WHERE w.org_id = $1)::int AS workspaces,
+  (SELECT count(*) FROM workspaces w WHERE w.org_id = $1 AND w.state <> 'Deleted')::int AS workspaces,
+  (SELECT count(*) FROM workspaces w WHERE w.org_id = $1 AND w.state = 'Deleted')::int AS quarantined_workspaces,
   (SELECT count(*) FROM dedicated_node_grants d WHERE d.org_id = $1 AND d.revoked_at IS NULL)::int AS dedicated_nodes;
+
+-- name: LastQuarantineEnd :one
+-- When the last quarantine of the organization's Deleted Workspaces ends.
+SELECT a.quarantine_until FROM network_allocations a JOIN workspaces w ON w.id = a.workspace_id
+WHERE w.org_id = $1 AND w.state = 'Deleted' AND a.state = 'Quarantined'
+ORDER BY a.quarantine_until DESC LIMIT 1;
 
 -- name: MarkOrganizationDeleted :exec
 UPDATE organizations SET status = 'Deleted', updated_at = now() WHERE id = $1;

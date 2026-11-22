@@ -2865,7 +2865,10 @@ export interface operations {
             404: components["responses"]["Error"];
             /**
              * @description `ORG_NOT_ACTIVE`: a request not approved is not deleted this way.
-             *     `ORGANIZATION_NOT_EMPTY`: Workspaces or dedicated nodes left (`details.workspaces`, `details.dedicatedNodes`).
+             *     `ORGANIZATION_NOT_EMPTY`: something is left. `details.workspaces`: Workspaces not deleted yet;
+             *     `details.dedicatedNodes`: nodes a Platform Admin must take back; `details.quarantinedWorkspaces`:
+             *     deleted Workspaces whose address block is still in quarantine, and `details.deletableAfter`
+             *     when the last of them ends (only waiting helps).
              */
             409: {
                 headers: {

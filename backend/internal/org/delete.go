@@ -2,7 +2,10 @@ package org
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -48,13 +51,14 @@ func (s *Service) Delete(ctx context.Context, userID, idOrSlug string) error {
 		if err != nil {
 			return err
 		}
-		if left.Workspaces > 0 || left.DedicatedNodes > 0 {
-			return &apperr.Error{
-				Code: apperr.OrganizationNotEmpty,
-				Message: fmt.Sprintf("the organization still has %d Workspace(s) and %d dedicated node(s): delete the Workspaces, and ask a Platform Admin to take the nodes back",
-					left.Workspaces, left.DedicatedNodes),
-				Details: map[string]any{"workspaces": left.Workspaces, "dedicatedNodes": left.DedicatedNodes},
+		if left.Workspaces > 0 || left.QuarantinedWorkspaces > 0 || left.DedicatedNodes > 0 {
+			var until *time.Time
+			if left.QuarantinedWorkspaces > 0 {
+				if until, err = q.LastQuarantineEnd(ctx, o.ID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+					return err
+				}
 			}
+			return notEmpty(left, until)
 		}
 		if err := q.MarkOrganizationDeleted(ctx, o.ID); err != nil {
 			return err
@@ -85,4 +89,34 @@ func (s *Service) Delete(ctx context.Context, userID, idOrSlug string) error {
 			},
 		})
 	})
+}
+
+// notEmpty says what keeps the organization: live Workspaces and dedicated
+// nodes the person (or an Admin) must remove, and Deleted Workspaces whose
+// address block is still in quarantine, which only time removes.
+func notEmpty(left store.OrganizationLeftoversRow, until *time.Time) error {
+	var todo []string
+	if left.Workspaces > 0 {
+		todo = append(todo, fmt.Sprintf("delete its %d Workspace(s)", left.Workspaces))
+	}
+	if left.DedicatedNodes > 0 {
+		todo = append(todo, fmt.Sprintf("ask a Platform Admin to take back its %d dedicated node(s)", left.DedicatedNodes))
+	}
+	details := map[string]any{
+		"workspaces": left.Workspaces, "quarantinedWorkspaces": left.QuarantinedWorkspaces, "dedicatedNodes": left.DedicatedNodes,
+	}
+	if left.QuarantinedWorkspaces > 0 {
+		wait := fmt.Sprintf("wait for the quarantine of %d deleted Workspace(s)", left.QuarantinedWorkspaces)
+		if until != nil {
+			at := until.UTC().Format(time.RFC3339)
+			wait = fmt.Sprintf("wait until %s, when the quarantine of %d deleted Workspace(s) ends", at, left.QuarantinedWorkspaces)
+			details["deletableAfter"] = at
+		}
+		todo = append(todo, wait)
+	}
+	return &apperr.Error{
+		Code:    apperr.OrganizationNotEmpty,
+		Message: "the organization is not empty yet: " + strings.Join(todo, "; "),
+		Details: details,
+	}
 }

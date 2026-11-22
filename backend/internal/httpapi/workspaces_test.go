@@ -830,6 +830,20 @@ func TestDeleteOrganization(t *testing.T) {
 	if rec := del(owner); rec.Code != 409 || errorBody(t, rec).Code != oapi.ORGANIZATIONNOTEMPTY || (*errorBody(t, rec).Details)["workspaces"] != 1.0 {
 		t.Fatalf("with a Workspace: %d %s", rec.Code, rec.Body)
 	}
+	// Deleted, its block in quarantine: still not empty, and the answer says until when.
+	if _, err := db.Exec(ctx, `UPDATE workspaces SET state = 'Deleted' WHERE id = $1`, created.Workspace.Id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE network_allocations SET state = 'Quarantined', quarantine_until = '2026-11-23T10:15:00Z' WHERE workspace_id = $1`, created.Workspace.Id); err != nil {
+		t.Fatal(err)
+	}
+	rec = del(owner)
+	if e := errorBody(t, rec); rec.Code != 409 || e.Code != oapi.ORGANIZATIONNOTEMPTY ||
+		(*e.Details)["workspaces"] != 0.0 || (*e.Details)["quarantinedWorkspaces"] != 1.0 ||
+		(*e.Details)["deletableAfter"] != "2026-11-23T10:15:00Z" || !strings.Contains(e.Message, "wait until 2026-11-23T10:15:00Z") ||
+		strings.Contains(e.Message, "delete its") {
+		t.Fatalf("with a Workspace in quarantine: %d %s", rec.Code, rec.Body)
+	}
 	if _, err := db.Exec(ctx, `DELETE FROM workspaces WHERE id = $1`, created.Workspace.Id); err != nil {
 		t.Fatal(err)
 	}
