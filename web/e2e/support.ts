@@ -18,12 +18,16 @@ export function newcomer() {
 // verificationLink waits for Keycloak's mail to email and returns its link.
 export async function verificationLink(email: string): Promise<string> {
   for (let i = 0; i < 30; i++) {
-    const res = await fetch(`${mailpit}/api/v1/search?query=${encodeURIComponent(`to:"${email}"`)}`)
-    const { messages } = (await res.json()) as { messages: { ID: string }[] }
-    if (messages.length) {
-      const msg = (await (await fetch(`${mailpit}/api/v1/message/${messages[0]!.ID}`)).json()) as { Text: string }
-      const link = /https:\/\/\S+\/login-actions\/action-token\?\S+/.exec(msg.Text)?.[0]
-      if (link) return link
+    try {
+      const res = await fetch(`${mailpit}/api/v1/search?query=${encodeURIComponent(`to:"${email}"`)}`)
+      const { messages } = (await res.json()) as { messages: { ID: string }[] }
+      if (messages.length) {
+        const msg = (await (await fetch(`${mailpit}/api/v1/message/${messages[0]!.ID}`)).json()) as { Text: string }
+        const link = /https:\/\/\S+\/login-actions\/action-token\?\S+/.exec(msg.Text)?.[0]
+        if (link) return link
+      }
+    } catch {
+      // The port-forward to Mailpit drops a connection now and then: ask again.
     }
     await new Promise((r) => setTimeout(r, 1000))
   }
