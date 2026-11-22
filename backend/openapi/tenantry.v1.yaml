@@ -67,6 +67,8 @@ paths:
         Platform Admin approves or rejects it. Values are trimmed.
         `slug` is permanent and prefixes every Kubernetes name the
         organization will own, so reserved words and the `kube-` prefix are refused.
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKey"
       requestBody:
         required: true
         content:
@@ -94,6 +96,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
+        "429": { $ref: "#/components/responses/RateLimited" }
 
   /organizations/{orgId}:
     parameters:
@@ -137,6 +141,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
 
   /operations/{operationId}:
     parameters:
@@ -162,6 +167,8 @@ paths:
       security: [{ session: [], csrf: [] }]
       summary: Retry a Failed operation (OrgOwner, OrgAdmin or Platform Admin)
       description: The operation goes back to Pending and its undelivered changes are sent again at once.
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKey"
       responses:
         "200":
           description: OK
@@ -176,6 +183,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
+        "429": { $ref: "#/components/responses/RateLimited" }
 
 components:
   securitySchemes:
@@ -211,9 +220,40 @@ components:
       required: true
       schema: { type: string }
 
+    idempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: |
+        A UUID the client generates once per intended change and sends again
+        on every retry of it (IMPLEMENTATION-PLAN §3.4). A repeat of a request
+        that succeeded gets the stored response, marked `Idempotent-Replayed:
+        true`, and changes nothing. A request that failed stores nothing, so
+        it can be corrected and sent again under the same key. Keys are per
+        user and kept 24 hours.
+      schema:
+        type: string
+        pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+
   responses:
     Error:
       description: Error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    IdempotencyKeyReused:
+      description: "`IDEMPOTENCY_KEY_REUSED`: the key came before with another method, path or body."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    RateLimited:
+      description: |
+        `RATE_LIMITED`: more than 120 writes in a minute by this user
+        (architecture/06-security-and-identity.md §6). Retry after the
+        number of seconds in `Retry-After`.
+      headers:
+        Retry-After:
+          required: true
+          schema: { type: integer }
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -229,6 +269,8 @@ components:
         - NOT_FOUND
         - CONFLICT
         - METHOD_NOT_ALLOWED
+        - IDEMPOTENCY_KEY_REUSED
+        - RATE_LIMITED
         - SLUG_TAKEN
         - ORG_REQUEST_PENDING
         - INTERNAL

@@ -14,7 +14,7 @@ import (
 	"github.com/thaihoc1310/tenantry/backend/migrations"
 )
 
-func TestExpiredSessionsGo(t *testing.T) {
+func TestHousekeeping(t *testing.T) {
 	url := testdb.New(t)
 	ctx := context.Background()
 	sqlDB, err := sql.Open("pgx", url)
@@ -34,7 +34,10 @@ func TestExpiredSessionsGo(t *testing.T) {
 		INSERT INTO users (id, issuer, subject) VALUES ('usr-a', 'iss', 'a');
 		INSERT INTO sessions (id_hash, user_id, refresh_token_enc, access_expires_at, expires_at) VALUES
 		  (decode(repeat('01', 32), 'hex'), 'usr-a', '\x00', now() - interval '9 hours', now() - interval '1 second'),
-		  (decode(repeat('02', 32), 'hex'), 'usr-a', '\x00', now() - interval '1 hour', now() + interval '1 hour');`); err != nil {
+		  (decode(repeat('02', 32), 'hex'), 'usr-a', '\x00', now() - interval '1 hour', now() + interval '1 hour');
+		INSERT INTO idempotency_keys (user_id, key, method, path, request_hash, response_status, created_at) VALUES
+		  ('usr-a', 'old', 'POST', '/x', decode(repeat('00', 32), 'hex'), 201, now() - interval '25 hours'),
+		  ('usr-a', 'new', 'POST', '/x', decode(repeat('00', 32), 'hex'), 201, now() - interval '23 hours');`); err != nil {
 		t.Fatal(err)
 	}
 	pool, err := pgxpool.New(ctx, url)
@@ -52,5 +55,11 @@ func TestExpiredSessionsGo(t *testing.T) {
 	}
 	if left != "2" {
 		t.Fatalf("sessions left: %s, want only the live one (2)", left)
+	}
+	if err := pool.QueryRow(ctx, `SELECT string_agg(key, ',') FROM idempotency_keys`).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != "new" {
+		t.Fatalf("idempotency keys left: %s, want only the one younger than 24h", left)
 	}
 }

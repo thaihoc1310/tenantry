@@ -12,6 +12,11 @@ WHERE (o.id = @id_or_slug OR o.slug = @id_or_slug)
 ORDER BY o.status = 'Rejected', o.created_at DESC
 LIMIT 1;
 
+-- name: LockOrganization :one
+-- Read before a change, held until it commits, so the audit trail's "before"
+-- is what the change replaced.
+SELECT * FROM organizations WHERE id = $1 FOR UPDATE;
+
 -- name: UpdateOrganization :one
 -- A NULL argument keeps the column. The status guard closes the gap between
 -- the caller's read and this write: a request rejected in between stays untouched.

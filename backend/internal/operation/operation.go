@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/apperr"
+	"github.com/thaihoc1310/tenantry/backend/internal/audit"
 	"github.com/thaihoc1310/tenantry/backend/internal/id"
 	"github.com/thaihoc1310/tenantry/backend/internal/org"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
@@ -122,7 +123,7 @@ func (s *Service) Retry(ctx context.Context, userID string, platformAdmin bool, 
 	}
 
 	var op store.Operation
-	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+	err = store.InTx(ctx, s.db, func(tx pgx.Tx) error {
 		q := s.q.WithTx(tx)
 		moved, ok, err := Move(ctx, q, opID, Pending, "", "")
 		if err != nil {
@@ -132,8 +133,14 @@ func (s *Service) Retry(ctx context.Context, userID string, platformAdmin bool, 
 			return ErrNotRetrying
 		}
 		op = moved
-		_, err = q.ResetOperationEvents(ctx, opID)
-		return err
+		if _, err := q.ResetOperationEvents(ctx, opID); err != nil {
+			return err
+		}
+		return audit.Record(ctx, q, audit.Event{
+			Actor: userID, OrgID: op.OrgID, Action: audit.OperationRetry, TargetType: "Operation", TargetID: op.ID,
+			// A Platform Admin acting on an organization they are not a member of.
+			Detail: map[string]any{"type": op.Type, "asPlatformAdmin": role == ""},
+		})
 	})
 	return op, err
 }

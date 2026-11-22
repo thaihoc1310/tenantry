@@ -2,7 +2,9 @@ package config_test
 
 import (
 	"bytes"
+	"fmt"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -11,7 +13,7 @@ import (
 
 func setEnv(t *testing.T, env map[string]string) {
 	t.Helper()
-	for _, k := range []string{"DATABASE_URL", "TENANTRY_ADDR", "TENANTRY_LOG_LEVEL", "TENANTRY_LOG_FORMAT"} {
+	for _, k := range []string{"DATABASE_URL", "TENANTRY_ADDR", "TENANTRY_LOG_LEVEL", "TENANTRY_LOG_FORMAT", "TENANTRY_TRUSTED_PROXIES"} {
 		t.Setenv(k, env[k])
 	}
 }
@@ -23,7 +25,7 @@ func TestDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := config.Config{DatabaseURL: "postgres://x", Addr: ":8080", LogLevel: slog.LevelInfo, LogFormat: "json"}
-	if c != want {
+	if !reflect.DeepEqual(c, want) {
 		t.Fatalf("got %+v, want %+v", c, want)
 	}
 }
@@ -32,6 +34,7 @@ func TestExplicitValues(t *testing.T) {
 	setEnv(t, map[string]string{
 		"DATABASE_URL": "postgres://x", "TENANTRY_ADDR": "127.0.0.1:9000",
 		"TENANTRY_LOG_LEVEL": "debug", "TENANTRY_LOG_FORMAT": "text",
+		"TENANTRY_TRUSTED_PROXIES": " 192.168.0.0/16, 10.1.2.3 ,::ffff:10.9.9.9,192.168.7.7/16,",
 	})
 	c, err := config.Load()
 	if err != nil {
@@ -40,17 +43,21 @@ func TestExplicitValues(t *testing.T) {
 	if c.Addr != "127.0.0.1:9000" || c.LogLevel != slog.LevelDebug || c.LogFormat != "text" {
 		t.Fatalf("got %+v", c)
 	}
+	// Bare addresses become single-address prefixes; host bits are dropped.
+	if got := fmt.Sprint(c.TrustedProxies); got != "[192.168.0.0/16 10.1.2.3/32 10.9.9.9/32 192.168.0.0/16]" {
+		t.Fatalf("trusted proxies %s", got)
+	}
 }
 
 // Every bad variable is reported, not only the first, and a typo never falls
 // back to a default (e.g. "verbose" must not quietly mean info).
 func TestInvalidValuesAreAllReported(t *testing.T) {
-	setEnv(t, map[string]string{"TENANTRY_LOG_LEVEL": "verbose", "TENANTRY_LOG_FORMAT": "xml"})
+	setEnv(t, map[string]string{"TENANTRY_LOG_LEVEL": "verbose", "TENANTRY_LOG_FORMAT": "xml", "TENANTRY_TRUSTED_PROXIES": "traefik"})
 	_, err := config.Load()
 	if err == nil {
 		t.Fatal("no error")
 	}
-	for _, want := range []string{"DATABASE_URL", "TENANTRY_LOG_LEVEL", "TENANTRY_LOG_FORMAT"} {
+	for _, want := range []string{"DATABASE_URL", "TENANTRY_LOG_LEVEL", "TENANTRY_LOG_FORMAT", "TENANTRY_TRUSTED_PROXIES"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %s: %v", want, err)
 		}

@@ -23,7 +23,7 @@ DELETE FROM sessions WHERE id_hash = $1;
 
 -- name: EndSession :one
 -- Logout: the row goes, and its refresh token comes back to end the SSO session.
-DELETE FROM sessions WHERE id_hash = $1 RETURNING refresh_token_enc;
+DELETE FROM sessions WHERE id_hash = $1 RETURNING user_id, refresh_token_enc;
 
 -- name: DeleteExpiredSessions :execrows
 DELETE FROM sessions WHERE expires_at < now();

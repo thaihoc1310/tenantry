@@ -49,6 +49,10 @@ spec:
             {{- include "tenantry.env" . | nindent 12 }}
             - name: TENANTRY_ADDR
               value: ":8080"
+            {{- with .Values.api.trustedProxies }}
+            - name: TENANTRY_TRUSTED_PROXIES
+              value: {{ join "," . | quote }}
+            {{- end }}
             {{- with .Values.api.auth }}
             - name: TENANTRY_OIDC_ISSUER
               value: {{ required "api.auth.issuer is required" .issuer | quote }}

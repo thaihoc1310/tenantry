@@ -27,7 +27,7 @@ var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 func TestHealthz(t *testing.T) {
 	rec := httptest.NewRecorder()
-	routes(nil, nil, quiet).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	routes(nil, nil, nil, quiet).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if rec.Code != http.StatusOK || rec.Body.String() != "ok" {
 		t.Fatalf("got %d %q, want 200 \"ok\"", rec.Code, rec.Body.String())
 	}
@@ -107,7 +107,7 @@ func TestBodyIsCapped(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	h := routes(pool, testAuth(t, pool), quiet)
+	h := routes(pool, testAuth(t, pool), nil, quiet)
 
 	send := func(size int) *httptest.ResponseRecorder {
 		body := `{"slug":"acme","displayName":"` + strings.Repeat("x", size) + `"}`
@@ -136,7 +136,7 @@ func TestReadyz(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := routes(pool, testAuth(t, pool), quiet)
+	h := routes(pool, testAuth(t, pool), nil, quiet)
 	probe := func() *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))

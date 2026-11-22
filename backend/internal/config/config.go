@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"net/url"
 	"os"
 	"strings"
@@ -17,6 +18,10 @@ type Config struct {
 	Addr        string     // TENANTRY_ADDR, API listen address; default :8080
 	LogLevel    slog.Level // TENANTRY_LOG_LEVEL: debug, info (default), warn, error
 	LogFormat   string     // TENANTRY_LOG_FORMAT: json (default) or text
+	// TENANTRY_TRUSTED_PROXIES: comma-separated CIDRs or addresses of the
+	// proxies in front of the API (Traefik), whose X-Forwarded-For names the
+	// client. Empty: the header is never believed.
+	TrustedProxies []netip.Prefix
 }
 
 // Load reads the configuration and reports every invalid variable at once.
@@ -37,6 +42,21 @@ func Load() (Config, error) {
 		if err := c.LogLevel.UnmarshalText([]byte(v)); err != nil {
 			errs = append(errs, fmt.Errorf("TENANTRY_LOG_LEVEL=%q: want debug, info, warn or error", v))
 		}
+	}
+	for v := range strings.SplitSeq(os.Getenv("TENANTRY_TRUSTED_PROXIES"), ",") {
+		if v = strings.TrimSpace(v); v == "" {
+			continue
+		}
+		p, err := netip.ParsePrefix(v)
+		if err != nil {
+			a, aerr := netip.ParseAddr(v)
+			if aerr != nil {
+				errs = append(errs, fmt.Errorf("TENANTRY_TRUSTED_PROXIES: %q is neither a CIDR nor an address", v))
+				continue
+			}
+			p = netip.PrefixFrom(a.Unmap(), a.Unmap().BitLen())
+		}
+		c.TrustedProxies = append(c.TrustedProxies, p.Masked())
 	}
 	switch c.LogFormat {
 	case "":

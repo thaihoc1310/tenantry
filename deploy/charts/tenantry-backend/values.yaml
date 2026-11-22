@@ -19,7 +19,13 @@ nodeSelector: {}
 tolerations: []
 
 api:
+  # One replica: rate limits are counted in memory per replica
+  # (architecture/06-security-and-identity.md §6).
   replicas: 1
+  # CIDRs of the proxies in front of the API (Traefik). Their
+  # X-Forwarded-For names the client for rate limiting by IP; from anyone
+  # else the header is ignored. Empty: the connecting address counts.
+  trustedProxies: []
   # Login through Keycloak (architecture/06-security-and-identity.md §3).
   auth:
     issuer: ""           # required, e.g. https://auth.example.com/realms/tenantry

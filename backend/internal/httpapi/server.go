@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -30,8 +31,9 @@ type server struct {
 }
 
 // Register mounts every /api/v1 operation and the browser login endpoints
-// under /auth on r.
-func Register(r chi.Router, db *pgxpool.Pool, a *auth.Service) {
+// under /auth on r. trustedProxies are the proxies (Traefik) whose
+// X-Forwarded-For names the client, for rate limiting by IP.
+func Register(r chi.Router, db *pgxpool.Pool, a *auth.Service, trustedProxies []netip.Prefix) {
 	badRequest := func(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, apperr.New(apperr.Validation, err.Error()))
 	}
@@ -50,14 +52,20 @@ func Register(r chi.Router, db *pgxpool.Pool, a *auth.Service) {
 		})
 		oapi.HandlerWithOptions(api, oapi.ChiServerOptions{
 			BaseRouter: v1,
-			// The last entry runs first: an anonymous caller gets 401, then a
-			// forged write 403, before any 400.
-			Middlewares:      []oapi.MiddlewareFunc{validate(), requireCSRF, authenticate(a)},
+			// The last entry runs first: an anonymous caller gets 401, a user
+			// over the write limit 429, a forged write 403, all before any 400.
+			// Idempotency comes last, so the key is claimed for valid
+			// requests only, right around the handler.
+			Middlewares: []oapi.MiddlewareFunc{
+				idempotent(db), validate(), requireCSRF, limitWrites(newLimiter(writesPerMinute)), authenticate(a),
+			},
 			ErrorHandlerFunc: badRequest,
 		})
 	})
-	r.Get("/auth/login", login(a))
-	r.Get("/auth/callback", callback(a))
+	// A budget per endpoint: one login is a request to each, so 20 logins a
+	// minute fit behind one address (a class behind one NAT).
+	r.Get("/auth/login", limitLogins(newLimiter(loginsPerMinute), trustedProxies, login(a)))
+	r.Get("/auth/callback", limitLogins(newLimiter(loginsPerMinute), trustedProxies, callback(a)))
 	r.Post("/auth/logout", logout(a))
 }
 

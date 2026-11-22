@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/apperr"
+	"github.com/thaihoc1310/tenantry/backend/internal/audit"
 	"github.com/thaihoc1310/tenantry/backend/internal/id"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
 )
@@ -142,9 +143,10 @@ func (s *Service) Create(ctx context.Context, userID string, r Request) (Org, er
 		return Org{}, err
 	}
 
-	// The organization and its owner membership exist together or not at all.
+	// The organization, its owner membership and the audit event exist
+	// together or not at all.
 	var created store.Organization
-	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+	err = store.InTx(ctx, s.db, func(tx pgx.Tx) error {
 		q := s.q.WithTx(tx)
 		o, err := q.CreateOrganizationRequest(ctx, store.CreateOrganizationRequestParams{
 			ID: id.New(id.Organization), Slug: r.Slug, DisplayName: name, Description: desc, OwnerUserID: userID,
@@ -153,8 +155,14 @@ func (s *Service) Create(ctx context.Context, userID string, r Request) (Org, er
 			return err
 		}
 		created = o
-		return q.AddOrganizationMember(ctx, store.AddOrganizationMemberParams{
+		if err := q.AddOrganizationMember(ctx, store.AddOrganizationMemberParams{
 			OrgID: created.ID, UserID: userID, Role: string(RoleOwner),
+		}); err != nil {
+			return err
+		}
+		return audit.Record(ctx, q, audit.Event{
+			Actor: userID, OrgID: o.ID, Action: audit.OrganizationCreate, TargetType: "Organization", TargetID: o.ID,
+			Detail: map[string]any{"slug": o.Slug, "displayName": o.DisplayName, "description": o.Description, "status": o.Status},
 		})
 	})
 	// No "is it free?" query beforehand: two concurrent requests would both
@@ -210,8 +218,41 @@ func (s *Service) Update(ctx context.Context, userID, idOrSlug string, p Patch) 
 		return o, nil
 	}
 
-	updated, err := s.q.UpdateOrganization(ctx, store.UpdateOrganizationParams{
-		ID: o.ID, DisplayName: p.DisplayName, Description: p.Description,
+	updated := o.Organization
+	err = store.InTx(ctx, s.db, func(tx pgx.Tx) error {
+		q := s.q.WithTx(tx)
+		cur, err := q.LockOrganization(ctx, o.ID)
+		if err != nil {
+			return err
+		}
+		if cur.Status != "Pending" && cur.Status != "Active" {
+			return ErrClosed // rejected or deleted since Get
+		}
+		// Only fields that really change are written and audited.
+		before, after := map[string]any{}, map[string]any{}
+		if p.DisplayName != nil && *p.DisplayName != cur.DisplayName {
+			before["displayName"], after["displayName"] = cur.DisplayName, *p.DisplayName
+		} else {
+			p.DisplayName = nil
+		}
+		if p.Description != nil && *p.Description != cur.Description {
+			before["description"], after["description"] = cur.Description, *p.Description
+		} else {
+			p.Description = nil
+		}
+		if len(after) == 0 {
+			updated = cur
+			return nil
+		}
+		if updated, err = q.UpdateOrganization(ctx, store.UpdateOrganizationParams{
+			ID: o.ID, DisplayName: p.DisplayName, Description: p.Description,
+		}); err != nil {
+			return err
+		}
+		return audit.Record(ctx, q, audit.Event{
+			Actor: userID, OrgID: o.ID, Action: audit.OrganizationUpdate, TargetType: "Organization", TargetID: o.ID,
+			Detail: map[string]any{"before": before, "after": after},
+		})
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Org{}, ErrClosed // rejected or deleted since Get

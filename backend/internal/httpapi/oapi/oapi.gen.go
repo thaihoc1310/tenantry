@@ -24,15 +24,17 @@ import (
 
 // Defines values for ErrorCode.
 const (
-	CONFLICT          ErrorCode = "CONFLICT"
-	FORBIDDEN         ErrorCode = "FORBIDDEN"
-	INTERNAL          ErrorCode = "INTERNAL"
-	METHODNOTALLOWED  ErrorCode = "METHOD_NOT_ALLOWED"
-	NOTFOUND          ErrorCode = "NOT_FOUND"
-	ORGREQUESTPENDING ErrorCode = "ORG_REQUEST_PENDING"
-	SLUGTAKEN         ErrorCode = "SLUG_TAKEN"
-	UNAUTHENTICATED   ErrorCode = "UNAUTHENTICATED"
-	VALIDATIONFAILED  ErrorCode = "VALIDATION_FAILED"
+	CONFLICT             ErrorCode = "CONFLICT"
+	FORBIDDEN            ErrorCode = "FORBIDDEN"
+	IDEMPOTENCYKEYREUSED ErrorCode = "IDEMPOTENCY_KEY_REUSED"
+	INTERNAL             ErrorCode = "INTERNAL"
+	METHODNOTALLOWED     ErrorCode = "METHOD_NOT_ALLOWED"
+	NOTFOUND             ErrorCode = "NOT_FOUND"
+	ORGREQUESTPENDING    ErrorCode = "ORG_REQUEST_PENDING"
+	RATELIMITED          ErrorCode = "RATE_LIMITED"
+	SLUGTAKEN            ErrorCode = "SLUG_TAKEN"
+	UNAUTHENTICATED      ErrorCode = "UNAUTHENTICATED"
+	VALIDATIONFAILED     ErrorCode = "VALIDATION_FAILED"
 )
 
 // Valid indicates whether the value is a known member of the ErrorCode enum.
@@ -42,6 +44,8 @@ func (e ErrorCode) Valid() bool {
 		return true
 	case FORBIDDEN:
 		return true
+	case IDEMPOTENCYKEYREUSED:
+		return true
 	case INTERNAL:
 		return true
 	case METHODNOTALLOWED:
@@ -49,6 +53,8 @@ func (e ErrorCode) Valid() bool {
 	case NOTFOUND:
 		return true
 	case ORGREQUESTPENDING:
+		return true
+	case RATELIMITED:
 		return true
 	case SLUGTAKEN:
 		return true
@@ -238,6 +244,9 @@ type OrganizationPatch struct {
 	DisplayName *string `json:"displayName,omitempty"`
 }
 
+// IdempotencyKey defines model for idempotencyKey.
+type IdempotencyKey = string
+
 // OperationId defines model for operationId.
 type OperationId = string
 
@@ -247,12 +256,40 @@ type OrgId = string
 // Error defines model for Error.
 type Error = ErrorResponse
 
+// IdempotencyKeyReused defines model for IdempotencyKeyReused.
+type IdempotencyKeyReused = ErrorResponse
+
+// RateLimited defines model for RateLimited.
+type RateLimited = ErrorResponse
+
+// RetryOperationParams defines parameters for RetryOperation.
+type RetryOperationParams struct {
+	// IdempotencyKey A UUID the client generates once per intended change and sends again
+	// on every retry of it (IMPLEMENTATION-PLAN §3.4). A repeat of a request
+	// that succeeded gets the stored response, marked `Idempotent-Replayed:
+	// true`, and changes nothing. A request that failed stores nothing, so
+	// it can be corrected and sent again under the same key. Keys are per
+	// user and kept 24 hours.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
+}
+
 // ListOrganizationsParams defines parameters for ListOrganizations.
 type ListOrganizationsParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 
 	// Cursor Opaque; pass `nextCursor` from the previous page.
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// CreateOrganizationParams defines parameters for CreateOrganization.
+type CreateOrganizationParams struct {
+	// IdempotencyKey A UUID the client generates once per intended change and sends again
+	// on every retry of it (IMPLEMENTATION-PLAN §3.4). A repeat of a request
+	// that succeeded gets the stored response, marked `Idempotent-Replayed:
+	// true`, and changes nothing. A request that failed stores nothing, so
+	// it can be corrected and sent again under the same key. Keys are per
+	// user and kept 24 hours.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 }
 
 // CreateOrganizationJSONRequestBody defines body for CreateOrganization for application/json ContentType.
@@ -271,13 +308,13 @@ type ServerInterface interface {
 	GetOperation(w http.ResponseWriter, r *http.Request, operationId OperationId)
 	// RetryOperation Retry a Failed operation (OrgOwner, OrgAdmin or Platform Admin)
 	// (POST /operations/{operationId}:retry)
-	RetryOperation(w http.ResponseWriter, r *http.Request, operationId OperationId)
+	RetryOperation(w http.ResponseWriter, r *http.Request, operationId OperationId, params RetryOperationParams)
 	// ListOrganizations Organizations the caller belongs to, including their own Pending and Rejected requests
 	// (GET /organizations)
 	ListOrganizations(w http.ResponseWriter, r *http.Request, params ListOrganizationsParams)
 	// CreateOrganization Request a new organization (PRODUCT-PLAN §4.2)
 	// (POST /organizations)
-	CreateOrganization(w http.ResponseWriter, r *http.Request)
+	CreateOrganization(w http.ResponseWriter, r *http.Request, params CreateOrganizationParams)
 	// GetOrganization Organization detail (any member)
 	// (GET /organizations/{orgId})
 	GetOrganization(w http.ResponseWriter, r *http.Request, orgId OrgId)
@@ -304,7 +341,7 @@ func (_ Unimplemented) GetOperation(w http.ResponseWriter, r *http.Request, oper
 
 // RetryOperation Retry a Failed operation (OrgOwner, OrgAdmin or Platform Admin)
 // (POST /operations/{operationId}:retry)
-func (_ Unimplemented) RetryOperation(w http.ResponseWriter, r *http.Request, operationId OperationId) {
+func (_ Unimplemented) RetryOperation(w http.ResponseWriter, r *http.Request, operationId OperationId, params RetryOperationParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -316,7 +353,7 @@ func (_ Unimplemented) ListOrganizations(w http.ResponseWriter, r *http.Request,
 
 // CreateOrganization Request a new organization (PRODUCT-PLAN §4.2)
 // (POST /organizations)
-func (_ Unimplemented) CreateOrganization(w http.ResponseWriter, r *http.Request) {
+func (_ Unimplemented) CreateOrganization(w http.ResponseWriter, r *http.Request, params CreateOrganizationParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -396,8 +433,32 @@ func (siw *ServerInterfaceWrapper) RetryOperation(w http.ResponseWriter, r *http
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RetryOperationParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = &IdempotencyKey
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RetryOperation(w, r, operationId)
+		siw.Handler.RetryOperation(w, r, operationId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -456,8 +517,35 @@ func (siw *ServerInterfaceWrapper) ListOrganizations(w http.ResponseWriter, r *h
 // CreateOrganization operation middleware
 func (siw *ServerInterfaceWrapper) CreateOrganization(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateOrganizationParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = &IdempotencyKey
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateOrganization(w, r)
+		siw.Handler.CreateOrganization(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -659,6 +747,17 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 
 type ErrorJSONResponse ErrorResponse
 
+type IdempotencyKeyReusedJSONResponse ErrorResponse
+
+type RateLimitedResponseHeaders struct {
+	RetryAfter int
+}
+type RateLimitedJSONResponse struct {
+	Body ErrorResponse
+
+	Headers RateLimitedResponseHeaders
+}
+
 type GetMeRequestObject struct {
 }
 
@@ -746,6 +845,7 @@ func (response GetOperation404JSONResponse) VisitGetOperationResponse(w http.Res
 
 type RetryOperationRequestObject struct {
 	OperationId OperationId `json:"operationId"`
+	Params      RetryOperationParams
 }
 
 type RetryOperationResponseObject interface {
@@ -822,6 +922,37 @@ func (response RetryOperation409JSONResponse) VisitRetryOperationResponse(w http
 	return err
 }
 
+type RetryOperation422JSONResponse struct {
+	IdempotencyKeyReusedJSONResponse
+}
+
+func (response RetryOperation422JSONResponse) VisitRetryOperationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RetryOperation429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response RetryOperation429JSONResponse) VisitRetryOperationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListOrganizationsRequestObject struct {
 	Params ListOrganizationsParams
 }
@@ -873,7 +1004,8 @@ func (response ListOrganizations401JSONResponse) VisitListOrganizationsResponse(
 }
 
 type CreateOrganizationRequestObject struct {
-	Body *CreateOrganizationJSONRequestBody
+	Params CreateOrganizationParams
+	Body   *CreateOrganizationJSONRequestBody
 }
 
 type CreateOrganizationResponseObject interface {
@@ -954,6 +1086,37 @@ func (response CreateOrganization409JSONResponse) VisitCreateOrganizationRespons
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateOrganization422JSONResponse struct {
+	IdempotencyKeyReusedJSONResponse
+}
+
+func (response CreateOrganization422JSONResponse) VisitCreateOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateOrganization429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response CreateOrganization429JSONResponse) VisitCreateOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -1101,6 +1264,21 @@ func (response PatchOrganization409JSONResponse) VisitPatchOrganizationResponse(
 	return err
 }
 
+type PatchOrganization429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response PatchOrganization429JSONResponse) VisitPatchOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// GetMe The signed-in user
@@ -1216,10 +1394,11 @@ func (sh *strictHandler) GetOperation(w http.ResponseWriter, r *http.Request, op
 }
 
 // RetryOperation operation middleware
-func (sh *strictHandler) RetryOperation(w http.ResponseWriter, r *http.Request, operationId OperationId) {
+func (sh *strictHandler) RetryOperation(w http.ResponseWriter, r *http.Request, operationId OperationId, params RetryOperationParams) {
 	var request RetryOperationRequestObject
 
 	request.OperationId = operationId
+	request.Params = params
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.RetryOperation(ctx, request.(RetryOperationRequestObject))
@@ -1268,8 +1447,10 @@ func (sh *strictHandler) ListOrganizations(w http.ResponseWriter, r *http.Reques
 }
 
 // CreateOrganization operation middleware
-func (sh *strictHandler) CreateOrganization(w http.ResponseWriter, r *http.Request) {
+func (sh *strictHandler) CreateOrganization(w http.ResponseWriter, r *http.Request, params CreateOrganizationParams) {
 	var request CreateOrganizationRequestObject
+
+	request.Params = params
 
 	var body CreateOrganizationJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -1362,57 +1543,65 @@ func (sh *strictHandler) PatchOrganization(w http.ResponseWriter, r *http.Reques
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
+	"SHh6sf1SygWJXCVe1ztiGT96OPYebx//NwAA//8=",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

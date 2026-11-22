@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"syscall"
@@ -56,7 +57,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           routes(pool, authn, log),
+		Handler:           routes(pool, authn, cfg.TrustedProxies, log),
 		ReadHeaderTimeout: 10 * time.Second,
 		// Bodies are at most maxBodyBytes, so 30s only cuts off a client that
 		// trickles one in to hold a connection open.
@@ -96,7 +97,7 @@ func run() error {
 // without a cap one authenticated client could send gigabytes.
 const maxBodyBytes = 1 << 20
 
-func routes(db *pgxpool.Pool, a *auth.Service, log *slog.Logger) http.Handler {
+func routes(db *pgxpool.Pool, a *auth.Service, trustedProxies []netip.Prefix, log *slog.Logger) http.Handler {
 	r := chi.NewRouter()
 	r.Use(httpapi.WithRequestID, httpapi.LogRequests(log), httpapi.Recover)
 	// Liveness: the process answers. It never touches the database, so an
@@ -115,6 +116,6 @@ func routes(db *pgxpool.Pool, a *auth.Service, log *slog.Logger) http.Handler {
 		}
 		_, _ = w.Write([]byte("ok"))
 	})
-	httpapi.Register(r, db, a)
+	httpapi.Register(r, db, a, trustedProxies)
 	return http.MaxBytesHandler(r, maxBodyBytes)
 }

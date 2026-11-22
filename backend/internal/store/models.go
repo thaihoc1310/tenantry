@@ -8,6 +8,30 @@ import (
 	"time"
 )
 
+type AuditEvent struct {
+	ID          int64
+	ActorUserID *string
+	OrgID       *string
+	Action      string
+	TargetType  string
+	TargetID    string
+	Result      string
+	Detail      []byte
+	At          time.Time
+}
+
+type IdempotencyKey struct {
+	UserID           string
+	Key              string
+	Method           string
+	Path             string
+	RequestHash      []byte
+	ResponseStatus   int32
+	ResponseLocation *string
+	ResponseBody     []byte
+	CreatedAt        time.Time
+}
+
 type Operation struct {
 	ID            string
 	OrgID         string

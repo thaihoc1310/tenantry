@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
@@ -95,6 +96,9 @@ var testKey = bytes.Repeat([]byte{7}, 32)
 
 const publicURL = "https://portal.test"
 
+// trustedProxies stands in for Traefik's address range.
+var trustedProxies = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+
 // newAPI serves the API on a fresh, migrated and seeded database; the pool is
 // returned for tests that need extra rows. Its OIDC issuer does not exist:
 // only tests that log in through Keycloak need one (newAPIWithIssuer).
@@ -136,7 +140,7 @@ func newAPIWithIssuer(t *testing.T, issuer string) (http.Handler, *pgxpool.Pool)
 		t.Fatal(err)
 	}
 	r := chi.NewRouter()
-	httpapi.Register(r, pool, a)
+	httpapi.Register(r, pool, a, trustedProxies)
 	return httpapi.WithRequestID(r), pool
 }
 

@@ -58,15 +58,20 @@ func (q *Queries) DeleteSession(ctx context.Context, idHash []byte) error {
 }
 
 const endSession = `-- name: EndSession :one
-DELETE FROM sessions WHERE id_hash = $1 RETURNING refresh_token_enc
+DELETE FROM sessions WHERE id_hash = $1 RETURNING user_id, refresh_token_enc
 `
 
+type EndSessionRow struct {
+	UserID          string
+	RefreshTokenEnc []byte
+}
+
 // Logout: the row goes, and its refresh token comes back to end the SSO session.
-func (q *Queries) EndSession(ctx context.Context, idHash []byte) ([]byte, error) {
+func (q *Queries) EndSession(ctx context.Context, idHash []byte) (EndSessionRow, error) {
 	row := q.db.QueryRow(ctx, endSession, idHash)
-	var refresh_token_enc []byte
-	err := row.Scan(&refresh_token_enc)
-	return refresh_token_enc, err
+	var i EndSessionRow
+	err := row.Scan(&i.UserID, &i.RefreshTokenEnc)
+	return i, err
 }
 
 const getSession = `-- name: GetSession :one

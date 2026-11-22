@@ -160,6 +160,29 @@ func (q *Queries) ListOrganizationsForMember(ctx context.Context, arg ListOrgani
 	return items, nil
 }
 
+const lockOrganization = `-- name: LockOrganization :one
+SELECT id, slug, display_name, description, owner_user_id, status, review_note, created_at, updated_at FROM organizations WHERE id = $1 FOR UPDATE
+`
+
+// Read before a change, held until it commits, so the audit trail's "before"
+// is what the change replaced.
+func (q *Queries) LockOrganization(ctx context.Context, id string) (Organization, error) {
+	row := q.db.QueryRow(ctx, lockOrganization, id)
+	var i Organization
+	err := row.Scan(
+		&i.ID,
+		&i.Slug,
+		&i.DisplayName,
+		&i.Description,
+		&i.OwnerUserID,
+		&i.Status,
+		&i.ReviewNote,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateOrganization = `-- name: UpdateOrganization :one
 UPDATE organizations
 SET display_name = COALESCE($1, display_name),

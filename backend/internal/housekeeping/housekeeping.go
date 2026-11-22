@@ -5,6 +5,7 @@ package housekeeping
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -31,12 +32,21 @@ func Run(ctx context.Context, db *pgxpool.Pool, log *slog.Logger) {
 
 // RunOnce does one round.
 func RunOnce(ctx context.Context, db *pgxpool.Pool, log *slog.Logger) error {
-	n, err := store.New(db).DeleteExpiredSessions(ctx)
-	if err != nil {
-		return err
-	}
-	if n > 0 {
-		log.Info("deleted expired sessions", "count", n)
+	q := store.New(db)
+	for _, job := range []struct {
+		what string
+		run  func(context.Context) (int64, error)
+	}{
+		{"expired sessions", q.DeleteExpiredSessions},
+		{"idempotency keys older than 24 hours", q.DeleteOldIdempotencyKeys},
+	} {
+		n, err := job.run(ctx)
+		if err != nil {
+			return fmt.Errorf("delete %s: %w", job.what, err)
+		}
+		if n > 0 {
+			log.Info("deleted "+job.what, "count", n)
+		}
 	}
 	return nil
 }

@@ -18,6 +18,9 @@ var statusOf = map[apperr.Code]int{
 	apperr.Conflict:         http.StatusConflict,
 	apperr.MethodNotAllowed: http.StatusMethodNotAllowed,
 
+	apperr.IdempotencyKeyReused: http.StatusUnprocessableEntity,
+	apperr.RateLimited:          http.StatusTooManyRequests,
+
 	apperr.SlugTaken:         http.StatusConflict,
 	apperr.OrgRequestPending: http.StatusConflict,
 }

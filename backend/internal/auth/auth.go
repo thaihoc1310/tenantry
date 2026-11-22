@@ -31,6 +31,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/apperr"
+	"github.com/thaihoc1310/tenantry/backend/internal/audit"
 	"github.com/thaihoc1310/tenantry/backend/internal/config"
 	"github.com/thaihoc1310/tenantry/backend/internal/id"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
@@ -233,14 +234,17 @@ func (s *Service) FinishLogin(ctx context.Context, sealed, state, code string) (
 			return ErrDisabled
 		}
 		userID = u.ID
-		return q.CreateSession(ctx, store.CreateSessionParams{
+		if err := q.CreateSession(ctx, store.CreateSessionParams{
 			IDHash:          idHash,
 			UserID:          u.ID,
 			RealmRoles:      roles,
 			RefreshTokenEnc: s.seal([]byte(tok.RefreshToken), idHash),
 			AccessExpiresAt: accessExpiry,
 			ExpiresAt:       s.sessionExpiry(tok, s.now()),
-		})
+		}); err != nil {
+			return err
+		}
+		return audit.Record(ctx, q, audit.Event{Actor: u.ID, Action: audit.Login, TargetType: "User", TargetID: u.ID})
 	})
 	if err != nil {
 		return Login{}, err
@@ -402,14 +406,22 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	if !ok {
 		return nil
 	}
-	sealed, err := s.q.EndSession(ctx, idHash)
+	var ended store.EndSessionRow
+	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		q := s.q.WithTx(tx)
+		var err error
+		if ended, err = q.EndSession(ctx, idHash); err != nil {
+			return err
+		}
+		return audit.Record(ctx, q, audit.Event{Actor: ended.UserID, Action: audit.Logout, TargetType: "User", TargetID: ended.UserID})
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil // already gone
 	}
 	if err != nil {
 		return err
 	}
-	refreshToken, err := s.open(sealed, idHash)
+	refreshToken, err := s.open(ended.RefreshTokenEnc, idHash)
 	if err != nil {
 		return fmt.Errorf("end SSO session: refresh token sealed with another session key: %w", err)
 	}

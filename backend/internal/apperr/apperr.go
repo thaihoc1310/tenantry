@@ -19,6 +19,9 @@ const (
 	Conflict        Code = "CONFLICT"
 	// MethodNotAllowed is the router's, not a service's: the path exists but not with this method.
 	MethodNotAllowed Code = "METHOD_NOT_ALLOWED"
+	// IdempotencyKeyReused: the key came with another request before (IMPLEMENTATION-PLAN §3.4).
+	IdempotencyKeyReused Code = "IDEMPOTENCY_KEY_REUSED"
+	RateLimited          Code = "RATE_LIMITED"
 
 	// Specific conflicts the UI handles differently from a generic CONFLICT.
 	SlugTaken         Code = "SLUG_TAKEN"
