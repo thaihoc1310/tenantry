@@ -958,6 +958,88 @@ paths:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
+  /workspaces/{workspaceId}/namespaces:
+    parameters:
+      - $ref: "#/components/parameters/workspaceId"
+    get:
+      operationId: listWorkspaceNamespaces
+      summary: Namespaces of the Workspace, however created (anyone who sees the Workspace)
+      description: |
+        `source` tells a Namespace asked for on the portal from one created
+        with kubectl or Headlamp; both count against `namespaceQuota`.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceNamespaceList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createWorkspaceNamespace
+      security: [{ session: [], csrf: [] }]
+      summary: Create a Namespace (OrgOwner, OrgAdmin, or a member of a group holding TenantOwner)
+      description: |
+        The body names the suffix; the Namespace is `<org>-<workspace>-<name>`.
+        Answers 202 with the `namespace.create` operation; Developers and
+        Viewers get 403.
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkspaceNamespaceInput" }
+      responses:
+        "202":
+          description: Accepted; the cluster follows
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceNamespaceChange" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: |
+            `WORKSPACE_NOT_READY`: the Workspace is not Ready or Degraded, or an operation on it is under way.
+            `CONFLICT`: a Namespace has this name (`details.field` = `name`), or the Workspace has as
+            many Namespaces as `namespaceQuota` allows (`details.limit` = `namespaceQuota`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /workspaces/{workspaceId}/namespaces/{name}:
+    parameters:
+      - $ref: "#/components/parameters/workspaceId"
+      - name: name
+        in: path
+        required: true
+        description: The full name, e.g. `acme-solar-frontend`
+        schema: { type: string, maxLength: 63 }
+    delete:
+      operationId: deleteWorkspaceNamespace
+      security: [{ session: [], csrf: [] }]
+      summary: Delete a Namespace with everything in it (OrgOwner, OrgAdmin, or a member of a group holding TenantOwner)
+      description: Also a Namespace created with kubectl. Answers 202 with the `namespace.delete` operation.
+      responses:
+        "202":
+          description: Accepted; the cluster follows
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceNamespaceChange" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`WORKSPACE_NOT_READY`: the Workspace is not Ready or Degraded, or an operation on it is under way."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
   /operations/{operationId}:
     parameters:
       - $ref: "#/components/parameters/operationId"
@@ -2142,6 +2224,44 @@ components:
           type: array
           description: Every binding of the Workspace after the change
           items: { $ref: "#/components/schemas/WorkspaceBinding" }
+        operation: { $ref: "#/components/schemas/Operation" }
+
+    WorkspaceNamespaceInput:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name: { $ref: "#/components/schemas/NamespaceSuffix" }
+
+    WorkspaceNamespace:
+      type: object
+      required: [name, source, state, usage, createdAt]
+      properties:
+        name: { type: string, description: "The full name, `<org>-<workspace>-<suffix>`" }
+        source: { type: string, enum: [portal, kubectl] }
+        state:
+          type: string
+          enum: [Desired, Creating, Active, Deleting]
+          description: architecture/04-state-machines §9.2
+        usage:
+          type: object
+          description: What its Pods request, from its ResourceQuota (e.g. `requests.cpu`); empty until reported.
+          additionalProperties: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    WorkspaceNamespaceList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/WorkspaceNamespace" }
+
+    WorkspaceNamespaceChange:
+      type: object
+      required: [namespace, operation]
+      properties:
+        namespace: { $ref: "#/components/schemas/WorkspaceNamespace" }
         operation: { $ref: "#/components/schemas/Operation" }
 
     WorkspaceCondition:

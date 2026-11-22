@@ -62,6 +62,18 @@ func (q *Queries) BeginWorkspaceUpdate(ctx context.Context, id string) (Workspac
 	return i, err
 }
 
+const countWorkspaceNamespaces = `-- name: CountWorkspaceNamespaces :one
+SELECT count(*)::int FROM workspace_namespaces WHERE workspace_id = $1 AND state <> 'Deleted'
+`
+
+// Every Namespace of the Workspace, however created: they all count against namespace_quota.
+func (q *Queries) CountWorkspaceNamespaces(ctx context.Context, workspaceID string) (int32, error) {
+	row := q.db.QueryRow(ctx, countWorkspaceNamespaces, workspaceID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createWorkspace = `-- name: CreateWorkspace :one
 INSERT INTO workspaces (
     id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name,
@@ -256,6 +268,32 @@ func (q *Queries) GetWorkspace(ctx context.Context, id string) (Workspace, error
 		&i.ObservedGeneration,
 		&i.Conditions,
 		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getWorkspaceNamespace = `-- name: GetWorkspaceNamespace :one
+SELECT id, workspace_id, cluster_id, name, source, state, usage_snapshot, created_at, updated_at FROM workspace_namespaces WHERE workspace_id = $1 AND name = $2 AND state <> 'Deleted'
+`
+
+type GetWorkspaceNamespaceParams struct {
+	WorkspaceID string
+	Name        string
+}
+
+func (q *Queries) GetWorkspaceNamespace(ctx context.Context, arg GetWorkspaceNamespaceParams) (WorkspaceNamespace, error) {
+	row := q.db.QueryRow(ctx, getWorkspaceNamespace, arg.WorkspaceID, arg.Name)
+	var i WorkspaceNamespace
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ClusterID,
+		&i.Name,
+		&i.Source,
+		&i.State,
+		&i.UsageSnapshot,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -578,6 +616,32 @@ func (q *Queries) ResyncGroupMembers(ctx context.Context, groupIds []string) (in
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setNamespaceState = `-- name: SetNamespaceState :one
+UPDATE workspace_namespaces SET state = $2, updated_at = now() WHERE id = $1 RETURNING id, workspace_id, cluster_id, name, source, state, usage_snapshot, created_at, updated_at
+`
+
+type SetNamespaceStateParams struct {
+	ID    string
+	State string
+}
+
+func (q *Queries) SetNamespaceState(ctx context.Context, arg SetNamespaceStateParams) (WorkspaceNamespace, error) {
+	row := q.db.QueryRow(ctx, setNamespaceState, arg.ID, arg.State)
+	var i WorkspaceNamespace
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ClusterID,
+		&i.Name,
+		&i.Source,
+		&i.State,
+		&i.UsageSnapshot,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const shareLockGroups = `-- name: ShareLockGroups :many

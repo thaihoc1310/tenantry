@@ -167,3 +167,53 @@ func toBindingChange(c workspace.BindingChange) oapi.WorkspaceBindingChange {
 	}
 	return out
 }
+
+func (s server) ListWorkspaceNamespaces(ctx context.Context, req oapi.ListWorkspaceNamespacesRequestObject) (oapi.ListWorkspaceNamespacesResponseObject, error) {
+	rows, err := s.workspaces.Namespaces(ctx, userID(ctx), req.WorkspaceId)
+	if err != nil {
+		return nil, err
+	}
+	out := oapi.WorkspaceNamespaceList{Items: make([]oapi.WorkspaceNamespace, 0, len(rows))}
+	for _, n := range rows {
+		v, err := toNamespace(n)
+		if err != nil {
+			return nil, err
+		}
+		out.Items = append(out.Items, v)
+	}
+	return oapi.ListWorkspaceNamespaces200JSONResponse(out), nil
+}
+
+func (s server) CreateWorkspaceNamespace(ctx context.Context, req oapi.CreateWorkspaceNamespaceRequestObject) (oapi.CreateWorkspaceNamespaceResponseObject, error) {
+	c, err := s.workspaces.CreateNamespace(ctx, userID(ctx), req.WorkspaceId, req.Body.Name, requestID(ctx))
+	if err != nil {
+		return nil, err
+	}
+	out, err := toNamespaceChange(c)
+	return oapi.CreateWorkspaceNamespace202JSONResponse(out), err
+}
+
+func (s server) DeleteWorkspaceNamespace(ctx context.Context, req oapi.DeleteWorkspaceNamespaceRequestObject) (oapi.DeleteWorkspaceNamespaceResponseObject, error) {
+	c, err := s.workspaces.DeleteNamespace(ctx, userID(ctx), req.WorkspaceId, req.Name, requestID(ctx))
+	if err != nil {
+		return nil, err
+	}
+	out, err := toNamespaceChange(c)
+	return oapi.DeleteWorkspaceNamespace202JSONResponse(out), err
+}
+
+func toNamespace(n store.WorkspaceNamespace) (oapi.WorkspaceNamespace, error) {
+	v := oapi.WorkspaceNamespace{
+		Name: n.Name, Source: oapi.WorkspaceNamespaceSource(n.Source), State: oapi.WorkspaceNamespaceState(n.State),
+		Usage: map[string]string{}, CreatedAt: n.CreatedAt,
+	}
+	if err := json.Unmarshal(n.UsageSnapshot, &v.Usage); err != nil {
+		return v, fmt.Errorf("namespace %s usage: %w", n.Name, err)
+	}
+	return v, nil
+}
+
+func toNamespaceChange(c workspace.NamespaceChange) (oapi.WorkspaceNamespaceChange, error) {
+	n, err := toNamespace(c.Namespace)
+	return oapi.WorkspaceNamespaceChange{Namespace: n, Operation: toOperation(c.Operation)}, err
+}

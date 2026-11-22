@@ -114,7 +114,7 @@ func (s *Service) changeBinding(ctx context.Context, userID, wsID, groupID strin
 		if _, err := q.ResyncGroupMembers(ctx, []string{groupID}); err != nil {
 			return err
 		}
-		op, err := beginUpdate(ctx, q, ws, userID, correlationID)
+		op, err := beginUpdate(ctx, q, ws, "workspace.update", userID, correlationID)
 		if err != nil {
 			return err
 		}
@@ -157,13 +157,14 @@ func lockForChange(ctx context.Context, q *store.Queries, wsID string) (store.Wo
 }
 
 // beginUpdate moves a locked Workspace to its next spec version, in
-// Updating, and enqueues the new CR under a workspace.update operation.
-func beginUpdate(ctx context.Context, q *store.Queries, ws store.Workspace, actor, correlationID string) (store.Operation, error) {
+// Updating, and enqueues the new CR under an operation of type opType
+// (workspace.update, namespace.create, ...).
+func beginUpdate(ctx context.Context, q *store.Queries, ws store.Workspace, opType, actor, correlationID string) (store.Operation, error) {
 	ws, err := q.BeginWorkspaceUpdate(ctx, ws.ID)
 	if err != nil {
 		return store.Operation{}, err
 	}
-	op, err := newOperation(ctx, q, ws, "workspace.update", actor, correlationID)
+	op, err := newOperation(ctx, q, ws, opType, actor, correlationID)
 	if err != nil {
 		return op, err
 	}

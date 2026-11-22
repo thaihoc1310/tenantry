@@ -349,3 +349,100 @@ func TestWorkspaceBindings(t *testing.T) {
 		t.Fatalf("audit %+v", trail)
 	}
 }
+
+func TestWorkspaceNamespaces(t *testing.T) {
+	h, db, orgID, owner, admins, devs := workspaceOrg(t)
+	rec := createWorkspace(h, owner, "zeta", workspaceBody("solar", admins, devs, ""))
+	var created oapi.WorkspaceAccepted
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &created) != nil {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	wsID := created.Workspace.Id
+	path := "/api/v1/workspaces/" + wsID + "/namespaces"
+	create := func(token, name string) *httptest.ResponseRecorder {
+		return asAdmin(h, token, http.MethodPost, path, newKey(), `{"name":"`+name+`"}`)
+	}
+	lastCR := func() v1.PlatformWorkspace {
+		t.Helper()
+		var payload []byte
+		if err := db.QueryRow(context.Background(), `SELECT payload FROM outbox_events ORDER BY id DESC LIMIT 1`).Scan(&payload); err != nil {
+			t.Fatal(err)
+		}
+		var cr v1.PlatformWorkspace
+		if err := json.Unmarshal(payload, &cr); err != nil {
+			t.Fatal(err)
+		}
+		return cr
+	}
+
+	if rec := create(owner, "backend"); rec.Code != 409 || errorBody(t, rec).Code != oapi.WORKSPACENOTREADY {
+		t.Fatalf("while Provisioning: %d %s", rec.Code, rec.Body)
+	}
+	settle(t, db, wsID)
+	// bob is a Developer: he sees the Namespaces, he does not change them.
+	if rec := asAdmin(h, sessionOf("usr-bob"), http.MethodGet, path, "", ""); rec.Code != 200 {
+		t.Fatalf("bob lists: %d", rec.Code)
+	}
+	if rec := create(sessionOf("usr-bob"), "backend"); rec.Code != 403 {
+		t.Fatalf("Developer creates: %d %s", rec.Code, rec.Body)
+	}
+	// Once his group holds TenantOwner, he does.
+	if rec := asAdmin(h, owner, http.MethodPut, "/api/v1/workspaces/"+wsID+"/bindings/"+devs, "", `{"role":"TenantOwner"}`); rec.Code != 202 {
+		t.Fatalf("make developers owners: %d %s", rec.Code, rec.Body)
+	}
+	settle(t, db, wsID)
+	rec = create(sessionOf("usr-bob"), "backend")
+	var change oapi.WorkspaceNamespaceChange
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &change) != nil || change.Namespace.Name != "zeta-solar-backend" ||
+		change.Namespace.State != oapi.WorkspaceNamespaceStateDesired || change.Operation.Type != "namespace.create" {
+		t.Fatalf("create backend: %d %s", rec.Code, rec.Body)
+	}
+	if cr := lastCR(); !slices.Equal(cr.Spec.Namespaces, []string{"backend", "frontend"}) || cr.Annotations[workspace.AnnotationSpecVersion] != "3" {
+		t.Fatalf("CR namespaces %v at version %s", cr.Spec.Namespaces, cr.Annotations[workspace.AnnotationSpecVersion])
+	}
+	settle(t, db, wsID)
+
+	// namespaceQuota is 2, and a Namespace made with kubectl counts too.
+	if rec := create(owner, "third"); rec.Code != 409 || (*errorBody(t, rec).Details)["limit"] != "namespaceQuota" {
+		t.Fatalf("over the quota: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := db.Exec(context.Background(), `UPDATE workspaces SET namespace_quota = 4 WHERE id = $1`, wsID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(context.Background(), `INSERT INTO workspace_namespaces (id, workspace_id, cluster_id, name, source, state)
+		VALUES ('ns-kubectl', $1, 'cluster-a', 'zeta-solar-scratch', 'kubectl', 'Active')`, wsID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := create(owner, "scratch"); rec.Code != 409 || (*errorBody(t, rec).Details)["field"] != "name" {
+		t.Fatalf("name taken: %d %s", rec.Code, rec.Body)
+	}
+	if rec := create(owner, strings.Repeat("n", 42)); rec.Code != 202 {
+		t.Fatalf("a 53-character name: %d %s", rec.Code, rec.Body)
+	}
+	settle(t, db, wsID)
+	if rec := create(owner, "fifth"); rec.Code != 409 {
+		t.Fatalf("4 of 4 with the kubectl one: %d %s", rec.Code, rec.Body)
+	}
+
+	// Deleting the kubectl Namespace puts its full name in namespacesToDelete.
+	rec = asAdmin(h, owner, http.MethodDelete, path+"/zeta-solar-scratch", "", "")
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &change) != nil || change.Namespace.State != oapi.WorkspaceNamespaceStateDeleting ||
+		change.Operation.Type != "namespace.delete" {
+		t.Fatalf("delete scratch: %d %s", rec.Code, rec.Body)
+	}
+	if cr := lastCR(); !slices.Equal(cr.Spec.NamespacesToDelete, []string{"zeta-solar-scratch"}) || slices.Contains(cr.Spec.Namespaces, "scratch") {
+		t.Fatalf("CR after delete: %+v", cr.Spec)
+	}
+	settle(t, db, wsID)
+	if rec := asAdmin(h, owner, http.MethodDelete, path+"/zeta-solar-nope", "", ""); rec.Code != 404 {
+		t.Fatalf("delete unknown: %d", rec.Code)
+	}
+	var list oapi.WorkspaceNamespaceList
+	rec = asAdmin(h, owner, http.MethodGet, path, "", "")
+	if json.Unmarshal(rec.Body.Bytes(), &list) != nil || len(list.Items) != 4 {
+		t.Fatalf("list: %s", rec.Body)
+	}
+	if trail := auditTrail(t, db, "namespace.create"); len(trail) != 2 || trail[0].Org != orgID {
+		t.Fatalf("audit %+v", trail)
+	}
+}

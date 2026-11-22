@@ -1,0 +1,26 @@
+{
+  "responses": {
+    "200": {
+      "items": [
+        {
+          "name": "acme-solar-frontend",
+          "source": "portal",
+          "state": "Active",
+          "usage": {
+            "requests.cpu": "500m",
+            "requests.memory": "1Gi",
+            "pods": "4"
+          },
+          "createdAt": "2026-11-22T10:00:00Z"
+        },
+        {
+          "name": "acme-solar-scratch",
+          "source": "kubectl",
+          "state": "Active",
+          "usage": {},
+          "createdAt": "2026-11-22T10:30:00Z"
+        }
+      ]
+    }
+  }
+}

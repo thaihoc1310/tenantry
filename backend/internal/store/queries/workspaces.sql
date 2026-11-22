@@ -131,3 +131,13 @@ DELETE FROM workspace_group_bindings WHERE workspace_id = $1 AND group_id = $2;
 -- name: WorkspacesBoundTo :many
 -- Workspaces a group holds a role in.
 SELECT workspace_id FROM workspace_group_bindings WHERE group_id = $1 ORDER BY workspace_id;
+
+-- name: CountWorkspaceNamespaces :one
+-- Every Namespace of the Workspace, however created: they all count against namespace_quota.
+SELECT count(*)::int FROM workspace_namespaces WHERE workspace_id = $1 AND state <> 'Deleted';
+
+-- name: GetWorkspaceNamespace :one
+SELECT * FROM workspace_namespaces WHERE workspace_id = $1 AND name = $2 AND state <> 'Deleted';
+
+-- name: SetNamespaceState :one
+UPDATE workspace_namespaces SET state = $2, updated_at = now() WHERE id = $1 RETURNING *;

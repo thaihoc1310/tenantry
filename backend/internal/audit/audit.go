@@ -56,6 +56,8 @@ const (
 	WorkspaceCreate        = "workspace.create"
 	WorkspaceBindingUpdate = "workspace_binding.update"
 	WorkspaceBindingDelete = "workspace_binding.delete"
+	NamespaceCreate        = "namespace.create"
+	NamespaceDelete        = "namespace.delete"
 )
 
 // Results. An event written by the change it records Succeeded. A refused

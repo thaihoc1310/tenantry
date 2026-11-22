@@ -760,6 +760,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workspaces/{workspaceId}/namespaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Namespaces of the Workspace, however created (anyone who sees the Workspace)
+         * @description `source` tells a Namespace asked for on the portal from one created
+         *     with kubectl or Headlamp; both count against `namespaceQuota`.
+         */
+        get: operations["listWorkspaceNamespaces"];
+        put?: never;
+        /**
+         * Create a Namespace (OrgOwner, OrgAdmin, or a member of a group holding TenantOwner)
+         * @description The body names the suffix; the Namespace is `<org>-<workspace>-<name>`.
+         *     Answers 202 with the `namespace.create` operation; Developers and
+         *     Viewers get 403.
+         */
+        post: operations["createWorkspaceNamespace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces/{workspaceId}/namespaces/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+                /** @description The full name, e.g. `acme-solar-frontend` */
+                name: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a Namespace with everything in it (OrgOwner, OrgAdmin, or a member of a group holding TenantOwner)
+         * @description Also a Namespace created with kubectl. Answers 202 with the `namespace.delete` operation.
+         */
+        delete: operations["deleteWorkspaceNamespace"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/operations/{operationId}": {
         parameters: {
             query?: never;
@@ -1496,6 +1549,33 @@ export interface components {
             /** @description Every binding of the Workspace after the change */
             items: components["schemas"]["WorkspaceBinding"][];
             operation?: components["schemas"]["Operation"];
+        };
+        WorkspaceNamespaceInput: {
+            name: components["schemas"]["NamespaceSuffix"];
+        };
+        WorkspaceNamespace: {
+            /** @description The full name, `<org>-<workspace>-<suffix>` */
+            name: string;
+            /** @enum {string} */
+            source: "portal" | "kubectl";
+            /**
+             * @description architecture/04-state-machines §9.2
+             * @enum {string}
+             */
+            state: "Desired" | "Creating" | "Active" | "Deleting";
+            /** @description What its Pods request, from its ResourceQuota (e.g. `requests.cpu`); empty until reported. */
+            usage: {
+                [key: string]: string;
+            };
+            /** Format: date-time */
+            createdAt: string;
+        };
+        WorkspaceNamespaceList: {
+            items: components["schemas"]["WorkspaceNamespace"][];
+        };
+        WorkspaceNamespaceChange: {
+            namespace: components["schemas"]["WorkspaceNamespace"];
+            operation: components["schemas"]["Operation"];
         };
         WorkspaceCondition: {
             /** @description e.g. CapsuleTenantReady (architecture/04 §1.2) */
@@ -3457,6 +3537,122 @@ export interface operations {
              * @description `WORKSPACE_NOT_READY`: the Workspace is not Ready or Degraded, or an operation on it is under way.
              *     `LAST_OWNER_BINDING`: the group is the last TenantOwner.
              */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listWorkspaceNamespaces: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceNamespaceList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    createWorkspaceNamespace: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description A UUID the client generates once per intended change and sends again
+                 *     on every retry of it (IMPLEMENTATION-PLAN §3.4). A repeat of a request
+                 *     that succeeded gets the stored response, marked `Idempotent-Replayed:
+                 *     true`, and changes nothing. A request that failed stores nothing, so
+                 *     it can be corrected and sent again under the same key. Keys are per
+                 *     user and kept 24 hours.
+                 */
+                "Idempotency-Key"?: components["parameters"]["idempotencyKey"];
+            };
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceNamespaceInput"];
+            };
+        };
+        responses: {
+            /** @description Accepted; the cluster follows */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceNamespaceChange"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /**
+             * @description `WORKSPACE_NOT_READY`: the Workspace is not Ready or Degraded, or an operation on it is under way.
+             *     `CONFLICT`: a Namespace has this name (`details.field` = `name`), or the Workspace has as
+             *     many Namespaces as `namespaceQuota` allows (`details.limit` = `namespaceQuota`).
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            422: components["responses"]["IdempotencyKeyReused"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteWorkspaceNamespace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+                /** @description The full name, e.g. `acme-solar-frontend` */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted; the cluster follows */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceNamespaceChange"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `WORKSPACE_NOT_READY`: the Workspace is not Ready or Degraded, or an operation on it is under way. */
             409: {
                 headers: {
                     [name: string]: unknown;
