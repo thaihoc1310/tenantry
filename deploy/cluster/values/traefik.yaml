@@ -105,3 +105,20 @@ gateway:
   enabled: false
 gatewayClass:
   enabled: false
+
+# Access log of the slow and the failed only: a request answered 5xx, or
+# after more than 5 seconds (Traefik keeps a line when either filter
+# matches). The portal twice took over 30s to answer a test, and nothing
+# else told where the time went (docs/report/e2e-personas.md); every request
+# logged would cost the control-plane node for nothing. JSON on stdout, so
+# kubectl logs shows it. Query strings are dropped: the OIDC callbacks carry
+# their code and state there. Headers are dropped by default.
+accessLog:
+  enabled: true
+  format: json
+  filters:
+    statusCodes: "500-599"
+    minDuration: 5s
+  fields:
+    queryParameters:
+      defaultMode: drop
