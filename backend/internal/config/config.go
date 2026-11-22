@@ -143,3 +143,41 @@ func checkOrigin(raw string, pathAllowed bool) error {
 	}
 	return nil
 }
+
+// KeycloakSync is how the group sync worker reaches the Keycloak Admin API,
+// as the service account of the client tenantry-sync (IMPLEMENTATION-PLAN
+// §5.2). Only the groupsync loop reads it: its secret manages every user.
+type KeycloakSync struct {
+	// TENANTRY_KEYCLOAK_URL: Keycloak's base URL, in the cluster
+	// http://keycloak-http.keycloak.svc (no /realms path).
+	URL          string
+	Realm        string // TENANTRY_KEYCLOAK_REALM; default tenantry
+	ClientID     string // TENANTRY_KEYCLOAK_CLIENT_ID; default tenantry-sync
+	ClientSecret string // TENANTRY_KEYCLOAK_CLIENT_SECRET, from a Secret
+}
+
+// LoadKeycloakSync reads KeycloakSync and reports every invalid variable at once.
+func LoadKeycloakSync() (KeycloakSync, error) {
+	k := KeycloakSync{
+		URL:          strings.TrimSuffix(os.Getenv("TENANTRY_KEYCLOAK_URL"), "/"),
+		Realm:        os.Getenv("TENANTRY_KEYCLOAK_REALM"),
+		ClientID:     os.Getenv("TENANTRY_KEYCLOAK_CLIENT_ID"),
+		ClientSecret: os.Getenv("TENANTRY_KEYCLOAK_CLIENT_SECRET"),
+	}
+	var errs []error
+	// Plain http is fine: the worker talks to Keycloak's Service inside the cluster.
+	if u, err := url.Parse(k.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+		u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Contains(u.Path, "/realms") {
+		errs = append(errs, fmt.Errorf("TENANTRY_KEYCLOAK_URL=%q: want Keycloak's base URL, e.g. http://keycloak-http.keycloak.svc", k.URL))
+	}
+	if k.Realm == "" {
+		k.Realm = "tenantry"
+	}
+	if k.ClientID == "" {
+		k.ClientID = "tenantry-sync"
+	}
+	if k.ClientSecret == "" {
+		errs = append(errs, errors.New("TENANTRY_KEYCLOAK_CLIENT_SECRET is required"))
+	}
+	return k, errors.Join(errs...)
+}

@@ -59,8 +59,10 @@ run-api: ## Run the Platform API locally (secrets from DEV_SECRETS)
 	@test -f $(DEV_SECRETS) || { echo "missing $(DEV_SECRETS), see the comment above run-api in the Makefile"; exit 1; }
 	cd $(BACKEND) && set -a && . $(DEV_SECRETS) && set +a && \
 		TENANTRY_OIDC_ISSUER=$(TENANTRY_OIDC_ISSUER) TENANTRY_PUBLIC_URL=$(TENANTRY_PUBLIC_URL) go run ./cmd/tenantry-api
-run-worker: ## Run every worker loop locally (outbox events are only logged; no cluster yet)
-	cd $(BACKEND) && go run ./cmd/tenantry-worker --loops=all
+# groupsync also needs TENANTRY_KEYCLOAK_URL and TENANTRY_KEYCLOAK_CLIENT_SECRET (tenantry-sync's).
+WORKER_LOOPS ?= provisioning,housekeeping
+run-worker: ## Run the worker loops locally (outbox events are only logged; no cluster yet)
+	cd $(BACKEND) && go run ./cmd/tenantry-worker --loops=$(WORKER_LOOPS)
 
 .PHONY: e2e
 e2e: ## End-to-end tests of the portal on the lab (signs up test accounts e2e*; E2E_SLOW=1 adds the 5-minute refresh test)

@@ -4,9 +4,8 @@
 //
 //	provisioning  delivers outbox events to clusters
 //	housekeeping  deletes expired rows (PostgreSQL only)
+//	groupsync     mirrors organization groups to Keycloak (TENANTRY_KEYCLOAK_*)
 //	all           every loop; for running locally
-//
-// The group sync loop joins in M4.
 package main
 
 import (
@@ -26,10 +25,11 @@ import (
 
 	"github.com/thaihoc1310/tenantry/backend/internal/config"
 	"github.com/thaihoc1310/tenantry/backend/internal/housekeeping"
+	"github.com/thaihoc1310/tenantry/backend/internal/keycloak"
 	"github.com/thaihoc1310/tenantry/backend/internal/outbox"
 )
 
-var allLoops = []string{"provisioning", "housekeeping"}
+var allLoops = []string{"provisioning", "housekeeping", "groupsync"}
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -55,6 +55,15 @@ func run(args []string) error {
 	}
 	log := cfg.Logger()
 	slog.SetDefault(log)
+	// Only the groupsync Deployment holds the Keycloak secret.
+	var kc *keycloak.Client
+	if slices.Contains(loops, "groupsync") {
+		k, err := config.LoadKeycloakSync()
+		if err != nil {
+			return err
+		}
+		kc = keycloak.NewClient(k)
+	}
 
 	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
 	if err == nil {
@@ -79,6 +88,8 @@ func run(args []string) error {
 				outbox.NewWorker(pool, outbox.LogHandler(log), log).Run(ctx)
 			case "housekeeping":
 				housekeeping.Run(ctx, pool, log)
+			case "groupsync":
+				keycloak.NewWorker(pool, kc, log).Run(ctx)
 			}
 			log.Info("loop stopped")
 		})

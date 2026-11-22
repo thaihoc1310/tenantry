@@ -9,12 +9,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/thaihoc1310/tenantry/backend/internal/backoff"
 	"github.com/thaihoc1310/tenantry/backend/internal/operation"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
 )
@@ -60,23 +60,15 @@ const (
 	BatchSize    = 10
 	// FailAfter consecutive failures marks the operation Failed so the UI
 	// offers a retry. Delivery itself keeps going at the maximum backoff.
-	FailAfter    = 10
-	firstBackoff = time.Second
-	maxBackoff   = 5 * time.Minute
+	FailAfter = 10
 	// batchTimeout bounds one batch; on shutdown the batch in hand is finished
 	// within it rather than abandoned half-way.
 	batchTimeout = 2 * time.Minute
 )
 
 // Backoff is the wait after the given number of consecutive failures:
-// 1s, 2s, 4s, ... capped at 5 minutes.
-func Backoff(failures int32) time.Duration {
-	if failures < 1 {
-		return 0
-	}
-	d := firstBackoff * time.Duration(math.Pow(2, float64(min(failures-1, 30))))
-	return min(d, maxBackoff)
-}
+// 1s, 2s, 4s, ... capped at 5 minutes, the schedule all worker loops share.
+func Backoff(failures int32) time.Duration { return backoff.After(failures) }
 
 type Worker struct {
 	db      *pgxpool.Pool

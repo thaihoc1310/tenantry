@@ -130,3 +130,25 @@ func TestLoadAuthRejects(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadKeycloakSync(t *testing.T) {
+	t.Setenv("TENANTRY_KEYCLOAK_URL", "http://keycloak-http.keycloak.svc/")
+	t.Setenv("TENANTRY_KEYCLOAK_REALM", "")
+	t.Setenv("TENANTRY_KEYCLOAK_CLIENT_ID", "")
+	t.Setenv("TENANTRY_KEYCLOAK_CLIENT_SECRET", "s3cret")
+	k, err := config.LoadKeycloakSync()
+	if err != nil || k.URL != "http://keycloak-http.keycloak.svc" || k.Realm != "tenantry" || k.ClientID != "tenantry-sync" {
+		t.Fatalf("got %+v, %v", k, err)
+	}
+	for _, bad := range []string{"", "keycloak-http", "ftp://keycloak", "https://auth.tenantry.site/realms/tenantry"} {
+		t.Setenv("TENANTRY_KEYCLOAK_URL", bad)
+		if _, err := config.LoadKeycloakSync(); err == nil {
+			t.Errorf("URL %q accepted", bad)
+		}
+	}
+	t.Setenv("TENANTRY_KEYCLOAK_URL", "http://keycloak")
+	t.Setenv("TENANTRY_KEYCLOAK_CLIENT_SECRET", "")
+	if _, err := config.LoadKeycloakSync(); err == nil {
+		t.Error("missing client secret accepted")
+	}
+}

@@ -7,7 +7,8 @@ import (
 
 func TestParseLoops(t *testing.T) {
 	for in, want := range map[string]string{
-		"all":                       "provisioning,housekeeping",
+		"all":                       "provisioning,housekeeping,groupsync",
+		"groupsync":                 "groupsync",
 		"housekeeping":              "housekeeping",
 		"provisioning,housekeeping": "provisioning,housekeeping",
 		" housekeeping , provisioning ,housekeeping": "housekeeping,provisioning",
@@ -17,7 +18,7 @@ func TestParseLoops(t *testing.T) {
 			t.Errorf("parseLoops(%q) = %v, %v; want %s", in, got, err, want)
 		}
 	}
-	for _, in := range []string{"", " ", "groupsync", "housekeeping,", "all,housekeeping", "Housekeeping"} {
+	for _, in := range []string{"", " ", "keycloak", "housekeeping,", "all,housekeeping", "Housekeeping"} {
 		if got, err := parseLoops(in); err == nil {
 			t.Errorf("parseLoops(%q) = %v, want an error", in, got)
 		}
