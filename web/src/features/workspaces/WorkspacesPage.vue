@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // An Organization's Workspaces (docs/design/mockups: Workspaces): the
 // OrgOwner and OrgAdmins see every one, an OrgMember those a group of theirs
-// is bound to (architecture/06 §8). Creating one is the wizard's (M10).
+// is bound to (architecture/06 §8). The OrgOwner and OrgAdmins create one
+// with the wizard (WizardPage).
 import { computed } from 'vue'
 import { cores, gib } from '@/api/units'
 import AppShell from '@/app/AppShell.vue'
@@ -17,17 +18,35 @@ const props = defineProps<{ orgSlug: string }>()
 const org = useOrganization(() => props.orgSlug)
 const active = computed(() => org.data.value?.status === 'Active')
 const list = useWorkspaces(() => props.orgSlug, active)
+const manages = computed(() => ['OrgOwner', 'OrgAdmin'].includes(org.data.value?.myRole ?? ''))
+const wizard = computed(() => `/orgs/${props.orgSlug}/workspaces/new`)
 </script>
 
 <template>
   <AppShell active="workspaces" :org-slug="orgSlug">
-    <PageHeader title="Workspaces" description="Each Workspace is an isolated part of a cluster with its own quota." />
+    <PageHeader title="Workspaces" description="Each Workspace is an isolated part of a cluster with its own quota.">
+      <template #actions>
+        <el-button v-if="manages && active" type="primary" @click="$router.push(wizard)"
+          ><el-icon><Plus /></el-icon>&nbsp;Create Workspace</el-button
+        >
+      </template>
+    </PageHeader>
     <ErrorState v-if="list.isError.value" :error="list.error.value" @retry="list.refetch()" />
     <el-skeleton v-else-if="list.isPending.value" :rows="5" animated />
     <TPanel v-else-if="!list.data.value?.length">
       <EmptyState
-        title="No Workspace you can reach yet"
-        description="Workspaces you or your groups have a role in appear here."
+        v-if="manages"
+        title="No Workspaces yet"
+        description="A Workspace is an isolated part of the cluster with its own quota, network and members."
+      >
+        <template #actions>
+          <el-button type="primary" @click="$router.push(wizard)">Create your first Workspace</el-button>
+        </template>
+      </EmptyState>
+      <EmptyState
+        v-else
+        title="No Workspace is shared with you yet"
+        description="You see a Workspace once one of your groups gets a role in it. Ask an owner or admin of the Organization."
       />
     </TPanel>
     <TPanel v-else flush>

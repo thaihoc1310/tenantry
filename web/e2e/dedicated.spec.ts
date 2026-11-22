@@ -100,6 +100,26 @@ test('Dedicated Workspaces share a node without overbooking it', async ({ browse
     expect(third.status).toBe(409)
     expect(third.body.code).toBe('DEDICATED_NODE_INSUFFICIENT_CAPACITY')
 
+    // The wizard says so on the Resources step and goes no further (M10).
+    await page.goto(`/orgs/${slug}/workspaces/new`)
+    await page.locator('#w-name').fill('Earth')
+    await page.getByRole('button', { name: 'Continue' }).click()
+    await page.getByRole('button', { name: /Dedicated node/ }).click()
+    const card = page.getByRole('button', { name: new RegExp(node) })
+    await expect(card).toHaveAttribute('aria-pressed', 'true')
+    await expect(card).toContainText('0.5 of 2.5 cores left')
+    await expect(card).toContainText('Also used by')
+    await page.getByRole('button', { name: 'Continue' }).click()
+    await expect(page.getByText('Same as requests on a dedicated node.').first()).toBeVisible()
+    await page.getByRole('button', { name: 'Continue' }).click()
+    await expect(
+      page.getByText(`Only 0.5 cores left on node ${node}. (DEDICATED_NODE_INSUFFICIENT_CAPACITY)`),
+    ).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Resources' })).toBeVisible()
+    await page.screenshot({ path: test.info().outputPath('wizard-dedicated-full.png'), fullPage: true })
+    await page.locator('.t-wstep', { hasText: 'Review' }).click()
+    await expect(page.getByRole('heading', { name: 'Resources' })).toBeVisible()
+
     // Water's Pod lands on wk3; one naming wk2 does not run there.
     const ns = `${slug}-water-app`
     const asOwner = [

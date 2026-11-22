@@ -16,6 +16,11 @@ export const router = createRouter({
       props: true,
     },
     {
+      path: '/orgs/:orgSlug/workspaces/new',
+      component: () => import('@/features/workspaces/WizardPage.vue'),
+      props: true,
+    },
+    {
       path: '/orgs/:orgSlug/workspaces/:wsSlug',
       component: () => import('@/features/workspaces/WorkspacePage.vue'),
       props: true,

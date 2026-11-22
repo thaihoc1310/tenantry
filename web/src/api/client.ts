@@ -17,6 +17,7 @@ export class ApiError extends Error {
     message: string,
     readonly requestId = '',
     readonly field = '',
+    readonly details: Record<string, unknown> = {},
   ) {
     super(message)
   }
@@ -62,7 +63,14 @@ export async function unwrap<T>(call: Promise<{ data?: T; error?: unknown; respo
   if (r.response.ok) return r.data as T
   const e = r.error as Partial<Schemas['ErrorResponse']> | undefined
   const field = typeof e?.details?.field === 'string' ? e.details.field : ''
-  throw new ApiError(r.response.status, e?.code ?? 'INTERNAL', e?.message ?? r.response.statusText, e?.requestId, field)
+  throw new ApiError(
+    r.response.status,
+    e?.code ?? 'INTERNAL',
+    e?.message ?? r.response.statusText,
+    e?.requestId,
+    field,
+    e?.details ?? {},
+  )
 }
 
 // A new key per form opening: a repeated click or a flaky network then

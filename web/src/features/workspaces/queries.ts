@@ -1,7 +1,7 @@
 // Every call the Workspace screens make (IMPLEMENTATION-PLAN §6.2).
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { computed, onScopeDispose, ref, type MaybeRefOrGetter, toValue, watch } from 'vue'
-import { api, unwrap, type Schemas } from '@/api/client'
+import { api, idempotencyKey, unwrap, type Schemas } from '@/api/client'
 
 export type Workspace = Schemas['Workspace']
 export type Operation = Schemas['Operation']
@@ -115,6 +115,27 @@ function useWorkspaceChange<V, R>(call: (v: V) => Promise<R>) {
           qc.invalidateQueries({ queryKey: [k] }),
         ),
       ),
+  })
+}
+
+// The wizard's check of the whole form (POST .../workspaces:validate).
+export function validateWorkspace(org: string, body: Schemas['WorkspaceCreate']) {
+  return unwrap(api.POST('/organizations/{orgId}/workspaces:validate', { params: { path: { orgId: org } }, body }))
+}
+
+// useCreateWorkspace: one Idempotency-Key per wizard, so a double click or a
+// retry after a lost answer creates one Workspace; a new key after success.
+export function useCreateWorkspace(org: MaybeRefOrGetter<string>) {
+  let key = idempotencyKey()
+  return useWorkspaceChange(async (body: Schemas['WorkspaceCreate']) => {
+    const r = await unwrap(
+      api.POST('/organizations/{orgId}/workspaces', {
+        params: { path: { orgId: toValue(org) }, header: { 'Idempotency-Key': key } },
+        body,
+      }),
+    )
+    key = idempotencyKey()
+    return r
   })
 }
 

@@ -15,6 +15,7 @@ import QuotaMeter from '@/components/QuotaMeter.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import TPanel from '@/components/TPanel.vue'
 import { useTransfer } from '@/features/people/queries'
+import { useWorkspaces } from '@/features/workspaces/queries'
 import { useMe, useOrganization, useUsage } from './queries'
 
 const props = defineProps<{ orgSlug: string }>()
@@ -76,7 +77,19 @@ const startingQuota = computed(() => {
   if (!g) return ''
   return `${g.workspaces.limit} Workspaces, ${cores(g.requestsCpu.limit)} CPU cores and ${gib(g.requestsMemory.limit)} Gi of memory`
 })
-const noWorkspacesYet = 'Creating Workspaces arrives with the next release of the portal.'
+// Why a new Workspace cannot be created now; '' when it can.
+const why = computed(() => {
+  const o = usage.data.value?.organization.workspaces
+  if (o && o.used >= o.limit) return 'This Organization has as many Workspaces as its limit allows.'
+  if (grant.value && grant.value.workspaces.remaining <= 0)
+    return `This Organization has used all of its Workspaces on ${grant.value.clusterId}.`
+  return ''
+})
+const workspaces = useWorkspaces(
+  () => props.orgSlug,
+  () => readsQuota.value && !fresh.value,
+)
+const wizard = computed(() => `/orgs/${props.orgSlug}/workspaces/new`)
 </script>
 
 <template>
@@ -93,9 +106,9 @@ const noWorkspacesYet = 'Creating Workspaces arrives with the next release of th
           >
         </template>
         <template #actions>
-          <el-tooltip :content="noWorkspacesYet" placement="bottom-end">
+          <el-tooltip v-if="readsQuota" :content="why" :disabled="!why" placement="bottom-end">
             <span
-              ><el-button type="primary" disabled
+              ><el-button type="primary" :disabled="!!why" @click="router.push(wizard)"
                 ><el-icon><Plus /></el-icon>&nbsp;Create Workspace</el-button
               ></span
             >
@@ -142,15 +155,51 @@ const noWorkspacesYet = 'Creating Workspaces arrives with the next release of th
             </div>
           </TPanel>
 
-          <TPanel>
+          <TPanel v-if="!fresh" title="Workspaces" flush>
+            <template #extra
+              ><RouterLink :to="`/orgs/${orgSlug}/workspaces`" class="small">All Workspaces</RouterLink></template
+            >
+            <div class="t-tablewrap">
+              <el-table :data="workspaces.data.value ?? []" style="width: 100%">
+                <el-table-column label="Workspace" min-width="150"
+                  ><template #default="{ row }"
+                    ><RouterLink :to="`/orgs/${orgSlug}/workspaces/${row.slug}`"
+                      ><strong>{{ row.displayName }}</strong></RouterLink
+                    >
+                    <div class="muted mono">{{ row.k8sName }}</div></template
+                  ></el-table-column
+                >
+                <el-table-column label="State" width="150"
+                  ><template #default="{ row }"><StatusTag :value="row.state" /></template
+                ></el-table-column>
+                <el-table-column label="Compute" min-width="200"
+                  ><template #default="{ row }"
+                    >{{ row.compute.mode }} <span class="muted">on</span>
+                    <code>{{ row.compute.sharedPoolId ?? row.compute.dedicatedNodeGrantId }}</code></template
+                  ></el-table-column
+                >
+                <el-table-column label="CPU req." width="100" align="right"
+                  ><template #default="{ row }"
+                    ><span class="num">{{ cores(row.resources.requestsCpu) }}</span></template
+                  ></el-table-column
+                >
+                <el-table-column label="Memory req." width="120" align="right"
+                  ><template #default="{ row }"
+                    ><span class="num">{{ gib(row.resources.requestsMemory) }} Gi</span></template
+                  ></el-table-column
+                >
+              </el-table>
+            </div>
+          </TPanel>
+          <TPanel v-else>
             <EmptyState
               title="No Workspaces yet"
               description="A Workspace is an isolated part of the cluster with its own quota, network and members. Creating one takes about a minute and gives you a kubeconfig and a web console link."
             >
               <template #actions>
-                <el-tooltip :content="noWorkspacesYet">
-                  <span><el-button type="primary" disabled>Create your first Workspace</el-button></span>
-                </el-tooltip>
+                <el-button type="primary" :disabled="!!why" @click="router.push(wizard)"
+                  >Create your first Workspace</el-button
+                >
               </template>
             </EmptyState>
           </TPanel>

@@ -100,3 +100,12 @@ export const useOrgNetworkPools = (org: MaybeRefOrGetter<string>, cluster: Maybe
       api.GET('/organizations/{orgId}/clusters/{clusterId}/network-pools', { params: { path: { orgId, clusterId } } }),
     ),
   )
+
+export const useOrgComputeOptions = (org: MaybeRefOrGetter<string>, cluster: MaybeRefOrGetter<string>) =>
+  useClusterPart(org, cluster, 'compute-options', (orgId, clusterId) =>
+    unwrap(
+      api.GET('/organizations/{orgId}/clusters/{clusterId}/compute-options', {
+        params: { path: { orgId, clusterId } },
+      }),
+    ),
+  )
