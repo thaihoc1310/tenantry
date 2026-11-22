@@ -146,7 +146,8 @@ flowchart TB
   subgraph SYS["system pool — label tenantry.io/compute-pool=system, taint NoSchedule cho tenant"]
     NS1["ns tenantry-system<br/>Portal, API, Provisioning Worker,<br/>Group Sync Worker, PostgreSQL"]:::ns
     NS2["ns keycloak<br/>Keycloak (database riêng trên<br/>cùng instance PostgreSQL),<br/>Mailpit (hộp thư giả cho thư xác minh)"]:::ns
-    NS3["ns capsule-system<br/>Capsule, Capsule Proxy,<br/>Workspace Controller"]:::ns
+    NS3["ns capsule-system<br/>Capsule, Capsule Proxy"]:::ns
+    NS6["ns tenantry-operator<br/>Workspace Controller (chỉ nó)"]:::ns
     NS4["ns headlamp-system<br/>Headlamp"]:::ns
     NS5["cert-manager, monitoring;<br/>csi-driver-nfs ở kube-system"]:::ns
   end
@@ -301,5 +302,5 @@ flowchart TB
 
 - Controller **không** biết gì về quota của ClusterGrant hay capacity node: những invariant đó đã được API kiểm tra trước khi CR tồn tại. Controller chỉ render. Nếu thấy controller cần truy vấn DB thì thiết kế đang lệch.
 - `namespaces` phải phân biệt Namespace do portal khai báo (`spec.namespaces`) và do kubectl tạo (chỉ observed) để không xóa nhầm Namespace của user khi họ xóa khỏi portal list.
-- ServiceAccount của operator nằm trong Capsule `users` (group `system:serviceaccounts:<namespace của operator>`) và được render làm owner của mọi Tenant, nhờ vậy tạo được Namespace của `spec.namespaces` qua webhook Capsule. Đã chạy trên Capsule 0.13 của lab cũ; kiểm lại trên 0.15.x ở M6.
+- ServiceAccount của operator nằm trong Capsule `users` (group `system:serviceaccounts:tenantry-operator`, namespace riêng chỉ có operator) và được render làm owner của mọi Tenant, nhờ vậy tạo được Namespace của `spec.namespaces` qua webhook Capsule. Đã chạy trên Capsule 0.13 của lab cũ; kiểm lại trên 0.15.x ở M6.
 - Label/taint **cấp Organization** trên node (`tenantry.io/dedicated-org`) phải có từ lúc Admin grant node, trước khi có Workspace nào — nên không thể nằm trong `PlatformWorkspace`. Vì vậy có CRD phụ `PlatformNodeGrant`: operator kiểm node sạch, reconcile label/taint và báo `allocatable` về status (`03-flows.md` mục 2b). Label `tenantry.io/compute-pool=<pool-id>` của shared pool do `PlatformSharedPool` gắn/gỡ theo `spec.nodes`; `PlatformNodeInventory` báo danh sách node (IMPLEMENTATION-PLAN mục 4.5). Sub-reconciler `compute` của `PlatformWorkspace` chỉ thêm/gỡ membership label per Workspace.

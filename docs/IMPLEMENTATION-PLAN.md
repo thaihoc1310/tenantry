@@ -228,6 +228,8 @@ COMMIT;
 
 Tên Namespace: `spec.namespaces` và body tạo giữ **hậu tố** (`frontend`); `spec.namespacesToDelete`, `status.namespaces`, `spec.routes[].namespace`, `workspace_namespaces.name` và `{name}` trong path API giữ **tên đầy đủ** (`acme-solar-frontend`).
 
+Capsule 0.15.2: các field M6 render (`namespaceOptions.additionalMetadata`, `namespaceOptions.forbiddenAnnotations`, `serviceOptions`, `containerRegistries`, `limitRanges`, `networkPolicies`, `resourceQuotas`) đã deprecated nhưng vẫn chạy (webhook chỉ trả Warning; đã kiểm trên lab). Bản thay thế là `spec.rules[]` (`enforce`, `permissions`, `quota`). M6 dùng các field cũ đã kiểm; việc chuyển sang `rules` quyết định ở đầu M7 cùng với quota (mục M7 bước 2).
+
 `ClusterGrantValid`, `ClusterReady` (từ M6), `ResourcesReserved` (M7), `DedicatedNodeCapacityReserved` (M8) là condition **phía API/DB**, ghi vào `workspaces.conditions` cùng các condition chép từ CR; controller không biết grant.
 
 Condition đến theo milestone: M6 `CapsuleTenantReady`, `IdentityBindingsReady`; M7 `PolicyReady`, `ResourcesReserved`; M8 `ComputeReady`, `DedicatedNodeCapacityReserved`; M9 `NetworkReady`; M11 `ProxyAccessReady`. Condition của phần chưa làm thì không được đặt và không bắt buộc để vào `Ready`.
@@ -249,7 +251,7 @@ Finalizer `tenantry.io/workspace` làm phần trong Cluster của delete (spec �
 2. bỏ `cordoned` trên Tenant: ở lab cũ, Capsule cordon chặn cả ghi của controller (kiểm lại trên 0.15.x ở M6);
 3. xóa Namespace của Tenant (cả portal và kubectl) → đợi biến mất (PVC và Pod mất theo Namespace); quá ngưỡng 10 phút → condition `Deleting=False, reason=BlockedByFinalizer` kèm tên object; worker map thành Operation `Blocked`;
 4. xóa tường minh TenantResource, Tenant → đợi biến mất;
-5. IPPool (từ M9): đợi không còn `WorkloadEndpoint` và không còn địa chỉ đang cấp trong CIDR → xóa IPPool qua API `projectcalico.org/v3` (để Calico nhả block affinity) → đợi `IPAMBlock` của CIDR biến mất (kiểm trên lab); Lab hiện chỉ có `crd.projectcalico.org/v1` (Calico 3.32 cài bằng tigera-operator, chưa bật Calico API server); đầu M9 phải chọn: bật `APIServer` của tigera-operator (thay đổi cấp cụm, hỏi trước) hay xóa qua CRD rồi tự dọn `blockaffinities`, và ghi lựa chọn vào đây.
+5. IPPool (từ M9): đợi không còn `WorkloadEndpoint` và không còn địa chỉ đang cấp trong CIDR → xóa IPPool qua API `projectcalico.org/v3` (để Calico nhả block affinity) → đợi `IPAMBlock` của CIDR biến mất (kiểm trên lab); Lab có Calico API server (`v3.projectcalico.org`, Service `calico-system/calico-api`), nên xóa qua `projectcalico.org/v3` được.
 6. Dedicated (từ M8): gỡ membership label `workspaces.tenantry.io/<ws-id>` khỏi node (giữ org label/taint);
 7. gỡ finalizer. Worker xóa CR với propagation `Background`; thấy CR mất thì trong một transaction: reservation `Released`, CIDR `Quarantined` (từ M9), Workspace `Deleted`.
 
@@ -564,7 +566,7 @@ Trong một feature: trang (`*Page.vue`), component riêng của feature, và m�
 - **Mục tiêu**: outbox → CR → Capsule Tenant Ready; Namespace từ portal xuất hiện trong cluster.
 - **Công việc**:
   1. kubebuilder scaffold `operator/` (module Go riêng, mục 2.1), types `PlatformWorkspace` theo §14.2 và ba CRD phụ, cả bốn cluster-scoped. CRD phụ (mục 4.5): `PlatformNodeInventory` báo danh sách node; `PlatformSharedPool` gắn/gỡ label pool theo `spec.nodes` và báo `allocatable`; `PlatformNodeGrant` chỉ báo `allocatable` (kiểm node, gắn label/taint ở M8). Từ đây `deploy/cluster/10-nodes.sh` thôi gắn label `shared-general`. CRD gen, chart `tenantry-operator`: RBAC operator đúng bảng ở `architecture/06-security-and-identity.md` mục 7, object `PlatformNodeInventory` duy nhất của cụm.
-  2. Capsule users thêm group `system:serviceaccounts:<namespace của operator>` (`deploy/cluster/values/capsule.yaml`) và ServiceAccount của operator là owner của mọi Tenant, để operator tạo được Namespace của `spec.namespaces`. Lab cũ đã kiểm trên Capsule 0.13.10; kiểm lại trên 0.15.x.
+  2. Capsule users thêm group `system:serviceaccounts:tenantry-operator` (`deploy/cluster/values/capsule.yaml`) và ServiceAccount của operator là owner của mọi Tenant, để operator tạo được Namespace của `spec.namespaces`. Lab cũ đã kiểm trên Capsule 0.13.10; kiểm lại trên 0.15.x.
   3. ClusterRole `tenantry:tenant-developer`, `tenantry:tenant-viewer` (spec §10.5) trong chart, permission matrix `kubectl auth can-i` test.
   4. `render/` + sub-reconciler `tenant`, `namespaces`, `rbac`; conditions `CapsuleTenantReady`, `IdentityBindingsReady`; `status.namespaces` observation.
   5. Finalizer khung (mục 4.3 bước 1–4 và 7), chưa network/node.
@@ -584,7 +586,7 @@ Trong một feature: trang (`*Page.vue`), component riêng của feature, và m�
 - **Mục tiêu**: dynamic Workspace resource enforcement; state machine đầy đủ create/update/cordon/delete.
 - **Công việc**:
   1. Transaction reservation mục 3.2 cho ClusterGrant (chưa node/CIDR), kể cả `maxWorkspacesTotal` dưới lock entitlement; vượt grant trả `CLUSTER_GRANT_QUOTA_EXCEEDED` kèm `details.resource/limit/allocated/requested`, vượt entitlement trả `ENTITLEMENT_EXCEEDED`; condition `ResourcesReserved`. Guard sửa grant của spec §5.5 cần tổng Workspace: không giảm dưới allocation (`CLUSTER_GRANT_BELOW_ALLOCATION`), không xóa grant còn Workspace.
-  2. Sub-reconciler `policy` (mục 4.1): quota chung `Tenant.spec.resourceQuotas` scope `Tenant` (spec §5.4), LimitRange, object-count quota, Pod Security label; `PolicyReady`. Việc đầu tiên của M7: kiểm trên Capsule 0.15.x của lab rằng `scope: Tenant` còn chạy và đo độ vượt khi tạo Pod đồng thời ở hai Namespace; nếu không chạy, chuyển sang ResourcePool chia đều theo `namespaceQuota` (spec §5.4).
+  2. Sub-reconciler `policy` (mục 4.1): quota chung `Tenant.spec.resourceQuotas` scope `Tenant` (spec §5.4), LimitRange, object-count quota, Pod Security label; `PolicyReady`. Việc đầu tiên của M7: đo trên lab cả `spec.resourceQuotas` scope `Tenant` (deprecated ở 0.15) lẫn `spec.rules[].quota[]` khi tạo Pod đồng thời ở hai Namespace, chọn cách theo spec §5.4. Nếu chọn `rules`, chuyển luôn các field deprecated còn lại của Tenant sang `spec.rules[]` trong M7 (chỉ đổi phía operator, không đổi hợp đồng CR).
   3. Update: PATCH resources (chặn giảm dưới usage — đọc `status.usage` của CR), namespaceQuota, display name; `Ready → Updating → Ready`. PATCH, DELETE, cordon khi Workspace đang có Operation `Pending`/`Running`/`Blocked` trả `409 WORKSPACE_NOT_READY`.
   4. `POST /workspaces/{id}:cordon` và `:uncordon` (OrgOwner/OrgAdmin): CR `spec.cordoned` → `Tenant.spec.cordoned`; Operation `workspace.cordon`/`workspace.uncordon`; Workspace thành `Cordoned` khi Operation `Succeeded`.
   5. Delete workflow đầy đủ phía API + finalizer (mục 4.3) trừ network/node; confirm gõ tên; `Blocked` + `:force` admin; `:retry` nhận `Failed` và `Blocked` (mục 5.1). Trước M9 Workspace không có CIDR: delete bỏ qua Quarantine, `k8s_name` dùng lại được ngay khi Workspace `Deleted` và row bị xóa hẳn (mục 5.3).
@@ -842,7 +844,7 @@ Thêm theo milestone: `run-operator` và controller-gen trong `generate` (M6), `
 
 | # | Rủi ro | Tác động | Giảm thiểu | Nổi lên ở |
 |---|---|---|---|---|
-| 1 | Capsule 0.15.x schema/hành vi (quota scope `Tenant`, `forceTenantPrefix`) khác giả định | Render sai, rework controller | Pin version trong chart; spike trên lab trước M6; golden test theo version | M6–M7 |
+| 1 | Capsule 0.15.x schema/hành vi (quota scope `Tenant`, `forceTenantPrefix`) khác giả định; nhiều field của Tenant đã deprecated, thay bằng `spec.rules[]` | Render sai, rework controller | Pin version trong chart; spike trên lab trước M6; golden test theo version | M6–M7 |
 | 2 | Controller phức tạp vượt sức một người | Trễ M6 kéo mọi thứ sau | Render tách apply; sub-reconciler nhỏ; envtest; làm tenant/namespaces/rbac trước, network/compute sau | M6 |
 | 3 | Keycloak Admin API lag/rate limit, group claim chỉ có ở token mới | Create Workspace bị `GROUP_SYNC_PENDING`, demo revoke gây hiểu nhầm | Sync worker retry + hiển thị `sync_status`; TTL token 5 phút; ghi contract revoke rõ trên UI | M4, M11 |
 | 4 | Phụ thuộc admission `PodNodeSelector` và `PodTolerationRestriction` của kubeadm | Placement không enforce nếu plugin tắt | Test bắt buộc kiểm tra plugin bật (trong `cluster-verify`); kubelet kiểm lại nodeSelector nên `nodeName` không vượt pool; VAP chặn `nodeName` chỉ là hardening | M8 |

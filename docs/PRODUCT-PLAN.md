@@ -470,7 +470,7 @@ Controller trong Cluster render thành:
 - object-count ResourceQuota nếu cần;
 - Capsule Namespace quota (`namespaceQuota`).
 
-Giới hạn đã biết của quota chung: Capsule chỉnh `hard` bằng controller chứ không chặn ở webhook, nên Pod tạo **đồng thời** ở hai Namespace có thể cùng lọt và tổng vượt trần một chút (Capsule tự ghi nhận điều này). Với Shared, đó vẫn nằm trong tinh thần soft allocation. Với Dedicated, phần vượt có thể lấn vào capacity đã giữ cho Workspace khác trên cùng node (kube-scheduler vẫn không xếp quá allocatable của node); ghi vào known limitations của luận văn. Capsule gọi cơ chế này là cách cũ và khuyến nghị ResourcePool/ResourcePoolClaim, nhưng claim chia trước theo Namespace và không sửa được khi đang dùng. M7 phải kiểm trên Capsule 0.15.x của lab rằng `scope: Tenant` còn chạy; nếu không, phương án dự phòng là ResourcePool chia đều theo `namespaceQuota` (cách lab cũ đã chạy).
+Giới hạn của `spec.resourceQuotas` scope `Tenant`: Capsule chỉnh `hard` bằng controller chứ không chặn ở webhook, nên Pod tạo **đồng thời** ở hai Namespace có thể cùng lọt và tổng vượt trần một chút (Capsule tự ghi nhận điều này). Với Shared, đó vẫn nằm trong tinh thần soft allocation. Với Dedicated, phần vượt có thể lấn vào capacity đã giữ cho Workspace khác trên cùng node (kube-scheduler vẫn không xếp quá allocatable của node); ghi vào known limitations của luận văn. Trên Capsule 0.15.2 của lab (đã thử ở M6), `spec.resourceQuotas` vẫn chạy nhưng đã deprecated. Bản thay thế là `spec.rules[].quota[]`: một ResourceQuota chung cho mọi Namespace mà rule chọn, Capsule sinh `GlobalResourceQuota` và ghi sổ (`quantityledgers`) trước lúc admission, nên có thể hết hẳn độ vượt nói trên. Đầu M7 đo cả hai cách trên lab: chọn `rules[].quota` nếu nó chặn đúng khi tạo Pod đồng thời, khi đó giới hạn vượt trần ở trên không còn; nếu cả hai đều không dùng được thì dự phòng là ResourcePool chia đều theo `namespaceQuota` (cách lab cũ đã chạy). Cách nào thì vẫn là một quota chung cho cả Workspace.
 
 Không cho giảm quota xuống dưới usage/reservation hiện tại. Với Dedicated mode, allocation cũng không được vượt remaining reservable capacity của node đã chọn. Phía Admin, giảm ClusterGrant theo quy tắc ở 5.5.
 
@@ -948,7 +948,7 @@ PostgreSQL là source of truth cho Organization group. Một sync worker dùng K
 
 Ngoài Organization group, worker quản lý một platform group `tenantry:tenant-users`. User có ít nhất một Workspace binding (qua một group còn sống, tới một Workspace chưa `Deleting`/`Deleted`) được thêm vào group này; khi mất binding cuối cùng thì bị remove. Membership của group này được tính lại cả khi **binding** đổi, không chỉ khi membership đổi: mọi transaction thay đổi tập binding (tạo/xóa Workspace, `PUT`/`DELETE` binding, xóa group) đặt `sync_status = 'Pending'` cho mọi `group_members` còn sống của các group bị ảnh hưởng, để Group Sync tính lại cho từng user. Sau prefix của Kubernetes, Capsule nhận diện group là `oidc:tenantry:tenant-users`. Đây là bản động của group `projectcapsule.dev` đang được hard-code trong lab.
 
-Capsule user gồm đúng hai subject: group `oidc:tenantry:tenant-users` (người dùng) và group ServiceAccount của operator (`system:serviceaccounts:<namespace của operator>`). ServiceAccount của operator được render làm owner của mọi Tenant để tạo được các Namespace trong `spec.namespaces` — Capsule chỉ cho owner đồng thời là Capsule user tạo Namespace của Tenant (đã kiểm chứng trên Capsule 0.13.10 ở lab cũ, kiểm lại với 0.15.x ở M6). Quyền của người dùng vẫn đến từ Owner group của Workspace; platform group này không tự cấp quyền vào bất kỳ Tenant nào.
+Capsule user gồm đúng hai subject: group `oidc:tenantry:tenant-users` (người dùng) và group ServiceAccount của operator (`system:serviceaccounts:tenantry-operator`; namespace `tenantry-operator` chỉ chứa operator, vì mọi ServiceAccount trong đó đều thành Capsule user). ServiceAccount của operator được render làm owner của mọi Tenant để tạo được các Namespace trong `spec.namespaces` — Capsule chỉ cho owner đồng thời là Capsule user tạo Namespace của Tenant (đã kiểm chứng trên Capsule 0.13.10 ở lab cũ, kiểm lại với 0.15.x ở M6). Quyền của người dùng vẫn đến từ Owner group của Workspace; platform group này không tự cấp quyền vào bất kỳ Tenant nào.
 
 Group claim chỉ có hiệu lực với token mới. Kubernetes tự kiểm tra JWT signature/expiry và không gọi ngược Keycloak cho từng request, vì vậy gỡ group trên Keycloak **không vô hiệu ngay token đã phát hành**. Contract thu hồi quyền:
 
@@ -1318,7 +1318,7 @@ status:
     - {name: acme-solar-backend, source: portal, usage: {requests.cpu: 300m, requests.memory: 512Mi, pods: 2}}
     - {name: acme-solar-scratch, source: kubectl, usage: {}}
   routes:
-    - {name: web, namespace: acme-solar-frontend, ready: true}
+    - {name: web, namespace: acme-solar-frontend, ready: true, message: ""}   # message: lý do khi ready=false, portal hiện nguyên văn
 ```
 
 Customer không được truy cập CRD này. `PlatformWorkspace` là resource cluster-scoped. Quy ước tên Namespace: `spec.namespaces` và body tạo Workspace/Namespace chỉ chứa hậu tố (`frontend`); `namespacesToDelete`, `status.namespaces`, `routes[].namespace`, cột `workspace_namespaces.name` và `{name}` trong đường dẫn API dùng tên đầy đủ (`acme-solar-frontend`).
@@ -1630,7 +1630,7 @@ Không silently force-delete PVC/finalizer từ phía user.
 | Platform object | Kubernetes/Capsule output | Từ |
 |---|---|---|
 | Workspace | Capsule Tenant | M6 |
-| Capsule users | CapsuleConfiguration `users` = group `oidc:tenantry:tenant-users` + group `system:serviceaccounts:<namespace của operator>` | M6 |
+| Capsule users | CapsuleConfiguration `users` = group `oidc:tenantry:tenant-users` + group `system:serviceaccounts:tenantry-operator` | M6 |
 | Owner binding | Capsule owner group/TenantOwner mapping; ServiceAccount của operator cũng là owner của mọi Tenant để tạo được Namespace trong `spec.namespaces` | M6 |
 | Developer binding | additional RoleBinding → custom developer ClusterRole | M6 |
 | Viewer binding | additional RoleBinding → custom viewer ClusterRole | M6 |
