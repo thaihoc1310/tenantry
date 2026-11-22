@@ -79,6 +79,22 @@ test('Workspaces get their own address blocks and cannot reach each other', asyn
     }
     const [solar, water] = made
     expect(solar!.cidr).not.toBe(water!.cidr)
+    // The cluster's IPPool of each Workspace has its block from the database.
+    for (const w of made) {
+      const cidr = await until(
+        `IPPool ${slug}-${w.slug}`,
+        async () =>
+          kubectl(
+            'get',
+            'ippools.crd.projectcalico.org',
+            `${slug}-${w.slug}`,
+            '--ignore-not-found',
+            '-o',
+            'jsonpath={.spec.cidr}',
+          ).trim() || undefined,
+      )
+      expect(cidr).toBe(w.cidr)
+    }
 
     const ip: Record<string, string> = {}
     for (const ns of [`${slug}-solar-app`, `${slug}-solar-web`, `${slug}-water-app`]) {
@@ -103,9 +119,37 @@ test('Workspaces get their own address blocks and cannot reach each other', asyn
     ).toBe(true)
     expect(connect(ip[`${slug}-water-app`]!)).toBe(false)
 
-    // Deleting Water quarantines its block: the Organization still sees it, taken.
+    // Deleting Water: its IPPool and IPAM blocks go before the block is
+    // quarantined; the Organization still sees it, taken, and the name too.
     await deleteWorkspace(page, water!.id, 'water', `${slug}-water`)
     made.pop()
+    expect(kubectl('get', 'ippools.crd.projectcalico.org', `${slug}-water`, '--ignore-not-found')).toBe('')
+    const blocks = kubectl('get', 'ipamblocks.crd.projectcalico.org', '-o', 'jsonpath={.items[*].spec.cidr}').split(' ')
+    expect(blocks.some((b) => b && inBlock(b.split('/')[0]!, water!.cidr))).toBe(false)
+    const again = await api(
+      page,
+      'POST',
+      `/organizations/${slug}/workspaces`,
+      {
+        slug: 'water',
+        displayName: 'water',
+        clusterId: 'cluster-a',
+        compute: { mode: 'Shared', sharedPoolId: 'shared-general' },
+        resources: {
+          requestsCpu: '100m',
+          requestsMemory: '128Mi',
+          limitsCpu: '100m',
+          limitsMemory: '128Mi',
+          pods: 1,
+          requestsStorage: '1Gi',
+          namespaceQuota: 1,
+        },
+        bindings: [{ groupId: admins.id, role: 'TenantOwner' }],
+      },
+      crypto.randomUUID(),
+    )
+    expect(again.status, JSON.stringify(again.body)).toBe(409)
+    expect(again.body.code).toBe('SLUG_TAKEN')
     const a = await api(page, 'GET', `/organizations/${slug}/network-pools/onboarding-pod-network/availability`)
     expect(a.body.blocks).toEqual(
       expect.arrayContaining([expect.objectContaining({ cidr: water!.cidr, state: 'Quarantined' })]),
