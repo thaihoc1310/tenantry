@@ -181,7 +181,15 @@ func TestPersonas(t *testing.T) {
 	var route struct {
 		ID, URL, State, Message string
 	}
-	alice.api(t, http.MethodPost, "/workspaces/"+solar.Workspace.ID+"/routes", map[string]any{"namespace": frontend, "name": "web", "service": "web", "port": 80}, &route, 202)
+	var change struct {
+		Route struct {
+			ID, URL, State, Message string
+		}
+		Operation struct{ ID string }
+	}
+	alice.api(t, http.MethodPost, "/workspaces/"+solar.Workspace.ID+"/routes", map[string]any{"namespace": frontend, "name": "web", "service": "web", "port": 80}, &change, 202)
+	route.ID, route.URL = change.Route.ID, change.Route.URL
+	alice.operation(t, change.Operation.ID)
 	defer func() {
 		if t.Failed() && route.State != "Active" {
 			cr, _ := admin(t, "", "get", "platformworkspace", solar.Workspace.K8sName, "-o",
