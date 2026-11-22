@@ -109,7 +109,7 @@ func TestSync(t *testing.T) {
 	if !kc.isMember("kc-ann", groupA) || rowState(t, db, "grp-a", "usr-ann") != "live:Synced" {
 		t.Fatalf("Ann not synced into group A: %s", rowState(t, db, "grp-a", "usr-ann"))
 	}
-	// Nobody has a Workspace binding before M6: TenantUsers exists, empty.
+	// Nobody has a Workspace binding: TenantUsers exists, empty.
 	if kc.groupNamed(TenantUsers) == "" || kc.isMember("kc-ann", TenantUsers) {
 		t.Fatal("TenantUsers missing, or Ann in it without a binding")
 	}

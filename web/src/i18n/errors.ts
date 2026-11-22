@@ -80,6 +80,18 @@ export const errorText: Record<ErrorCode | 'NETWORK', Text> = {
     en: 'This address range overlaps a range already in use.',
     vi: 'Dải địa chỉ này trùng với một dải đang được dùng.',
   },
+  CLUSTER_NOT_GRANTED: {
+    en: 'The Organization has no grant on this cluster.',
+    vi: 'Organization chưa được cấp quyền dùng cluster này.',
+  },
+  LAST_OWNER_BINDING: {
+    en: 'At least one group must keep the TenantOwner role.',
+    vi: 'Phải có ít nhất một group giữ vai trò TenantOwner.',
+  },
+  GROUP_SYNC_PENDING: {
+    en: 'A group has not reached the identity provider yet. Try again in a moment.',
+    vi: 'Một group chưa đồng bộ sang Keycloak. Hãy thử lại sau giây lát.',
+  },
   INTERNAL: {
     en: 'Something went wrong on our side. Your data is safe; try again in a moment.',
     vi: 'Hệ thống gặp lỗi. Dữ liệu của bạn vẫn an toàn; thử lại sau ít phút.',

@@ -785,6 +785,91 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
+  /organizations/{orgId}/workspaces:
+    parameters:
+      - $ref: "#/components/parameters/orgId"
+    get:
+      operationId: listWorkspaces
+      summary: Workspaces of the organization, oldest first
+      description: |
+        The OrgOwner and OrgAdmins see every Workspace; an OrgMember only
+        those a group of theirs is bound to (architecture/06 §8). Not paged:
+        at most `maxWorkspacesTotal`. Deleted Workspaces are not listed.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createWorkspace
+      security: [{ session: [], csrf: [] }]
+      summary: Create a Workspace (OrgOwner or OrgAdmin)
+      description: |
+        Answers 202 with the Workspace in Provisioning and the
+        `workspace.create` operation to follow (PRODUCT-PLAN §17.1). Checked
+        in this order: a non-member gets 404, an OrgMember 403, an
+        organization not approved 409 `ORG_NOT_ACTIVE`. Only Shared
+        Workspaces until Dedicated compute comes (M8).
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKeyRequired"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkspaceCreate" }
+      responses:
+        "202":
+          description: Accepted; the cluster side follows asynchronously
+          headers:
+            Location:
+              description: URL of the new Workspace
+              required: true
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceAccepted" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: |
+            `ORG_NOT_ACTIVE`: the organization is not approved yet.
+            `SLUG_TAKEN`: another Workspace of the organization has this slug,
+            or one that nests with it at a `-` (`solar` and `solar-prod`);
+            `details.workspaceId` names it.
+            `CLUSTER_NOT_GRANTED`: the organization has no grant on `clusterId`.
+            `CLUSTER_NOT_READY`: the cluster is not Ready.
+            `LAST_OWNER_BINDING`: no binding gives a group the TenantOwner role.
+            `GROUP_SYNC_PENDING`: a bound group has not reached Keycloak yet
+            (`details.groupId`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /workspaces/{workspaceId}:
+    parameters:
+      - $ref: "#/components/parameters/workspaceId"
+    get:
+      operationId: getWorkspace
+      summary: Workspace detail
+      description: |
+        The OrgOwner and OrgAdmins, and members of a group bound to it. Anyone
+        else gets 404, a Platform Admin included (architecture/06 §8).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workspace" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
   /operations/{operationId}:
     parameters:
       - $ref: "#/components/parameters/operationId"
@@ -1610,6 +1695,12 @@ components:
       required: true
       schema: { type: string, maxLength: 64 }
 
+    workspaceId:
+      name: workspaceId
+      in: path
+      required: true
+      schema: { type: string, maxLength: 64 }
+
     transferId:
       name: transferId
       in: path
@@ -1695,6 +1786,9 @@ components:
         - OWNER_USER_NOT_FOUND
         - ENTITLEMENT_BELOW_USAGE
         - CIDR_OVERLAP
+        - CLUSTER_NOT_GRANTED
+        - LAST_OWNER_BINDING
+        - GROUP_SYNC_PENDING
         - INTERNAL
 
     ErrorResponse:
@@ -1847,6 +1941,131 @@ components:
             `VALIDATION_FAILED` when approving or creating an organization,
             and `ENTITLEMENT_BELOW_USAGE` when changing an entitlement.
         maxWorkspacesTotal: { type: integer, minimum: 0, maximum: 1000 }
+
+    WorkspaceRole:
+      type: string
+      enum: [TenantOwner, Developer, Viewer]
+      description: "TenantOwner: owner of the Capsule Tenant. Developer, Viewer: tenantry:tenant-developer, tenantry:tenant-viewer (PRODUCT-PLAN §10.3)"
+
+    WorkspaceState:
+      type: string
+      enum: [Provisioning, Ready, Updating, Cordoned, Degraded, Failed, Deleting]
+      description: architecture/04-state-machines §1
+
+    WorkspaceSlug:
+      type: string
+      minLength: 2
+      maxLength: 20
+      pattern: "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+
+    NamespaceSuffix:
+      type: string
+      minLength: 1
+      maxLength: 42
+      pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+      description: "The part after `<org>-<workspace>-`; the full name must fit 63 characters."
+
+    WorkspaceResources:
+      type: object
+      description: |
+        The quota every Namespace of the Workspace shares (PRODUCT-PLAN §5.4).
+        Shared: limits at least the requests. Dedicated (M8): limits equal
+        the requests and may be left out.
+      required: [requestsCpu, requestsMemory, pods, requestsStorage, namespaceQuota]
+      additionalProperties: false
+      properties:
+        requestsCpu: { $ref: "#/components/schemas/Quantity" }
+        requestsMemory: { $ref: "#/components/schemas/Quantity" }
+        limitsCpu: { $ref: "#/components/schemas/Quantity" }
+        limitsMemory: { $ref: "#/components/schemas/Quantity" }
+        pods: { type: integer, minimum: 1, maximum: 100000 }
+        requestsStorage: { $ref: "#/components/schemas/Quantity" }
+        namespaceQuota: { type: integer, minimum: 1, maximum: 100, description: "Namespaces the Workspace may hold, however created" }
+
+    WorkspaceCompute:
+      type: object
+      required: [mode]
+      additionalProperties: false
+      properties:
+        mode: { type: string, enum: [Shared, Dedicated] }
+        sharedPoolId: { $ref: "#/components/schemas/PoolId" }
+        dedicatedNodeGrantId: { type: string, maxLength: 64 }
+
+    WorkspaceBindingInput:
+      type: object
+      required: [groupId, role]
+      additionalProperties: false
+      properties:
+        groupId: { type: string, maxLength: 64 }
+        role: { $ref: "#/components/schemas/WorkspaceRole" }
+
+    WorkspaceCreate:
+      type: object
+      required: [slug, displayName, clusterId, compute, resources, bindings]
+      additionalProperties: false
+      properties:
+        slug: { $ref: "#/components/schemas/WorkspaceSlug" }
+        displayName: { type: string, minLength: 1, maxLength: 80 }
+        clusterId: { type: string, maxLength: 63 }
+        compute: { $ref: "#/components/schemas/WorkspaceCompute" }
+        resources: { $ref: "#/components/schemas/WorkspaceResources" }
+        namespaces:
+          type: array
+          description: Namespaces to create with the Workspace, as suffixes; they count against `namespaceQuota`.
+          maxItems: 100
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/NamespaceSuffix" }
+        bindings:
+          type: array
+          description: Groups of the organization and their role; at least one TenantOwner, each group once.
+          minItems: 1
+          maxItems: 50
+          items: { $ref: "#/components/schemas/WorkspaceBindingInput" }
+
+    WorkspaceCondition:
+      type: object
+      required: [type, status, reason, message]
+      properties:
+        type: { type: string, description: "e.g. CapsuleTenantReady (architecture/04 §1.2)" }
+        status: { type: string, enum: ["True", "False", "Unknown"] }
+        reason: { type: string }
+        message: { type: string }
+        lastTransitionTime: { type: string, format: date-time }
+
+    Workspace:
+      type: object
+      required: [id, orgId, clusterId, slug, k8sName, displayName, state, resources, compute, conditions, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        orgId: { type: string }
+        clusterId: { type: string }
+        slug: { type: string }
+        k8sName: { type: string, description: "`<org>-<slug>`: the Capsule Tenant and the prefix of its Namespaces" }
+        displayName: { type: string }
+        state: { $ref: "#/components/schemas/WorkspaceState" }
+        resources: { $ref: "#/components/schemas/WorkspaceResources" }
+        compute: { $ref: "#/components/schemas/WorkspaceCompute" }
+        conditions:
+          type: array
+          description: As the controller last reported them; empty until it has.
+          items: { $ref: "#/components/schemas/WorkspaceCondition" }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    WorkspaceList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Workspace" }
+
+    WorkspaceAccepted:
+      type: object
+      required: [workspace, operation]
+      properties:
+        workspace: { $ref: "#/components/schemas/Workspace" }
+        operation: { $ref: "#/components/schemas/Operation" }
 
     Quantity:
       type: string

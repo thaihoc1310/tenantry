@@ -46,6 +46,11 @@ const (
 	OwnerUserNotFound     Code = "OWNER_USER_NOT_FOUND"    // the owner of a new organization never logged in
 	EntitlementBelowUsage Code = "ENTITLEMENT_BELOW_USAGE" // a limit below what is used, or maxGroups < 3
 	CIDROverlap           Code = "CIDR_OVERLAP"            // a range overlapping another pool or the cluster's own
+
+	// Workspaces (PRODUCT-PLAN §16.5, §17.1).
+	ClusterNotGranted Code = "CLUSTER_NOT_GRANTED" // no grant of the organization on that cluster
+	LastOwnerBinding  Code = "LAST_OWNER_BINDING"  // no group would hold TenantOwner any more
+	GroupSyncPending  Code = "GROUP_SYNC_PENDING"  // a bound group is not in Keycloak yet
 )
 
 type Error struct {

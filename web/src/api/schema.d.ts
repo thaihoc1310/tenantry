@@ -651,6 +651,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{orgId}/workspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Workspaces of the organization, oldest first
+         * @description The OrgOwner and OrgAdmins see every Workspace; an OrgMember only
+         *     those a group of theirs is bound to (architecture/06 §8). Not paged:
+         *     at most `maxWorkspacesTotal`. Deleted Workspaces are not listed.
+         */
+        get: operations["listWorkspaces"];
+        put?: never;
+        /**
+         * Create a Workspace (OrgOwner or OrgAdmin)
+         * @description Answers 202 with the Workspace in Provisioning and the
+         *     `workspace.create` operation to follow (PRODUCT-PLAN §17.1). Checked
+         *     in this order: a non-member gets 404, an OrgMember 403, an
+         *     organization not approved 409 `ORG_NOT_ACTIVE`. Only Shared
+         *     Workspaces until Dedicated compute comes (M8).
+         */
+        post: operations["createWorkspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces/{workspaceId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Workspace detail
+         * @description The OrgOwner and OrgAdmins, and members of a group bound to it. Anyone
+         *     else gets 404, a Platform Admin included (architecture/06 §8).
+         */
+        get: operations["getWorkspace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/operations/{operationId}": {
         parameters: {
             query?: never;
@@ -1200,7 +1259,7 @@ export interface components {
          * @description Stable error codes the UI switches on (IMPLEMENTATION-PLAN §3.3). Grows with the endpoints.
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "METHOD_NOT_ALLOWED" | "IDEMPOTENCY_KEY_REUSED" | "RATE_LIMITED" | "SLUG_TAKEN" | "ORG_REQUEST_PENDING" | "CLUSTER_NOT_READY" | "ORG_NOT_ACTIVE" | "ENTITLEMENT_EXCEEDED" | "INVITATION_INVALID" | "INVITATION_EMAIL_MISMATCH" | "TRANSFER_NOT_ALLOWED" | "RECIPIENT_NOT_ORG_ADMIN" | "TRANSFER_INVALID" | "LEAVE_NOT_ALLOWED" | "OWNER_USER_NOT_FOUND" | "ENTITLEMENT_BELOW_USAGE" | "CIDR_OVERLAP" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "METHOD_NOT_ALLOWED" | "IDEMPOTENCY_KEY_REUSED" | "RATE_LIMITED" | "SLUG_TAKEN" | "ORG_REQUEST_PENDING" | "CLUSTER_NOT_READY" | "ORG_NOT_ACTIVE" | "ENTITLEMENT_EXCEEDED" | "INVITATION_INVALID" | "INVITATION_EMAIL_MISMATCH" | "TRANSFER_NOT_ALLOWED" | "RECIPIENT_NOT_ORG_ADMIN" | "TRANSFER_INVALID" | "LEAVE_NOT_ALLOWED" | "OWNER_USER_NOT_FOUND" | "ENTITLEMENT_BELOW_USAGE" | "CIDR_OVERLAP" | "CLUSTER_NOT_GRANTED" | "LAST_OWNER_BINDING" | "GROUP_SYNC_PENDING" | "INTERNAL";
         ErrorResponse: {
             code: components["schemas"]["ErrorCode"];
             message: string;
@@ -1322,6 +1381,90 @@ export interface components {
              */
             maxGroups: number;
             maxWorkspacesTotal: number;
+        };
+        /**
+         * @description TenantOwner: owner of the Capsule Tenant. Developer, Viewer: tenantry:tenant-developer, tenantry:tenant-viewer (PRODUCT-PLAN §10.3)
+         * @enum {string}
+         */
+        WorkspaceRole: "TenantOwner" | "Developer" | "Viewer";
+        /**
+         * @description architecture/04-state-machines §1
+         * @enum {string}
+         */
+        WorkspaceState: "Provisioning" | "Ready" | "Updating" | "Cordoned" | "Degraded" | "Failed" | "Deleting";
+        WorkspaceSlug: string;
+        /** @description The part after `<org>-<workspace>-`; the full name must fit 63 characters. */
+        NamespaceSuffix: string;
+        /**
+         * @description The quota every Namespace of the Workspace shares (PRODUCT-PLAN §5.4).
+         *     Shared: limits at least the requests. Dedicated (M8): limits equal
+         *     the requests and may be left out.
+         */
+        WorkspaceResources: {
+            requestsCpu: components["schemas"]["Quantity"];
+            requestsMemory: components["schemas"]["Quantity"];
+            limitsCpu?: components["schemas"]["Quantity"];
+            limitsMemory?: components["schemas"]["Quantity"];
+            pods: number;
+            requestsStorage: components["schemas"]["Quantity"];
+            /** @description Namespaces the Workspace may hold, however created */
+            namespaceQuota: number;
+        };
+        WorkspaceCompute: {
+            /** @enum {string} */
+            mode: "Shared" | "Dedicated";
+            sharedPoolId?: components["schemas"]["PoolId"];
+            dedicatedNodeGrantId?: string;
+        };
+        WorkspaceBindingInput: {
+            groupId: string;
+            role: components["schemas"]["WorkspaceRole"];
+        };
+        WorkspaceCreate: {
+            slug: components["schemas"]["WorkspaceSlug"];
+            displayName: string;
+            clusterId: string;
+            compute: components["schemas"]["WorkspaceCompute"];
+            resources: components["schemas"]["WorkspaceResources"];
+            /** @description Namespaces to create with the Workspace, as suffixes; they count against `namespaceQuota`. */
+            namespaces?: components["schemas"]["NamespaceSuffix"][];
+            /** @description Groups of the organization and their role; at least one TenantOwner, each group once. */
+            bindings: components["schemas"]["WorkspaceBindingInput"][];
+        };
+        WorkspaceCondition: {
+            /** @description e.g. CapsuleTenantReady (architecture/04 §1.2) */
+            type: string;
+            /** @enum {string} */
+            status: "True" | "False" | "Unknown";
+            reason: string;
+            message: string;
+            /** Format: date-time */
+            lastTransitionTime?: string;
+        };
+        Workspace: {
+            id: string;
+            orgId: string;
+            clusterId: string;
+            slug: string;
+            /** @description `<org>-<slug>`: the Capsule Tenant and the prefix of its Namespaces */
+            k8sName: string;
+            displayName: string;
+            state: components["schemas"]["WorkspaceState"];
+            resources: components["schemas"]["WorkspaceResources"];
+            compute: components["schemas"]["WorkspaceCompute"];
+            /** @description As the controller last reported them; empty until it has. */
+            conditions: components["schemas"]["WorkspaceCondition"][];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        WorkspaceList: {
+            items: components["schemas"]["Workspace"][];
+        };
+        WorkspaceAccepted: {
+            workspace: components["schemas"]["Workspace"];
+            operation: components["schemas"]["Operation"];
         };
         /**
          * @description A Kubernetes quantity, e.g. `500m` or `2` for CPU, `4Gi` for memory and storage.
@@ -1850,6 +1993,7 @@ export interface components {
         clusterId: components["schemas"]["PoolId"];
         poolId: components["schemas"]["PoolId"];
         groupId: string;
+        workspaceId: string;
         transferId: string;
         /** @description As `Idempotency-Key`, and required here (IMPLEMENTATION-PLAN §3.4). */
         idempotencyKeyRequired: string;
@@ -3011,6 +3155,118 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             429: components["responses"]["RateLimited"];
+        };
+    };
+    listWorkspaces: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    createWorkspace: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description As `Idempotency-Key`, and required here (IMPLEMENTATION-PLAN §3.4). */
+                "Idempotency-Key": components["parameters"]["idempotencyKeyRequired"];
+            };
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceCreate"];
+            };
+        };
+        responses: {
+            /** @description Accepted; the cluster side follows asynchronously */
+            202: {
+                headers: {
+                    /** @description URL of the new Workspace */
+                    Location: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceAccepted"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /**
+             * @description `ORG_NOT_ACTIVE`: the organization is not approved yet.
+             *     `SLUG_TAKEN`: another Workspace of the organization has this slug,
+             *     or one that nests with it at a `-` (`solar` and `solar-prod`);
+             *     `details.workspaceId` names it.
+             *     `CLUSTER_NOT_GRANTED`: the organization has no grant on `clusterId`.
+             *     `CLUSTER_NOT_READY`: the cluster is not Ready.
+             *     `LAST_OWNER_BINDING`: no binding gives a group the TenantOwner role.
+             *     `GROUP_SYNC_PENDING`: a bound group has not reached Keycloak yet
+             *     (`details.groupId`).
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            422: components["responses"]["IdempotencyKeyReused"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
     getOperation: {

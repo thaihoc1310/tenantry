@@ -26,14 +26,16 @@ import (
 	"github.com/thaihoc1310/tenantry/backend/internal/reservation"
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
 	"github.com/thaihoc1310/tenantry/backend/internal/user"
+	"github.com/thaihoc1310/tenantry/backend/internal/workspace"
 )
 
 type server struct {
-	orgs      *org.Service
-	users     *user.Service
-	clusters  *reservation.Service
-	ops       *operation.Service
-	publicURL string // the portal origin, for links handed out (invitations)
+	orgs       *org.Service
+	users      *user.Service
+	clusters   *reservation.Service
+	ops        *operation.Service
+	workspaces *workspace.Service
+	publicURL  string // the portal origin, for links handed out (invitations)
 }
 
 // Register mounts every /api/v1 operation and the browser login endpoints
@@ -43,7 +45,12 @@ func Register(r chi.Router, db *pgxpool.Pool, a *auth.Service, trustedProxies []
 	badRequest := func(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, apperr.New(apperr.Validation, err.Error()))
 	}
-	api := oapi.NewStrictHandlerWithOptions(server{orgs: org.NewService(db), users: user.NewService(db), clusters: reservation.NewService(db), ops: operation.NewService(db), publicURL: publicURL(a)}, nil, oapi.StrictHTTPServerOptions{
+	orgs := org.NewService(db)
+	srv := server{
+		orgs: orgs, users: user.NewService(db), clusters: reservation.NewService(db), ops: operation.NewService(db),
+		workspaces: workspace.NewService(db, orgs), publicURL: publicURL(a),
+	}
+	api := oapi.NewStrictHandlerWithOptions(srv, nil, oapi.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: badRequest,
 		// Handlers return errors as-is; writeError turns them into responses.
 		ResponseErrorHandlerFunc: writeError,

@@ -177,7 +177,7 @@ func (w *Worker) syncMembers(ctx context.Context) (int, error) {
 		}
 		n = len(rows)
 		for _, m := range rows {
-			kerr := w.reconcileMember(ctx, m)
+			kerr := w.reconcileMember(ctx, q, m)
 			switch {
 			case kerr != nil:
 				w.log.Warn("group member sync failed", "group_id", m.GroupID, "user_id", m.UserID, "attempts", m.SyncAttempts+1, "err", kerr)
@@ -205,7 +205,7 @@ func (w *Worker) syncMembers(ctx context.Context) (int, error) {
 // nobody out: Keycloak runs the group mapper again on every refresh, so the
 // next token of the portal, Headlamp or kubelogin no longer names the group
 // (architecture/06 §5).
-func (w *Worker) reconcileMember(ctx context.Context, m store.ClaimDueMembersRow) error {
+func (w *Worker) reconcileMember(ctx context.Context, q *store.Queries, m store.ClaimDueMembersRow) error {
 	user, group := m.Subject, *m.KeycloakGroupID // ClaimDueMembers only returns synced groups
 	if m.DeletedAt == nil {
 		if err := w.kc.AddMember(ctx, user, group); err != nil {
@@ -214,12 +214,20 @@ func (w *Worker) reconcileMember(ctx context.Context, m store.ClaimDueMembersRow
 	} else if err := w.kc.RemoveMember(ctx, user, group); err != nil {
 		return err
 	}
-	return w.syncTenantUsers(ctx, m.UserID, user)
+	return w.syncTenantUsers(ctx, q, m.UserID, user)
 }
 
 // syncTenantUsers puts the person in TenantUsers while they have a Workspace
-// binding through a live group, and takes them out otherwise (§9.3).
-func (w *Worker) syncTenantUsers(ctx context.Context, userID, kcUser string) error {
+// binding through a live group, and takes them out otherwise (§9.3). Every
+// transaction that changes the set of bindings (create or delete a
+// Workspace, PUT/DELETE a binding) sets the group_members of the groups
+// concerned back to Pending, so this runs again for each person
+// (IMPLEMENTATION-PLAN §5.2).
+func (w *Worker) syncTenantUsers(ctx context.Context, q *store.Queries, userID, kcUser string) error {
+	bound, err := q.UserHasWorkspaceBinding(ctx, userID)
+	if err != nil {
+		return err
+	}
 	if w.tenantUsers == "" {
 		id, err := w.kc.EnsureGroup(ctx, TenantUsers)
 		if err != nil {
@@ -227,8 +235,7 @@ func (w *Worker) syncTenantUsers(ctx context.Context, userID, kcUser string) err
 		}
 		w.tenantUsers = id
 	}
-	var err error
-	if userHasBindings(userID) {
+	if bound {
 		err = w.kc.AddMember(ctx, kcUser, w.tenantUsers)
 	} else {
 		err = w.kc.RemoveMember(ctx, kcUser, w.tenantUsers)
@@ -238,15 +245,6 @@ func (w *Worker) syncTenantUsers(ctx context.Context, userID, kcUser string) err
 	}
 	return err
 }
-
-// userHasBindings will read workspace_group_bindings.
-//
-// ponytail: always false until the bindings table exists (M6). Then it
-// queries it, and every transaction that changes the set of bindings (create
-// or delete a Workspace, PUT/DELETE a binding, delete a group) sets the
-// group_members of the affected groups back to Pending, so this worker
-// recomputes TenantUsers for each person (IMPLEMENTATION-PLAN §5.2).
-func userHasBindings(string) bool { return false }
 
 // truncate keeps last_error short, without cutting a character in two
 // (PostgreSQL refuses invalid UTF-8).

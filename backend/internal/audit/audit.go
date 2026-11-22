@@ -52,6 +52,8 @@ const (
 	GroupDelete       = "group.delete"
 	GroupMemberAdd    = "group_member.add"
 	GroupMemberRemove = "group_member.remove"
+
+	WorkspaceCreate = "workspace.create"
 )
 
 // Results. An event written by the change it records Succeeded. A refused

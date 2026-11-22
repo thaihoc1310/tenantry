@@ -37,6 +37,10 @@ var statusOf = map[apperr.Code]int{
 	apperr.OwnerUserNotFound:     http.StatusUnprocessableEntity,
 	apperr.EntitlementBelowUsage: http.StatusConflict,
 	apperr.CIDROverlap:           http.StatusConflict,
+
+	apperr.ClusterNotGranted: http.StatusConflict,
+	apperr.LastOwnerBinding:  http.StatusConflict,
+	apperr.GroupSyncPending:  http.StatusConflict,
 }
 
 // writeError answers with an ErrorResponse.
