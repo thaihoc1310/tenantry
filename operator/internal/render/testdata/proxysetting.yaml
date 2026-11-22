@@ -1,0 +1,20 @@
+apiVersion: capsule.clastix.io/v1beta1
+kind: ProxySetting
+metadata:
+  labels:
+    tenantry.io/cluster-id: cluster-a
+    tenantry.io/compute-mode: shared
+    tenantry.io/compute-pool: shared-general
+    tenantry.io/managed: "true"
+    tenantry.io/organization-id: org-01jabc
+    tenantry.io/workspace-id: ws-01jsol
+  name: tenantry
+  namespace: acme-solar-backend
+spec:
+  subjects:
+  - kind: Group
+    name: oidc:org_01jabc:group_01jdev
+  - kind: Group
+    name: oidc:org_01jabc:group_01jview
+  - kind: ServiceAccount
+    name: system:serviceaccount:tenantry-operator:tenantry-proxy-probe

@@ -57,6 +57,7 @@ func TestGolden(t *testing.T) {
 	waterNet.Spec.Network = &v1.Network{AllocationRef: "netalloc-01jwat", CIDR: "10.240.65.16/28"}
 	cases := map[string]*unstructured.Unstructured{
 		"ingress":               Ingress(solar(), v1.WorkspaceRoute{Name: "web", Namespace: "acme-solar-frontend", Host: "web-acme-solar.mvp.tenantry.site", Service: "web", Port: 80}),
+		"proxysetting":          ProxySetting(solar(), "acme-solar-backend", "system:serviceaccount:tenantry-operator:tenantry-proxy-probe"),
 		"ippool":                IPPool(solarNet),
 		"ippool-dedicated":      IPPool(waterNet),
 		"tenant-network":        Tenant(solarNet, opts, false),

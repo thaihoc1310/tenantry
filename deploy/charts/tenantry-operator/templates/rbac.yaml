@@ -30,3 +30,47 @@ subjects:
   - kind: ServiceAccount
     name: tenantry-operator
     namespace: {{ .Release.Namespace }}
+---
+# The probe of sub-reconciler proxyaccess: it lists a Workspace's Namespaces
+# through Capsule Proxy, as Developers and Viewers do, being a subject of
+# every Workspace's ProxySetting. It holds NO RBAC right and must never get
+# one: nothing binds it (make operator-chart-lint checks). This Namespace
+# holds exactly two ServiceAccounts, the operator and the probe: the whole
+# group system:serviceaccounts:{{ .Release.Namespace }} is a Capsule user
+# (architecture/06 §7).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tenantry-proxy-probe
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+# The operator asks for the probe's short-lived token, for that one
+# ServiceAccount only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tenantry-operator-probe-token
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [serviceaccounts/token]
+    resourceNames: [tenantry-proxy-probe]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tenantry-operator-probe-token
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: tenantry-operator-probe-token
+subjects:
+  - kind: ServiceAccount
+    name: tenantry-operator
+    namespace: {{ .Release.Namespace }}

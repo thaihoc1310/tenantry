@@ -159,7 +159,13 @@ operator-chart-lint: ## Lint and render the operator chart, and check its RBAC a
 		assert rules, "no rules in the operator ClusterRole"; \
 		assert not any("certificates" in r["resources"] or "*" in r["resources"] or "*" in r["verbs"] for r in rules), "the operator may not touch certificates or use wildcards"; \
 		assert len(crds) == 4 and all(c["metadata"]["annotations"].get("helm.sh/resource-policy") == "keep" for c in crds), "want 4 CRDs, each kept on uninstall"; \
-		assert all(c["spec"]["scope"] == "Cluster" for c in crds), "every tenantry.io CRD is cluster-scoped"'
+		assert all(c["spec"]["scope"] == "Cluster" for c in crds), "every tenantry.io CRD is cluster-scoped"; \
+		sas = sorted(d["metadata"]["name"] for d in docs if d["kind"] == "ServiceAccount"); \
+		assert sas == ["tenantry-operator", "tenantry-proxy-probe"], "the namespace holds the operator and the probe only, got %s" % sas; \
+		bound = [s for d in docs if d["kind"] in ("RoleBinding", "ClusterRoleBinding") for s in d.get("subjects", [])]; \
+		assert all(s["name"] == "tenantry-operator" for s in bound), "only the operator is bound to a role: the probe has no right"; \
+		token = [d for d in docs if d["kind"] == "Role"]; \
+		assert [d["rules"] for d in token] == [[{"apiGroups": [""], "resources": ["serviceaccounts/token"], "resourceNames": ["tenantry-proxy-probe"], "verbs": ["create"]}]], "the only Role creates the probe token"'
 	@diff -r $(OPERATOR)/config/crd/bases $(OPERATOR_CHART)/files/crds && diff $(OPERATOR)/config/rbac/role.yaml $(OPERATOR_CHART)/files/role.yaml || { echo "chart is behind operator/config: run make operator-generate"; exit 1; }
 
 .PHONY: run-operator deploy-operator

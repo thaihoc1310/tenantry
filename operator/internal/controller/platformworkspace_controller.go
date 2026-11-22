@@ -43,6 +43,9 @@ type PlatformWorkspaceReconciler struct {
 	// BlockedAfter is how long the finalizer waits for Namespaces before it
 	// reports BlockedByFinalizer (IMPLEMENTATION-PLAN §12, decision 8).
 	BlockedAfter time.Duration
+	// Proxy runs sub-reconciler proxyaccess; nil leaves it out, and
+	// ProxyAccessReady with it.
+	Proxy *subreconciler.ProxyProber
 }
 
 func (r *PlatformWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -112,6 +115,17 @@ func (r *PlatformWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	// 7. proxyaccess: the ProxySetting, and the probe through Capsule Proxy.
+	var probeAgain time.Duration
+	if r.Proxy != nil && tenant != nil {
+		var proxyRes subreconciler.Result
+		proxyRes, probeAgain = r.Proxy.ProxyAccess(ctx, r.Scheme(), ws, existing, subreconciler.TenantCordoned(tenant))
+		if proxyRes.Condition.Reason == subreconciler.ReasonApplyFailed {
+			return ctrl.Result{}, r.fail(ctx, before, ws, proxyRes.Condition)
+		}
+		proxyRes.Wait = false // probeAgain paces the probe
+		results = append(results, proxyRes)
+	}
 	usage, perNamespace := subreconciler.Usage(quota)
 	ws.Status.Usage = usage
 	ws.Status.Namespaces = observe.Namespaces(ws, existing, perNamespace)
@@ -123,7 +137,7 @@ func (r *PlatformWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		setCondition(ws, res.Condition)
 		wait = wait || res.Wait
 	}
-	ws.Status.Phase = phase(before.Status.Phase, ws.Status.Conditions, applicable(ws))
+	ws.Status.Phase = phase(before.Status.Phase, ws.Status.Conditions, applicable(ws, r.Proxy != nil))
 	ws.Status.ObservedGeneration = ws.Generation
 	if err := r.patchStatus(ctx, before, ws); err != nil {
 		return ctrl.Result{}, err
@@ -131,7 +145,7 @@ func (r *PlatformWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if wait {
 		return ctrl.Result{RequeueAfter: recheck}, nil
 	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: probeAgain}, nil
 }
 
 // merge folds the namespaces step into CapsuleTenantReady: the worse of the two.
@@ -185,6 +199,8 @@ func (r *PlatformWorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	replication.SetGroupVersionKind(render.ReplicationGVK)
 	ipPool := &unstructured.Unstructured{}
 	ipPool.SetGroupVersionKind(render.IPPoolGVK)
+	proxySetting := &unstructured.Unstructured{}
+	proxySetting.SetGroupVersionKind(render.ProxySettingGVK)
 	// A Service appearing or changing makes a Route of its Namespace ready
 	// or not: the Workspace is named by the Namespace's tenant label.
 	byServiceNamespace := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
@@ -229,6 +245,7 @@ func (r *PlatformWorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(tenant).
 		Owns(replication).
 		Owns(ipPool).
+		Owns(proxySetting).
 		Owns(&networkingv1.Ingress{}).
 		Watches(&corev1.Service{}, byServiceNamespace).
 		Watches(quota, byQuotaTenant).
