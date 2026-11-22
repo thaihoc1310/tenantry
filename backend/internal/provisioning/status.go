@@ -179,6 +179,12 @@ func (s *Syncer) syncWorkspace(ctx context.Context, cr v1.PlatformWorkspace) err
 			_, _, err := operation.Move(ctx, q, op.ID, operation.Succeeded, "", "")
 			return err
 		}
+		// A change to a Cordoned Workspace (its grant's storage classes)
+		// leaves it Cordoned and ends when the controller has it.
+		if current && op.State == "Running" && ws.State == workspace.StateCordoned && cr.Status.Phase == v1.PhaseReady {
+			_, _, err := operation.Move(ctx, q, op.ID, operation.Succeeded, "", "")
+			return err
+		}
 		if !current || op.ID == "" || (ws.State != workspace.StateProvisioning && ws.State != workspace.StateUpdating) {
 			return nil
 		}

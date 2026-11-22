@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 
@@ -80,6 +81,11 @@ func (s *Service) PutGrant(ctx context.Context, adminID, orgID string, g reserva
 		}
 		if out, err = reservation.UpdateGrant(ctx, q, cur, g); err != nil {
 			return err
+		}
+		if s.StorageClassesChanged != nil && !sameStrings(before.AllowedStorageClasses, out.AllowedStorageClasses) {
+			if err := s.StorageClassesChanged(ctx, q, out.ID, adminID); err != nil {
+				return err
+			}
 		}
 		return audit.Record(ctx, q, audit.Event{
 			Actor: adminID, OrgID: o.ID, Action: audit.ClusterGrantUpdate, TargetType: "ClusterGrant", TargetID: out.ID,
@@ -253,4 +259,9 @@ func orNull(b []byte) []byte {
 		return []byte("null")
 	}
 	return b
+}
+
+// sameStrings tells whether a and b hold the same values, in any order.
+func sameStrings(a, b []string) bool {
+	return len(a) == len(b) && !slices.ContainsFunc(a, func(x string) bool { return !slices.Contains(b, x) })
 }

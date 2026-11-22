@@ -55,6 +55,32 @@ func (q *Queries) CreateOperation(ctx context.Context, arg CreateOperationParams
 	return i, err
 }
 
+const getOperation = `-- name: GetOperation :one
+SELECT id, org_id, resource_type, resource_id, type, state, progress, error_code, error_message, correlation_id, created_by, created_at, updated_at, finished_at FROM operations WHERE id = $1
+`
+
+func (q *Queries) GetOperation(ctx context.Context, id string) (Operation, error) {
+	row := q.db.QueryRow(ctx, getOperation, id)
+	var i Operation
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ResourceType,
+		&i.ResourceID,
+		&i.Type,
+		&i.State,
+		&i.Progress,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.CorrelationID,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+	)
+	return i, err
+}
+
 const getOperationForCaller = `-- name: GetOperationForCaller :one
 SELECT op.id, op.org_id, op.resource_type, op.resource_id, op.type, op.state, op.progress, op.error_code, op.error_message, op.correlation_id, op.created_by, op.created_at, op.updated_at, op.finished_at, m.role
 FROM operations op

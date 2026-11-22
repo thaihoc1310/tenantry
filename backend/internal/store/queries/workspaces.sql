@@ -208,3 +208,11 @@ DELETE FROM workspaces WHERE id = $1;
 
 -- name: ListDeletingWorkspaces :many
 SELECT * FROM workspaces WHERE cluster_id = $1 AND state = 'Deleting' ORDER BY id;
+
+-- name: WorkspacesOfGrant :many
+SELECT id FROM workspaces WHERE cluster_grant_id = $1 AND state <> 'Deleted' ORDER BY id;
+
+-- name: BumpWorkspaceVersion :one
+-- A new spec version with the state as it is: a change riding on an
+-- operation under way, or one that leaves a Cordoned Workspace cordoned.
+UPDATE workspaces SET desired_generation = desired_generation + 1, updated_at = now() WHERE id = $1 RETURNING *;

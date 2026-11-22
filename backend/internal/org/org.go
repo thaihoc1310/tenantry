@@ -68,6 +68,12 @@ type Org struct {
 type Service struct {
 	db *pgxpool.Pool // for transactions
 	q  *store.Queries
+
+	// StorageClassesChanged runs in the transaction of a grant change that
+	// changed the grant's storage classes: each Tenant of the grant renders
+	// them (PRODUCT-PLAN §5.5). The workspace service sets it; org sits
+	// below workspace and cannot call it.
+	StorageClassesChanged func(ctx context.Context, q *store.Queries, grantID, actor string) error
 }
 
 func NewService(db *pgxpool.Pool) *Service { return &Service{db: db, q: store.New(db)} }

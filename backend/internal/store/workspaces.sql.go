@@ -94,6 +94,45 @@ func (q *Queries) BoundGroupIDs(ctx context.Context, workspaceID string) ([]stri
 	return items, nil
 }
 
+const bumpWorkspaceVersion = `-- name: BumpWorkspaceVersion :one
+UPDATE workspaces SET desired_generation = desired_generation + 1, updated_at = now() WHERE id = $1 RETURNING id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at, usage_snapshot, cordoned
+`
+
+// A new spec version with the state as it is: a change riding on an
+// operation under way, or one that leaves a Cordoned Workspace cordoned.
+func (q *Queries) BumpWorkspaceVersion(ctx context.Context, id string) (Workspace, error) {
+	row := q.db.QueryRow(ctx, bumpWorkspaceVersion, id)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ClusterID,
+		&i.ClusterGrantID,
+		&i.Slug,
+		&i.K8sName,
+		&i.DisplayName,
+		&i.State,
+		&i.RequestsCpuMilli,
+		&i.RequestsMemoryBytes,
+		&i.LimitsCpuMilli,
+		&i.LimitsMemoryBytes,
+		&i.Pods,
+		&i.RequestsStorageBytes,
+		&i.NamespaceQuota,
+		&i.ComputeMode,
+		&i.SharedPoolID,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.Conditions,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.UsageSnapshot,
+		&i.Cordoned,
+	)
+	return i, err
+}
+
 const countGrantWorkspaces = `-- name: CountGrantWorkspaces :one
 SELECT count(*)::int FROM workspaces WHERE cluster_grant_id = $1
 `
@@ -1195,6 +1234,30 @@ func (q *Queries) WorkspacesBoundTo(ctx context.Context, groupID string) ([]stri
 			return nil, err
 		}
 		items = append(items, workspace_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workspacesOfGrant = `-- name: WorkspacesOfGrant :many
+SELECT id FROM workspaces WHERE cluster_grant_id = $1 AND state <> 'Deleted' ORDER BY id
+`
+
+func (q *Queries) WorkspacesOfGrant(ctx context.Context, clusterGrantID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, workspacesOfGrant, clusterGrantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

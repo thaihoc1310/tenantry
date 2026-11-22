@@ -830,3 +830,55 @@ func TestDeleteOrganization(t *testing.T) {
 		t.Fatalf("audit %+v", trail)
 	}
 }
+
+// Changing a grant's storage classes renders every Workspace of it again:
+// an idle one gets a workspace.update; a busy one the new CR under its
+// operation under way (PRODUCT-PLAN §5.5).
+func TestStorageClassesRenderEveryWorkspace(t *testing.T) {
+	h, db, orgID, owner, admins, devs := workspaceOrg(t)
+	ids := map[string]string{}
+	for _, slug := range []string{"solar", "wind"} {
+		rec := createWorkspace(h, owner, "zeta", workspaceBody(slug, admins, devs, `"resources":{"requestsCpu":"500m","requestsMemory":"1Gi","limitsCpu":"1","limitsMemory":"2Gi","pods":5,"requestsStorage":"1Gi","namespaceQuota":1},"namespaces":[]`))
+		var c oapi.WorkspaceAccepted
+		if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &c) != nil {
+			t.Fatalf("create %s: %d %s", slug, rec.Code, rec.Body)
+		}
+		ids[slug] = c.Workspace.Id
+	}
+	settle(t, db, ids["solar"]) // wind is still Provisioning
+	admin := newSession(t, db, "usr-alice", "platform-admin")
+	put := func(classes string) int {
+		return asAdmin(h, admin, http.MethodPut, "/api/v1/admin/organizations/"+orgID+"/cluster-grants/cluster-a", "", `{"clusterId":"cluster-a","maxWorkspaces":2,"maxNamespacesTotal":6,
+"resources":{"requestsCpu":"2","requestsMemory":"4Gi","limitsCpu":"4","limitsMemory":"8Gi","pods":20,"requestsStorage":"20Gi"},
+"sharedPoolIds":["shared-general"],"networkPoolIds":["onboarding-pod-network"],"allowedStorageClasses":`+classes+`}`).Code
+	}
+	if put(`["standard"]`) != 200 || count(t, db, `SELECT count(*) FROM outbox_events`) != 2 {
+		t.Fatal("an unchanged grant rendered something")
+	}
+	if code := put(`["standard","fast"]`); code != 200 {
+		t.Fatalf("change classes: %d", code)
+	}
+	classes := func(wsID string) string {
+		var c string
+		if err := db.QueryRow(context.Background(), `SELECT payload->'spec'->>'storageClasses' FROM outbox_events e JOIN operations o ON o.id = e.operation_id
+			WHERE o.resource_id = $1 ORDER BY e.id DESC LIMIT 1`, wsID).Scan(&c); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	if c := classes(ids["solar"]); c != `["standard", "fast"]` {
+		t.Fatalf("solar classes %s", c)
+	}
+	if c := classes(ids["wind"]); c != `["standard", "fast"]` {
+		t.Fatalf("wind classes %s", c)
+	}
+	if n := count(t, db, `SELECT count(*) FROM operations WHERE resource_id = $1 AND type = 'workspace.update'`, ids["solar"]); n != 1 {
+		t.Fatal("solar has no workspace.update")
+	}
+	if n := count(t, db, `SELECT count(*) FROM operations WHERE resource_id = $1`, ids["wind"]); n != 1 {
+		t.Fatal("busy wind got a second operation")
+	}
+	if n := count(t, db, `SELECT count(*) FROM workspaces WHERE id = $1 AND desired_generation = 2 AND state = 'Provisioning'`, ids["wind"]); n != 1 {
+		t.Fatal("wind not at generation 2, still Provisioning")
+	}
+}

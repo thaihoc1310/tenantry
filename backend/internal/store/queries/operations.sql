@@ -27,3 +27,6 @@ RETURNING *;
 
 -- name: LockOperation :one
 SELECT * FROM operations WHERE id = $1 FOR UPDATE;
+
+-- name: GetOperation :one
+SELECT * FROM operations WHERE id = $1;

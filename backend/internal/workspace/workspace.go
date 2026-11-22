@@ -58,7 +58,12 @@ type Service struct {
 	orgs *org.Service
 }
 
+// NewService also has orgs render a grant's Workspaces again when its
+// storage classes change (RenderGrant).
 func NewService(db *pgxpool.Pool, orgs *org.Service) *Service {
+	orgs.StorageClassesChanged = func(ctx context.Context, q *store.Queries, grantID, actor string) error {
+		return RenderGrant(ctx, q, grantID, actor, "")
+	}
 	return &Service{db: db, q: store.New(db), orgs: orgs}
 }
 
