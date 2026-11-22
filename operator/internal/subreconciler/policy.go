@@ -67,8 +67,9 @@ const capsuleReconciling = "Reconciling"
 // replicationRaceGrace is how long a GlobalTenantResource may stay
 // Ready=False from a race before it counts as a failure. Capsule 0.15.2
 // replicates into a new Namespace from two controllers at once and the one
-// that loses the race fails with AlreadyExists (createTarget); its next
-// reconcile, a few seconds later, succeeds. Past this, Capsule is stuck for
+// that loses the race fails: AlreadyExists when both create an object
+// (createTarget), Conflict ("the object has been modified") when both update
+// it; its next reconcile, a few seconds later, succeeds (seen on the lab). Past this, Capsule is stuck for
 // real and the Workspace must say so.
 const replicationRaceGrace = 2 * time.Minute
 
@@ -77,8 +78,8 @@ var now = time.Now
 
 // replicationRace looks at a replication's items when it is Ready=False:
 // retrying is true while, within replicationRaceGrace, every failed item
-// failed only because another writer created it first, or no item failed at
-// all (the condition is behind its items). detail carries the items' own
+// failed only because another writer created or changed it first, or no
+// item failed at all (the condition is behind its items). detail carries the items' own
 // messages either way.
 func replicationRace(obj *unstructured.Unstructured, cond map[string]any) (retrying bool, detail string) {
 	items, found, _ := unstructured.NestedSlice(obj.Object, "status", "processedItems")
@@ -95,7 +96,7 @@ func replicationRace(obj *unstructured.Unstructured, cond map[string]any) (retry
 		}
 		msg, _ := st["message"].(string)
 		messages = append(messages, msg)
-		raced = raced && strings.Contains(msg, "already exists")
+		raced = raced && (strings.Contains(msg, "already exists") || strings.Contains(msg, "the object has been modified"))
 	}
 	detail = strings.Join(messages, "; ")
 	if len(messages) == 0 {

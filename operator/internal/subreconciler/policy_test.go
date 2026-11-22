@@ -47,15 +47,17 @@ func TestReplicationRace(t *testing.T) {
 			"processedItems": items,
 		}}}
 	}
+	conflict := "apply failed for item 0/raw-3: applying object failed: Operation cannot be fulfilled on networkpolicies.networking.k8s.io \"tenant-allow-dns\": the object has been modified; please apply your changes to the latest version and try again"
 	raced := "apply failed for item 0/raw-1: creating target: networkpolicies \"tenant-default-deny\" already exists"
 	for name, c := range map[string]struct {
 		obj  *unstructured.Unstructured
 		want string
 	}{
-		"only already exists":        {gtr(10*time.Second, raced), ReasonProgressing},
-		"another error":              {gtr(10*time.Second, raced, "apply failed for item 0/raw-2: admission webhook denied"), ReasonCapsuleNotReady},
-		"condition behind its items": {gtr(10 * time.Second), ReasonProgressing},
-		"race past 2 minutes":        {gtr(3*time.Minute, raced), ReasonCapsuleNotReady},
+		"only already exists":         {gtr(10*time.Second, raced), ReasonProgressing},
+		"already exists and conflict": {gtr(10*time.Second, raced, conflict), ReasonProgressing},
+		"another error":               {gtr(10*time.Second, raced, "apply failed for item 0/raw-2: admission webhook denied"), ReasonCapsuleNotReady},
+		"condition behind its items":  {gtr(10 * time.Second), ReasonProgressing},
+		"race past 2 minutes":         {gtr(3*time.Minute, raced), ReasonCapsuleNotReady},
 	} {
 		res, done := capsuleReady("PolicyReady", c.obj, "LimitRange replication x")
 		if done || res.Condition.Reason != c.want {
