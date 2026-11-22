@@ -1,0 +1,23 @@
+# The portal's static files (deploy/Dockerfile.web).
+image:
+  repository: tenantry/web
+  tag: ""            # defaults to the chart appVersion
+  pullPolicy: IfNotPresent
+
+replicas: 1
+resources:
+  requests: { cpu: 10m, memory: 16Mi }
+  limits: { memory: 64Mi }
+
+# The portal host: / goes to these static files, /api and /auth to the
+# Platform API of the tenantry-backend release in the same namespace, so the
+# browser sees one origin (architecture/06-security-and-identity.md §3).
+ingress:
+  host: ""                      # required, e.g. portal.example.com
+  className: platform-shared
+  clusterIssuer: ""             # cert-manager ClusterIssuer of the host's certificate; required
+  apiService: tenantry-api      # Service of the Platform API
+  apiPort: http
+
+nodeSelector: {}
+tolerations: []

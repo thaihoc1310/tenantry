@@ -77,11 +77,17 @@ deploy: ## Install or upgrade the Tenantry charts on the lab (values in deploy/c
 CHART_LINT_SET := --set database.existingSecret=lint --set api.auth.existingSecret=lint \
 	--set api.auth.issuer=https://auth.example.com/realms/tenantry --set api.auth.publicURL=https://portal.example.com
 IMAGE ?= tenantry/backend:dev
-image: ## Build the backend image (every binary, one image)
+WEB_LINT_SET := --set ingress.host=portal.example.com --set ingress.clusterIssuer=lint
+image: ## Build the backend and portal images (make deploy builds and loads them itself)
 	docker build -f deploy/Dockerfile.backend -t $(IMAGE) $(BACKEND)
-chart-lint: ## Lint and render the tenantry-backend chart
+	docker build -f deploy/Dockerfile.web -t tenantry/web:dev $(WEB)
+chart-lint: ## Lint and render the charts
 	helm lint deploy/charts/tenantry-backend $(CHART_LINT_SET)
 	helm template tenantry deploy/charts/tenantry-backend $(CHART_LINT_SET) >/dev/null
+	helm template tenantry deploy/charts/tenantry-backend $(CHART_LINT_SET) --set seed.enabled=true \
+		--set seed.proxyEndpoint=https://kube.example.com --set seed.consoleURL=https://console.example.com --set seed.appsDomain=apps.example.com >/dev/null
+	helm lint deploy/charts/tenantry-web $(WEB_LINT_SET)
+	helm template tenantry-web deploy/charts/tenantry-web $(WEB_LINT_SET) >/dev/null
 
 .PHONY: generate build fmt fmt-check vet lint test
 generate: ## Regenerate code from openapi/tenantry.v1.yaml, Go and TypeScript (commit the result)

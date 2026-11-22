@@ -52,3 +52,15 @@ migrate:
   resources:
     requests: { cpu: 20m, memory: 64Mi }
     limits: { memory: 128Mi }
+
+# Starting data (cmd/tenantry-seed): the cluster this chart runs on, its
+# shared pool, the shared network pool and the onboarding policy.
+seed:
+  enabled: false
+  clusterId: cluster-a
+  clusterName: Cluster A
+  proxyEndpoint: ""   # Capsule Proxy URL, the server in tenant kubeconfigs
+  consoleURL: ""      # Headlamp
+  appsDomain: ""      # tenant Routes: <name>-<workspace>.<appsDomain>
+  networkCIDR: 10.240.0.0/16
+  storageClass: standard

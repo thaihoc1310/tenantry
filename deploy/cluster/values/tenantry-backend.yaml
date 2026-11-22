@@ -12,6 +12,10 @@ api:
   # policy denies 192.168.0.0/16 (architecture/05-network-and-scheduling.md).
   trustedProxies: [192.168.0.0/16]
 
+# Starting data; the endpoints come from env.sh (deploy.sh passes them).
+seed:
+  enabled: true
+
 # Central plane: the system pool (architecture/05-network-and-scheduling.md §1).
 nodeSelector:
   tenantry.io/compute-pool: system

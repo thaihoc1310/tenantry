@@ -1,0 +1,52 @@
+{{- if .Values.seed.enabled }}
+# The data an installation starts from: the cluster, its pools and the
+# onboarding policy (backend/cmd/tenantry-seed). Runs after every install and
+# upgrade; existing rows are kept as they are, so a re-run changes nothing
+# and never undoes an Admin's change.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tenantry-seed
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: seed
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        {{- include "tenantry.labels" . | nindent 8 }}
+        app.kubernetes.io/component: seed
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      {{- with include "tenantry.scheduling" . | trim }}{{ . | nindent 6 }}{{ end }}
+      securityContext:
+        {{- include "tenantry.podSecurity" . | nindent 8 }}
+      containers:
+        - name: seed
+          image: {{ include "tenantry.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [/usr/local/bin/tenantry-seed]
+          args:
+            {{- with .Values.seed }}
+            - --cluster-id={{ .clusterId }}
+            - --cluster-name={{ .clusterName }}
+            - --proxy-endpoint={{ required "seed.proxyEndpoint is required" .proxyEndpoint }}
+            - --console-url={{ required "seed.consoleURL is required" .consoleURL }}
+            - --apps-domain={{ required "seed.appsDomain is required" .appsDomain }}
+            - --network-cidr={{ .networkCIDR }}
+            - --storage-class={{ .storageClass }}
+            {{- end }}
+          env:
+            {{- include "tenantry.env" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.migrate.resources | nindent 12 }}
+          securityContext:
+            {{- include "tenantry.containerSecurity" . | nindent 12 }}
+{{- end }}

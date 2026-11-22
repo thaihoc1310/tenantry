@@ -69,8 +69,17 @@ DaemonSet chạy trên mọi node. Mọi namespace ở mức Pod Security `restr
 
 - **Trang admin Keycloak** không ra internet:
   `kubectl -n keycloak port-forward svc/keycloak-http 8080:80`, mở `http://localhost:8080/admin/`.
-- **Image backend** chưa có registry: build bằng `make image`, nạp vào containerd của từng node
-  (`docker save tenantry/backend:dev | ssh <node> sudo ctr -n k8s.io images import -`), rồi `make deploy`.
+- **`make deploy`** cài Tenantry lên cụm: build image backend và portal, nạp vào containerd của các node
+  `SYSTEM_NODES` qua ssh (chưa có registry; push lên Docker Hub là công khai), sinh Secret
+  `tenantry-portal` một lần, rồi cài hai chart `tenantry-backend` (migrate trước, seed sau) và `tenantry-web`
+  (Ingress `https://portal.<zone>`). Tag image là id của image, nên chạy lại mà không đổi gì thì không Pod
+  nào khởi động lại.
+- **Mailpit** (hộp thư giả nhận thư xác minh email của Keycloak) không ra internet:
+  `kubectl -n keycloak port-forward svc/mailpit 8025:8025`, mở `http://localhost:8025`.
+- **Realm**: `60-keycloak.sh` áp các thay đổi của `deploy/keycloak/realm-tenantry.json` vào realm đang chạy
+  (`realm-sync.py`: cài đặt realm, role, client). User, group, membership và client secret giữ nguyên.
+- **`make e2e`**: Playwright trên portal thật (đăng ký user mới, xác minh email qua Mailpit, xin tạo
+  Organization, Admin duyệt). Mỗi lần chạy để lại các account `e2e…` và Organization của chúng.
 
 ## Let's Encrypt: staging và production
 

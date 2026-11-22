@@ -127,6 +127,7 @@ check "https://${AUTH_HOST} serves the tenantry realm" \
 check "the master realm is not reachable from outside" status_is "https://${AUTH_HOST}/realms/master/.well-known/openid-configuration" 404
 check "the admin console is not reachable from outside" status_is "https://${AUTH_HOST}/admin/" 404
 check "Keycloak issues a token for the kubernetes audience" token_for_kubernetes
+check "Mailpit, where Keycloak sends verification mail, is ready" field_is deployment/mailpit '{.status.availableReplicas}' 1 keycloak
 
 # accepts_keycloak_token SERVER CA_FILE: present a Keycloak token alone (a
 # kubeconfig with that server and nothing else, so the admin certificate is

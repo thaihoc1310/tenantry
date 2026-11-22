@@ -1,0 +1,11 @@
+# tenantry-web on this cluster (make deploy). Host, issuer and image tag come
+# from env.sh and deploy.sh.
+
+# Central plane: the system pool (architecture/05-network-and-scheduling.md §1).
+nodeSelector:
+  tenantry.io/compute-pool: system
+tolerations:
+  - key: tenantry.io/compute-pool
+    operator: Equal
+    value: system
+    effect: NoSchedule

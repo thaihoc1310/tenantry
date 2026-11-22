@@ -8,9 +8,19 @@
   "registrationEmailAsUsername": false,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
-  "verifyEmail": false,
+  "verifyEmail": true,
   "resetPasswordAllowed": false,
   "rememberMe": false,
+
+  "smtpServer": {
+    "host": "mailpit.keycloak.svc",
+    "port": "1025",
+    "from": "no-reply@${PORTAL_HOST}",
+    "fromDisplayName": "Tenantry",
+    "auth": "false",
+    "ssl": "false",
+    "starttls": "false"
+  },
 
   "accessTokenLifespan": 300,
   "ssoSessionIdleTimeout": 28800,
@@ -48,8 +58,8 @@
       "directAccessGrantsEnabled": false,
       "implicitFlowEnabled": false,
       "serviceAccountsEnabled": false,
-      "redirectUris": ["https://${PORTAL_HOST}/auth/callback"],
-      "webOrigins": ["https://${PORTAL_HOST}"],
+      "redirectUris": ["https://${PORTAL_HOST}/auth/callback", "http://localhost:5173/auth/callback"],
+      "webOrigins": ["https://${PORTAL_HOST}", "http://localhost:5173"],
       "attributes": {
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "https://${PORTAL_HOST}/"

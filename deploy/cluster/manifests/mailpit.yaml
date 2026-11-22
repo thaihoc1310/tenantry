@@ -1,0 +1,66 @@
+# Mailpit, the fake mailbox Keycloak sends verification mail to
+# (architecture/06-security-and-identity.md §3). Mail never leaves the
+# cluster, and there is no Ingress: the box holds the verification and
+# password-reset links of every user, so only someone allowed to
+# port-forward in this namespace reads it:
+#   kubectl -n keycloak port-forward svc/mailpit 8025:8025   (http://localhost:8025)
+# Messages live in memory and go when the Pod restarts.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailpit
+  namespace: keycloak
+  labels: {app.kubernetes.io/name: mailpit, app.kubernetes.io/part-of: tenantry}
+spec:
+  selector: {app.kubernetes.io/name: mailpit}
+  ports:
+    - {name: smtp, port: 1025, targetPort: smtp}
+    - {name: http, port: 8025, targetPort: http}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailpit
+  namespace: keycloak
+  labels: {app.kubernetes.io/name: mailpit, app.kubernetes.io/part-of: tenantry}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: mailpit}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: mailpit, app.kubernetes.io/part-of: tenantry}
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector: {tenantry.io/compute-pool: system}
+      tolerations:
+        - {key: tenantry.io/compute-pool, operator: Equal, value: system, effect: NoSchedule}
+      # The image runs as root by default; it needs no privilege (ports above 1024).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: mailpit
+          image: axllent/mailpit:v1.33.1@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce
+          env:
+            - {name: MP_MAX_MESSAGES, value: "500"}
+          ports:
+            - {name: smtp, containerPort: 1025}
+            - {name: http, containerPort: 8025}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}

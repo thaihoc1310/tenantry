@@ -1,0 +1,33 @@
+# https://<portal host>: the SPA, and under the same origin the Platform
+# API's /api and /auth, so session cookies are first-party and need no CORS.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tenantry-portal
+  labels:
+    {{- include "web.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ required "ingress.clusterIssuer is required" .Values.ingress.clusterIssuer }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts: [{{ required "ingress.host is required" .Values.ingress.host }}]
+      secretName: tenantry-portal-tls
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          {{- range list "/api" "/auth" }}
+          - path: {{ . }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $.Values.ingress.apiService }}
+                port: {name: {{ $.Values.ingress.apiPort }}}
+          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: tenantry-web
+                port: {name: http}

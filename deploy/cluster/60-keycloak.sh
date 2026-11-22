@@ -44,3 +44,11 @@ kubectl -n keycloak exec keycloak-0 -- bash -c '
     --user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD" >/dev/null &&
   $kcadm update realms/master --config $cfg -s attributes.frontendUrl=http://localhost:8080; rc=$?
   rm -f $cfg; exit $rc'
+
+# Keycloak imports realm-tenantry.json only when the realm does not exist;
+# later changes of the file are applied to the running realm here: realm
+# settings, roles and clients. Users, groups, memberships and client secrets
+# are left as they are (realm-sync.py).
+PORTAL_HOST="${PORTAL_HOST}" CONSOLE_HOST="${CONSOLE_HOST}" \
+  "${CLUSTER_DIR}/realm-sync.py" "${CLUSTER_DIR}/../keycloak/realm-tenantry.json" |
+  kubectl -n keycloak exec -i keycloak-0 -- bash -s

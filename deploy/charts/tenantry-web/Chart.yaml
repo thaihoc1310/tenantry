@@ -1,0 +1,6 @@
+apiVersion: v2
+name: tenantry-web
+description: Tenantry portal (static files) and the Ingress of the portal host
+type: application
+version: 0.1.0
+appVersion: dev
