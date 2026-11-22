@@ -98,8 +98,9 @@ async function openConsole(page: Page, wsId: string) {
   const consolePage = await page.context().newPage()
   await consolePage.goto(link.body.url)
   // Headlamp asks once to sign in; Keycloak answers at once, the session is the portal's.
-  const signIn = consolePage.getByRole('button', { name: /sign in/i })
-  if (await signIn.isVisible({ timeout: 10_000 }).catch(() => false)) await signIn.click()
+  const signIn = consolePage.getByRole('button', { name: /^sign in$/i })
+  await signIn.waitFor({ timeout: 30_000 })
+  await signIn.click()
   await consolePage.waitForURL((u) => u.host === new URL(link.body.url).host, { timeout: 60_000 })
   return consolePage
 }
@@ -222,12 +223,26 @@ test('the console signs in someone in 20 groups', async ({ browser }) => {
   expect((claims.groups ?? []).filter((g) => g.startsWith('org_')).length).toBeGreaterThanOrEqual(21)
 
   const headlamp = await openConsole(page, ws.id)
-  const cookies = await headlamp.context().cookies(headlamp.url())
-  // Reported in full: a browser drops a cookie over about 4 KiB.
-  const sizes = cookies.map((c) => `${c.name}=${c.name.length + c.value.length}`).join(', ')
-  test.info().annotations.push({ type: 'console cookies (bytes)', description: sizes })
-  console.log(`console cookies for ${claims.groups?.length} groups, token ${token.length} bytes: ${sizes}`)
-  await expect(headlamp.getByText(ws.ns).first()).toBeVisible({ timeout: 60_000 })
+  // The cookies are reported whether Headlamp lets the person in or not:
+  // a browser drops a cookie over about 4 KiB.
+  const report = async () => {
+    const host = new URL(headlamp.url()).host
+    const cookies = (await headlamp.context().cookies()).filter((c) => host.endsWith(c.domain.replace(/^\./, '')))
+    const stored = await headlamp.evaluate(() =>
+      Object.keys(localStorage).map((k) => `localStorage ${k}=${k.length + (localStorage.getItem(k) ?? '').length}`),
+    )
+    const sizes = [
+      ...cookies.map((c) => `${c.name}${c.path === '/' ? '' : ` (path ${c.path})`}=${c.name.length + c.value.length}`),
+      ...stored,
+    ].join(', ')
+    test.info().annotations.push({ type: 'console cookies (bytes)', description: sizes })
+    console.log(`console cookies for ${claims.groups?.length} groups, token ${token.length} bytes: ${sizes}`)
+  }
+  try {
+    await expect(headlamp.getByText(ws.ns).first()).toBeVisible({ timeout: 60_000 })
+  } finally {
+    await report()
+  }
   await headlamp.screenshot({ path: test.info().outputPath('headlamp-20-groups.png'), fullPage: true })
 
   await cleanUp()
