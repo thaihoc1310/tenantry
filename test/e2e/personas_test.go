@@ -238,6 +238,15 @@ func TestPersonas(t *testing.T) {
 	if err := setPoolNodes(adm, func(n []string) []string { return without(n, dedicatedNode) }); err != nil {
 		t.Fatal(err)
 	}
+	// Out of the pool, wk3 still runs the Pods it had (Solar's app among
+	// them): the Platform Admin drains it, then uncordons it, before the
+	// grant, which wants a clean node (PRODUCT-PLAN §24.3).
+	c.add("uncordon wk3", func() { _, _ = admin(t, "", "uncordon", dedicatedNode) })
+	if out, err := admin(t, "", "drain", dedicatedNode, "--ignore-daemonsets", "--delete-emptydir-data", "--timeout=4m"); err != nil {
+		t.Fatalf("drain %s: %s", dedicatedNode, out)
+	}
+	mustAdmin(t, "uncordon", dedicatedNode)
+	t.Logf("%s drained and uncordoned", dedicatedNode)
 	var give struct {
 		Items      []struct{ ID string }
 		Operations []struct{ ID string }
