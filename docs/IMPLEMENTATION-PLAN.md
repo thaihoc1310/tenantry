@@ -351,7 +351,7 @@ Trong một feature: trang (`*Page.vue`), component riêng của feature, và m�
 
 ### 6.3 Quy ước
 
-- **Auth**: SPA không giữ token; `GET /api/v1/me` để biết user, org list, có `platform-admin` hay không. Login = chuyển tới `/auth/login`; logout = `POST /auth/logout`; gặp `401` thì chuyển tới `/auth/login`. Mọi request ghi gửi header `X-CSRF-Token` lấy từ cookie `tenantry_csrf`. Phía server: `architecture/06-security-and-identity.md` mục 3.
+- **Auth**: SPA không giữ token; `GET /api/v1/me` để biết user và có `platform-admin` hay không; danh sách Organization lấy từ `GET /api/v1/organizations` (có phân trang cursor). Login = chuyển tới `/auth/login`; logout = `POST /auth/logout`; gặp `401` thì chuyển tới `/auth/login`. Mọi request ghi gửi header `X-CSRF-Token` lấy từ cookie `tenantry_csrf`. Phía server: `architecture/06-security-and-identity.md` mục 3.
 - **Lỗi**: mọi lỗi API hiển thị mã ổn định (`SLUG_TAKEN`, `QUOTA_EXCEEDED`…) kèm câu giải thích tra từ `i18n/` và `requestId`. Lỗi gắn với một trường thì hiện ngay dưới trường đó; lỗi khác hiện bằng Notification. Mã lỗi lấy từ enum của OpenAPI, nên UI, backend và test E2E dùng chung một nguồn.
 - **Ba trạng thái của mọi màn có dữ liệu**: đang tải (skeleton), rỗng (`EmptyState` có câu giải thích và hành động kế tiếp), lỗi (`ErrorState` có nút thử lại). Danh sách bắt buộc ở `architecture/07-ux-wireflow.md` mục 5.
 - **Request ghi** gửi `Idempotency-Key` sinh một lần cho mỗi lần mở form, để bấm lại hay mạng chập chờn không tạo hai bản ghi.
