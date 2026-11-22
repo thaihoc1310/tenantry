@@ -711,6 +711,12 @@ Trong một feature: trang (`*Page.vue`), component riêng của feature, và m�
   6. Secret/config cleanup: không credential trong repo, chart values có `existingSecret`, header bảo mật. Thu hẹp quyền của client `tenantry-sync` bằng fine-grained admin permissions v2 của Keycloak (`manage-users` mạnh ngang Platform Admin, `architecture/06-security-and-identity.md` mục 7).
   7. Known limitations + ADR còn thiếu (3, 6, 11–15, 19–22).
   8. Rehearsal demo §28 theo script thời gian.
+- **Kết quả đã có (phía cụm, track B, 2026-11-23)**: report ở `docs/report/` (nhánh `feat/operator`):
+  - `isolation-cluster.md`: 8/8 subtest, 31 lần chặn đúng, mỗi threat §20.3 phía cụm ghi lớp đã chặn (VAP, RBAC, NetworkPolicy, Capsule, Pod Security, PodNodeSelector, PodTolerationRestriction trả 500 chứ không 403); phần Dedicated chạy lại qua API admin sau M8.
+  - `failure-cluster.md`: restart controller giữa provisioning (Tenant cùng UID, không có gì nhân đôi), Pod kẹt giữ việc xóa, `:force` khi Pod kẹt (CR mất dưới 1s, Event `ForceDeleteLeftovers`), PVC finalizer bị Capsule gỡ; runbook Pod kẹt.
+  - `benchmark.md` + CSV: tạo cùng lúc N Workspace nhỏ, Ready p50/p95: N=10 1m42s/2m22s, N=20 2m36s/3m52s, N=50 3m51s/8m48s; xóa hết 15s/27s/1m38s; một Workspace một mình 10–20s; mỗi Workspace operator ~200 request, Capsule ~900; không có 5xx mới ở apiserver. Baseline: kind 33s và ~655 MiB, vcluster ~26s và ~303 MiB mỗi instance, Workspace 0 Pod thêm.
+  - Capsule đặt nhịp chứ không phải operator (`--workers=1`, QPS 20, burst 30): Ready tăng gần tuyến tính theo N; chỉnh values Capsule rồi đo lại là việc tiếp theo.
+  - Khi tải cao, Capsule replicate `GlobalTenantResource` thất bại tạm thời, Workspace `Degraded` một lúc rồi tự lên lại (giới hạn đã biết). Reason `Reconciling` của Capsule được coi là đang xử lý, không phải lỗi.
 - **Đầu ra kiểm chứng**: `make test-e2e` xanh trên lab; báo cáo benchmark có bảng/biểu đồ; DoD Phase 1 (spec §27, 15 mục) tick hết.
 - **Test bắt buộc**: tất cả suite; report lưu `docs/report/`.
 - **Phụ thuộc**: M10, M11.
