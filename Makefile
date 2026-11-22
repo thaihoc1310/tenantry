@@ -33,6 +33,12 @@ migrate-down: ## Roll back the last migration
 migrate-status: ## Show which migrations are applied
 	cd $(BACKEND) && go run ./cmd/tenantry-migrate status
 
+.PHONY: seed
+# The lab's endpoints (deploy/cluster/env.sh); override for another cluster.
+SEED_FLAGS ?= --proxy-endpoint https://kube-a.tenantry.site --console-url https://console-a.tenantry.site --apps-domain mvp.tenantry.site
+seed: ## Seed cluster-a, its pools and the onboarding policy; safe to re-run
+	cd $(BACKEND) && go run ./cmd/tenantry-seed $(SEED_FLAGS)
+
 .PHONY: run-api run-worker
 # Local logins go through the lab's Keycloak and land on the Vite dev server
 # (IMPLEMENTATION-PLAN §10). The portal client secret and a session key stay

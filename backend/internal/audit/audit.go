@@ -12,11 +12,13 @@ import (
 
 // Actions recorded so far; the list grows with the endpoints.
 const (
-	Login              = "user.login"
-	Logout             = "user.logout"
-	OrganizationCreate = "organization.create"
-	OrganizationUpdate = "organization.update"
-	OperationRetry     = "operation.retry"
+	Login               = "user.login"
+	Logout              = "user.logout"
+	OrganizationCreate  = "organization.create"
+	OrganizationUpdate  = "organization.update"
+	OrganizationApprove = "organization.approve"
+	OrganizationReject  = "organization.reject"
+	OperationRetry      = "operation.retry"
 )
 
 // Succeeded is the only result for now: every event is written by the

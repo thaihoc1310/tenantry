@@ -23,6 +23,7 @@ var statusOf = map[apperr.Code]int{
 
 	apperr.SlugTaken:         http.StatusConflict,
 	apperr.OrgRequestPending: http.StatusConflict,
+	apperr.ClusterNotReady:   http.StatusConflict,
 }
 
 // writeError answers with an ErrorResponse.

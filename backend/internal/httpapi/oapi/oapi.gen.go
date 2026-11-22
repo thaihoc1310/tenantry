@@ -24,6 +24,7 @@ import (
 
 // Defines values for ErrorCode.
 const (
+	CLUSTERNOTREADY      ErrorCode = "CLUSTER_NOT_READY"
 	CONFLICT             ErrorCode = "CONFLICT"
 	FORBIDDEN            ErrorCode = "FORBIDDEN"
 	IDEMPOTENCYKEYREUSED ErrorCode = "IDEMPOTENCY_KEY_REUSED"
@@ -40,6 +41,8 @@ const (
 // Valid indicates whether the value is a known member of the ErrorCode enum.
 func (e ErrorCode) Valid() bool {
 	switch e {
+	case CLUSTERNOTREADY:
+		return true
 	case CONFLICT:
 		return true
 	case FORBIDDEN:
@@ -115,6 +118,30 @@ func (e OrgRole) Valid() bool {
 	}
 }
 
+// Defines values for OrgStatus.
+const (
+	OrgStatusActive   OrgStatus = "Active"
+	OrgStatusDeleted  OrgStatus = "Deleted"
+	OrgStatusPending  OrgStatus = "Pending"
+	OrgStatusRejected OrgStatus = "Rejected"
+)
+
+// Valid indicates whether the value is a known member of the OrgStatus enum.
+func (e OrgStatus) Valid() bool {
+	switch e {
+	case OrgStatusActive:
+		return true
+	case OrgStatusDeleted:
+		return true
+	case OrgStatusPending:
+		return true
+	case OrgStatusRejected:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OrganizationStatus.
 const (
 	OrganizationStatusActive   OrganizationStatus = "Active"
@@ -136,6 +163,93 @@ func (e OrganizationStatus) Valid() bool {
 	}
 }
 
+// AdminOrganization defines model for AdminOrganization.
+type AdminOrganization struct {
+	CreatedAt   time.Time   `json:"createdAt"`
+	Description string      `json:"description"`
+	DisplayName string      `json:"displayName"`
+	Id          string      `json:"id"`
+	Owner       UserSummary `json:"owner"`
+
+	// Proposal Pending only, when an onboarding policy is active
+	Proposal *Approval `json:"proposal,omitempty"`
+
+	// ReviewNote Why the request was rejected; empty otherwise
+	ReviewNote string    `json:"reviewNote"`
+	Slug       string    `json:"slug"`
+	Status     OrgStatus `json:"status"`
+}
+
+// AdminOrganizationList defines model for AdminOrganizationList.
+type AdminOrganizationList struct {
+	Items []AdminOrganization `json:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"nextCursor,omitempty"`
+}
+
+// Approval defines model for Approval.
+type Approval struct {
+	// ClusterGrant What an organization may reserve on one cluster (PRODUCT-PLAN §5.2).
+	// Every pool must be on `clusterId`; a network pool must be shared or
+	// the organization's own. Shared mode is usable when `sharedPoolIds` is
+	// not empty.
+	ClusterGrant ClusterGrantInput `json:"clusterGrant"`
+
+	// Entitlement Limits that do not depend on a cluster (PRODUCT-PLAN §5.1).
+	Entitlement Entitlement `json:"entitlement"`
+}
+
+// ApprovedOrganization defines model for ApprovedOrganization.
+type ApprovedOrganization struct {
+	ClusterGrant ClusterGrant `json:"clusterGrant"`
+
+	// Entitlement Limits that do not depend on a cluster (PRODUCT-PLAN §5.1).
+	Entitlement  Entitlement       `json:"entitlement"`
+	Organization AdminOrganization `json:"organization"`
+}
+
+// ClusterGrant defines model for ClusterGrant.
+type ClusterGrant struct {
+	AllowedStorageClasses []string `json:"allowedStorageClasses"`
+	ClusterId             string   `json:"clusterId"`
+	Id                    string   `json:"id"`
+	IsDefault             bool     `json:"isDefault"`
+	MaxNamespacesTotal    int      `json:"maxNamespacesTotal"`
+	MaxWorkspaces         int      `json:"maxWorkspaces"`
+	NetworkPoolIds        []string `json:"networkPoolIds"`
+
+	// Resources CPU, memory and pods bound the organization's Shared Workspaces only;
+	// storage bounds every Workspace (PRODUCT-PLAN §5.2).
+	Resources     GrantResources `json:"resources"`
+	SharedPoolIds []string       `json:"sharedPoolIds"`
+}
+
+// ClusterGrantInput What an organization may reserve on one cluster (PRODUCT-PLAN §5.2).
+// Every pool must be on `clusterId`; a network pool must be shared or
+// the organization's own. Shared mode is usable when `sharedPoolIds` is
+// not empty.
+type ClusterGrantInput struct {
+	AllowedStorageClasses []string `json:"allowedStorageClasses"`
+	ClusterId             string   `json:"clusterId"`
+	MaxNamespacesTotal    int      `json:"maxNamespacesTotal"`
+	MaxWorkspaces         int      `json:"maxWorkspaces"`
+	NetworkPoolIds        []PoolId `json:"networkPoolIds"`
+
+	// Resources CPU, memory and pods bound the organization's Shared Workspaces only;
+	// storage bounds every Workspace (PRODUCT-PLAN §5.2).
+	Resources     GrantResources `json:"resources"`
+	SharedPoolIds []PoolId       `json:"sharedPoolIds"`
+}
+
+// Entitlement Limits that do not depend on a cluster (PRODUCT-PLAN §5.1).
+type Entitlement struct {
+	// MaxGroups Includes the three default groups.
+	MaxGroups          int `json:"maxGroups"`
+	MaxMembers         int `json:"maxMembers"`
+	MaxWorkspacesTotal int `json:"maxWorkspacesTotal"`
+}
+
 // ErrorCode Stable error codes the UI switches on (IMPLEMENTATION-PLAN §3.3). Grows with the endpoints.
 type ErrorCode string
 
@@ -148,6 +262,36 @@ type ErrorResponse struct {
 	Details   *map[string]interface{} `json:"details,omitempty"`
 	Message   string                  `json:"message"`
 	RequestId string                  `json:"requestId"`
+}
+
+// GrantResources CPU, memory and pods bound the organization's Shared Workspaces only;
+// storage bounds every Workspace (PRODUCT-PLAN §5.2).
+type GrantResources struct {
+	// LimitsCpu A Kubernetes quantity, e.g. `500m` or `2` for CPU, `4Gi` for memory and storage.
+	//
+	// Example: 4Gi
+	LimitsCpu Quantity `json:"limitsCpu"`
+
+	// LimitsMemory A Kubernetes quantity, e.g. `500m` or `2` for CPU, `4Gi` for memory and storage.
+	//
+	// Example: 4Gi
+	LimitsMemory Quantity `json:"limitsMemory"`
+	Pods         int      `json:"pods"`
+
+	// RequestsCpu A Kubernetes quantity, e.g. `500m` or `2` for CPU, `4Gi` for memory and storage.
+	//
+	// Example: 4Gi
+	RequestsCpu Quantity `json:"requestsCpu"`
+
+	// RequestsMemory A Kubernetes quantity, e.g. `500m` or `2` for CPU, `4Gi` for memory and storage.
+	//
+	// Example: 4Gi
+	RequestsMemory Quantity `json:"requestsMemory"`
+
+	// RequestsStorage A Kubernetes quantity, e.g. `500m` or `2` for CPU, `4Gi` for memory and storage.
+	//
+	// Example: 4Gi
+	RequestsStorage Quantity `json:"requestsStorage"`
 }
 
 // Me defines model for Me.
@@ -201,6 +345,9 @@ type OperationState string
 // OrgRole defines model for OrgRole.
 type OrgRole string
 
+// OrgStatus defines model for OrgStatus.
+type OrgStatus string
+
 // Organization defines model for Organization.
 type Organization struct {
 	CreatedAt   time.Time `json:"createdAt"`
@@ -244,8 +391,36 @@ type OrganizationPatch struct {
 	DisplayName *string `json:"displayName,omitempty"`
 }
 
+// PoolId defines model for PoolId.
+type PoolId = string
+
+// Quantity A Kubernetes quantity, e.g. `500m` or `2` for CPU, `4Gi` for memory and storage.
+//
+// Example: 4Gi
+type Quantity = string
+
+// Rejection defines model for Rejection.
+type Rejection struct {
+	Reason string `json:"reason"`
+}
+
+// UserSummary defines model for UserSummary.
+type UserSummary struct {
+	DisplayName string `json:"displayName"`
+
+	// Email Absent when Keycloak gave none
+	Email *string `json:"email,omitempty"`
+	Id    string  `json:"id"`
+}
+
+// AdminOrgId defines model for adminOrgId.
+type AdminOrgId = string
+
 // IdempotencyKey defines model for idempotencyKey.
 type IdempotencyKey = string
+
+// IdempotencyKeyRequired defines model for idempotencyKeyRequired.
+type IdempotencyKeyRequired = string
 
 // OperationId defines model for operationId.
 type OperationId = string
@@ -261,6 +436,32 @@ type IdempotencyKeyReused = ErrorResponse
 
 // RateLimited defines model for RateLimited.
 type RateLimited = ErrorResponse
+
+// AdminListOrganizationsParams defines parameters for AdminListOrganizations.
+type AdminListOrganizationsParams struct {
+	Status *OrgStatus `form:"status,omitempty" json:"status,omitempty"`
+	Limit  *int       `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque; pass `nextCursor` from the previous page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ApproveOrganizationParams defines parameters for ApproveOrganization.
+type ApproveOrganizationParams struct {
+	// IdempotencyKey As `Idempotency-Key`, and required here (IMPLEMENTATION-PLAN §3.4).
+	IdempotencyKey IdempotencyKeyRequired `json:"Idempotency-Key"`
+}
+
+// RejectOrganizationParams defines parameters for RejectOrganization.
+type RejectOrganizationParams struct {
+	// IdempotencyKey A UUID the client generates once per intended change and sends again
+	// on every retry of it (IMPLEMENTATION-PLAN §3.4). A repeat of a request
+	// that succeeded gets the stored response, marked `Idempotent-Replayed:
+	// true`, and changes nothing. A request that failed stores nothing, so
+	// it can be corrected and sent again under the same key. Keys are per
+	// user and kept 24 hours.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
+}
 
 // RetryOperationParams defines parameters for RetryOperation.
 type RetryOperationParams struct {
@@ -292,6 +493,12 @@ type CreateOrganizationParams struct {
 	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 }
 
+// ApproveOrganizationJSONRequestBody defines body for ApproveOrganization for application/json ContentType.
+type ApproveOrganizationJSONRequestBody = Approval
+
+// RejectOrganizationJSONRequestBody defines body for RejectOrganization for application/json ContentType.
+type RejectOrganizationJSONRequestBody = Rejection
+
 // CreateOrganizationJSONRequestBody defines body for CreateOrganization for application/json ContentType.
 type CreateOrganizationJSONRequestBody = OrganizationCreate
 
@@ -300,6 +507,15 @@ type PatchOrganizationJSONRequestBody = OrganizationPatch
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// AdminListOrganizations Every organization with its owner, oldest first (Platform Admin)
+	// (GET /admin/organizations)
+	AdminListOrganizations(w http.ResponseWriter, r *http.Request, params AdminListOrganizationsParams)
+	// ApproveOrganization Approve an organization request with its entitlement and default cluster grant (Platform Admin)
+	// (POST /admin/organizations/{orgId}:approve)
+	ApproveOrganization(w http.ResponseWriter, r *http.Request, orgId AdminOrgId, params ApproveOrganizationParams)
+	// RejectOrganization Reject an organization request with a reason the requester sees (Platform Admin)
+	// (POST /admin/organizations/{orgId}:reject)
+	RejectOrganization(w http.ResponseWriter, r *http.Request, orgId AdminOrgId, params RejectOrganizationParams)
 	// GetMe The signed-in user
 	// (GET /me)
 	GetMe(w http.ResponseWriter, r *http.Request)
@@ -326,6 +542,24 @@ type ServerInterface interface {
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
+
+// AdminListOrganizations Every organization with its owner, oldest first (Platform Admin)
+// (GET /admin/organizations)
+func (_ Unimplemented) AdminListOrganizations(w http.ResponseWriter, r *http.Request, params AdminListOrganizationsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ApproveOrganization Approve an organization request with its entitlement and default cluster grant (Platform Admin)
+// (POST /admin/organizations/{orgId}:approve)
+func (_ Unimplemented) ApproveOrganization(w http.ResponseWriter, r *http.Request, orgId AdminOrgId, params ApproveOrganizationParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RejectOrganization Reject an organization request with a reason the requester sees (Platform Admin)
+// (POST /admin/organizations/{orgId}:reject)
+func (_ Unimplemented) RejectOrganization(w http.ResponseWriter, r *http.Request, orgId AdminOrgId, params RejectOrganizationParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
 
 // GetMe The signed-in user
 // (GET /me)
@@ -377,6 +611,169 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// AdminListOrganizations operation middleware
+func (siw *ServerInterfaceWrapper) AdminListOrganizations(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params AdminListOrganizationsParams
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AdminListOrganizations(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ApproveOrganization operation middleware
+func (siw *ServerInterfaceWrapper) ApproveOrganization(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "orgId" -------------
+	var orgId AdminOrgId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "orgId", chi.URLParam(r, "orgId"), &orgId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "orgId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ApproveOrganizationParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKeyRequired
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("Header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ApproveOrganization(w, r, orgId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RejectOrganization operation middleware
+func (siw *ServerInterfaceWrapper) RejectOrganization(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "orgId" -------------
+	var orgId AdminOrgId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "orgId", chi.URLParam(r, "orgId"), &orgId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "orgId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RejectOrganizationParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = &IdempotencyKey
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RejectOrganization(w, r, orgId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetMe operation middleware
 func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request) {
@@ -741,6 +1138,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/operations/{operationId}:retry", wrapper.RetryOperation)
 	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/admin/organizations", wrapper.AdminListOrganizations)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/admin/organizations/{orgId}:approve", wrapper.ApproveOrganization)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/admin/organizations/{orgId}:reject", wrapper.RejectOrganization)
+	})
 
 	return r
 }
@@ -756,6 +1162,320 @@ type RateLimitedJSONResponse struct {
 	Body ErrorResponse
 
 	Headers RateLimitedResponseHeaders
+}
+
+type AdminListOrganizationsRequestObject struct {
+	Params AdminListOrganizationsParams
+}
+
+type AdminListOrganizationsResponseObject interface {
+	VisitAdminListOrganizationsResponse(w http.ResponseWriter) error
+}
+
+type AdminListOrganizations200JSONResponse AdminOrganizationList
+
+func (response AdminListOrganizations200JSONResponse) VisitAdminListOrganizationsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminListOrganizations400JSONResponse struct{ ErrorJSONResponse }
+
+func (response AdminListOrganizations400JSONResponse) VisitAdminListOrganizationsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminListOrganizations401JSONResponse ErrorResponse
+
+func (response AdminListOrganizations401JSONResponse) VisitAdminListOrganizationsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminListOrganizations403JSONResponse ErrorResponse
+
+func (response AdminListOrganizations403JSONResponse) VisitAdminListOrganizationsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ApproveOrganizationRequestObject struct {
+	OrgId  AdminOrgId `json:"orgId"`
+	Params ApproveOrganizationParams
+	Body   *ApproveOrganizationJSONRequestBody
+}
+
+type ApproveOrganizationResponseObject interface {
+	VisitApproveOrganizationResponse(w http.ResponseWriter) error
+}
+
+type ApproveOrganization200JSONResponse ApprovedOrganization
+
+func (response ApproveOrganization200JSONResponse) VisitApproveOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ApproveOrganization400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ApproveOrganization400JSONResponse) VisitApproveOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ApproveOrganization401JSONResponse ErrorResponse
+
+func (response ApproveOrganization401JSONResponse) VisitApproveOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ApproveOrganization403JSONResponse ErrorResponse
+
+func (response ApproveOrganization403JSONResponse) VisitApproveOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ApproveOrganization404JSONResponse ErrorResponse
+
+func (response ApproveOrganization404JSONResponse) VisitApproveOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ApproveOrganization409JSONResponse ErrorResponse
+
+func (response ApproveOrganization409JSONResponse) VisitApproveOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ApproveOrganization422JSONResponse struct {
+	IdempotencyKeyReusedJSONResponse
+}
+
+func (response ApproveOrganization422JSONResponse) VisitApproveOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ApproveOrganization429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response ApproveOrganization429JSONResponse) VisitApproveOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RejectOrganizationRequestObject struct {
+	OrgId  AdminOrgId `json:"orgId"`
+	Params RejectOrganizationParams
+	Body   *RejectOrganizationJSONRequestBody
+}
+
+type RejectOrganizationResponseObject interface {
+	VisitRejectOrganizationResponse(w http.ResponseWriter) error
+}
+
+type RejectOrganization200JSONResponse AdminOrganization
+
+func (response RejectOrganization200JSONResponse) VisitRejectOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RejectOrganization400JSONResponse struct{ ErrorJSONResponse }
+
+func (response RejectOrganization400JSONResponse) VisitRejectOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RejectOrganization401JSONResponse ErrorResponse
+
+func (response RejectOrganization401JSONResponse) VisitRejectOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RejectOrganization403JSONResponse ErrorResponse
+
+func (response RejectOrganization403JSONResponse) VisitRejectOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RejectOrganization404JSONResponse ErrorResponse
+
+func (response RejectOrganization404JSONResponse) VisitRejectOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RejectOrganization409JSONResponse ErrorResponse
+
+func (response RejectOrganization409JSONResponse) VisitRejectOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RejectOrganization422JSONResponse struct {
+	IdempotencyKeyReusedJSONResponse
+}
+
+func (response RejectOrganization422JSONResponse) VisitRejectOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RejectOrganization429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response RejectOrganization429JSONResponse) VisitRejectOrganizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type GetMeRequestObject struct {
@@ -1281,6 +2001,15 @@ func (response PatchOrganization429JSONResponse) VisitPatchOrganizationResponse(
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// AdminListOrganizations Every organization with its owner, oldest first (Platform Admin)
+	// (GET /admin/organizations)
+	AdminListOrganizations(ctx context.Context, request AdminListOrganizationsRequestObject) (AdminListOrganizationsResponseObject, error)
+	// ApproveOrganization Approve an organization request with its entitlement and default cluster grant (Platform Admin)
+	// (POST /admin/organizations/{orgId}:approve)
+	ApproveOrganization(ctx context.Context, request ApproveOrganizationRequestObject) (ApproveOrganizationResponseObject, error)
+	// RejectOrganization Reject an organization request with a reason the requester sees (Platform Admin)
+	// (POST /admin/organizations/{orgId}:reject)
+	RejectOrganization(ctx context.Context, request RejectOrganizationRequestObject) (RejectOrganizationResponseObject, error)
 	// GetMe The signed-in user
 	// (GET /me)
 	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
@@ -1341,6 +2070,100 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// AdminListOrganizations operation middleware
+func (sh *strictHandler) AdminListOrganizations(w http.ResponseWriter, r *http.Request, params AdminListOrganizationsParams) {
+	var request AdminListOrganizationsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AdminListOrganizations(ctx, request.(AdminListOrganizationsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AdminListOrganizations")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AdminListOrganizationsResponseObject); ok {
+		if err := validResponse.VisitAdminListOrganizationsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ApproveOrganization operation middleware
+func (sh *strictHandler) ApproveOrganization(w http.ResponseWriter, r *http.Request, orgId AdminOrgId, params ApproveOrganizationParams) {
+	var request ApproveOrganizationRequestObject
+
+	request.OrgId = orgId
+	request.Params = params
+
+	var body ApproveOrganizationJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ApproveOrganization(ctx, request.(ApproveOrganizationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ApproveOrganization")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ApproveOrganizationResponseObject); ok {
+		if err := validResponse.VisitApproveOrganizationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RejectOrganization operation middleware
+func (sh *strictHandler) RejectOrganization(w http.ResponseWriter, r *http.Request, orgId AdminOrgId, params RejectOrganizationParams) {
+	var request RejectOrganizationRequestObject
+
+	request.OrgId = orgId
+	request.Params = params
+
+	var body RejectOrganizationJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RejectOrganization(ctx, request.(RejectOrganizationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RejectOrganization")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RejectOrganizationResponseObject); ok {
+		if err := validResponse.VisitRejectOrganizationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // GetMe operation middleware
@@ -1543,65 +2366,90 @@ func (sh *strictHandler) PatchOrganization(w http.ResponseWriter, r *http.Reques
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"SHh6sf1SygWJXCVe1ztiGT96OPYebx//NwAA//8=",
+	"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",
+	"/y8AAP//",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

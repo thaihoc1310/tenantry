@@ -26,6 +26,7 @@ const (
 	// Specific conflicts the UI handles differently from a generic CONFLICT.
 	SlugTaken         Code = "SLUG_TAKEN"
 	OrgRequestPending Code = "ORG_REQUEST_PENDING"
+	ClusterNotReady   Code = "CLUSTER_NOT_READY"
 )
 
 type Error struct {

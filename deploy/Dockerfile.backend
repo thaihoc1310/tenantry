@@ -1,5 +1,5 @@
 # One image for every backend binary (tenantry-api, tenantry-worker,
-# tenantry-migrate); each Deployment picks its binary with `command`.
+# tenantry-migrate, tenantry-seed); each workload picks its binary with `command`.
 #
 #   docker build -f deploy/Dockerfile.backend -t tenantry/backend:dev backend
 

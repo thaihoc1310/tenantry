@@ -5,7 +5,10 @@
 package store
 
 import (
+	"net/netip"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type AuditEvent struct {
@@ -20,6 +23,56 @@ type AuditEvent struct {
 	At          time.Time
 }
 
+type Cluster struct {
+	ID              string
+	DisplayName     string
+	Status          string
+	ProxyEndpoint   string
+	ConsoleUrl      string
+	AppsDomain      string
+	Capabilities    []byte
+	LastHealthCheck *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type ClusterGrantNetworkPool struct {
+	GrantID string
+	PoolID  string
+}
+
+type ClusterGrantSharedPool struct {
+	GrantID string
+	PoolID  string
+}
+
+type Group struct {
+	ID              string
+	OrgID           string
+	DisplayName     string
+	MachineName     string
+	KeycloakGroupID *string
+	DeletedAt       *time.Time
+	SyncStatus      string
+	SyncAttempts    int32
+	NextSyncAt      time.Time
+	LastError       string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type GroupMember struct {
+	GroupID      string
+	UserID       string
+	DeletedAt    *time.Time
+	SyncStatus   string
+	SyncAttempts int32
+	NextSyncAt   time.Time
+	LastError    string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
 type IdempotencyKey struct {
 	UserID           string
 	Key              string
@@ -30,6 +83,26 @@ type IdempotencyKey struct {
 	ResponseLocation *string
 	ResponseBody     []byte
 	CreatedAt        time.Time
+}
+
+type NetworkPool struct {
+	ID                   string
+	ClusterID            string
+	OrgID                *string
+	Cidrs                []netip.Prefix
+	DefaultPrefixLength  int32
+	AllowedPrefixLengths []int32
+	CreatedAt            time.Time
+}
+
+type OnboardingPolicy struct {
+	ID                  string
+	DefaultClusterID    string
+	EntitlementTemplate []byte
+	GrantTemplate       []byte
+	Active              bool
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 type Operation struct {
@@ -59,6 +132,32 @@ type Organization struct {
 	ReviewNote  string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+type OrganizationClusterGrant struct {
+	ID                    string
+	OrgID                 string
+	ClusterID             string
+	IsDefault             bool
+	MaxWorkspaces         int32
+	MaxNamespacesTotal    int32
+	RequestsCpuMilli      int64
+	RequestsMemoryBytes   int64
+	LimitsCpuMilli        int64
+	LimitsMemoryBytes     int64
+	Pods                  int32
+	RequestsStorageBytes  int64
+	AllowedStorageClasses []string
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+}
+
+type OrganizationEntitlement struct {
+	OrgID              string
+	MaxMembers         int32
+	MaxGroups          int32
+	MaxWorkspacesTotal int32
+	UpdatedAt          time.Time
 }
 
 type OrganizationMember struct {
@@ -92,6 +191,17 @@ type Session struct {
 	AccessExpiresAt time.Time
 	ExpiresAt       time.Time
 	CreatedAt       time.Time
+}
+
+type SharedComputePool struct {
+	ID                        string
+	ClusterID                 string
+	Name                      string
+	AllocationOvercommitRatio pgtype.Numeric
+	SystemReserve             []byte
+	CapacitySnapshot          []byte
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
 }
 
 type User struct {

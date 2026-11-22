@@ -13,7 +13,15 @@ const (
 	Organization = "org"
 	Operation    = "op"
 	User         = "usr"
+	Group        = "grp"
+	ClusterGrant = "grant"
 )
+
+// ULID returns the ULID part of an id made by New.
+func ULID(id string) string {
+	_, u, _ := strings.Cut(id, "-")
+	return u
+}
 
 // New returns a fresh id with the given prefix.
 func New(prefix string) string {

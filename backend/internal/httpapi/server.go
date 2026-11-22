@@ -52,12 +52,14 @@ func Register(r chi.Router, db *pgxpool.Pool, a *auth.Service, trustedProxies []
 		})
 		oapi.HandlerWithOptions(api, oapi.ChiServerOptions{
 			BaseRouter: v1,
-			// The last entry runs first: an anonymous caller gets 401, a user
-			// over the write limit 429, a forged write 403, all before any 400.
-			// Idempotency comes last, so the key is claimed for valid
-			// requests only, right around the handler.
+			// The last entry runs first: an anonymous caller gets 401, a
+			// non-admin on /admin 403, a user over the write limit 429, a
+			// forged write 403, all before any 400. Idempotency comes last,
+			// so the key is claimed for valid requests only, right around
+			// the handler.
 			Middlewares: []oapi.MiddlewareFunc{
-				idempotent(db), validate(), requireCSRF, limitWrites(newLimiter(writesPerMinute)), authenticate(a),
+				idempotent(db), validate(), requireCSRF, limitWrites(newLimiter(writesPerMinute)),
+				requirePlatformAdmin, authenticate(a),
 			},
 			ErrorHandlerFunc: badRequest,
 		})

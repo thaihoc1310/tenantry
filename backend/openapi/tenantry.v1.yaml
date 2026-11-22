@@ -186,6 +186,110 @@ paths:
         "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
+  /admin/organizations:
+    get:
+      operationId: adminListOrganizations
+      summary: Every organization with its owner, oldest first (Platform Admin)
+      description: |
+        `?status=Pending` is the review queue, in arrival order. A Pending
+        item carries `proposal`: what the active onboarding policy grants
+        (PRODUCT-PLAN §5.2.1), for the Admin to approve as is or edit. Without
+        an active policy it is absent and the Admin fills the form in.
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/OrgStatus" }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          description: Opaque; pass `nextCursor` from the previous page.
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminOrganizationList" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /admin/organizations/{orgId}:approve:
+    parameters:
+      - $ref: "#/components/parameters/adminOrgId"
+    post:
+      operationId: approveOrganization
+      security: [{ session: [], csrf: [] }]
+      summary: Approve an organization request with its entitlement and default cluster grant (Platform Admin)
+      description: |
+        One transaction (architecture/03-flows.md §1b): the organization
+        becomes Active with the given entitlement and default cluster grant,
+        the default groups `admins`, `developers` and `viewers` are created
+        and the owner joins `admins`. The groups reach Keycloak
+        asynchronously. Quantities are Kubernetes quantities; the response
+        gives them back normalized (`4096Mi` becomes `4Gi`).
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKeyRequired"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Approval" }
+      responses:
+        "200":
+          description: Approved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovedOrganization" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: |
+            `CONFLICT`: the request was already reviewed.
+            `CLUSTER_NOT_READY`: the grant's cluster is not Ready.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /admin/organizations/{orgId}:reject:
+    parameters:
+      - $ref: "#/components/parameters/adminOrgId"
+    post:
+      operationId: rejectOrganization
+      security: [{ session: [], csrf: [] }]
+      summary: Reject an organization request with a reason the requester sees (Platform Admin)
+      description: The slug is free again and the requester may file a new request.
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Rejection" }
+      responses:
+        "200":
+          description: Rejected
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminOrganization" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: The request was already reviewed (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
 components:
   securitySchemes:
     session:
@@ -219,6 +323,22 @@ components:
       in: path
       required: true
       schema: { type: string }
+
+    adminOrgId:
+      name: orgId
+      in: path
+      required: true
+      description: Organization id (`org-<ulid>`). Not a slug, which a Rejected and a Pending request may share.
+      schema: { type: string }
+
+    idempotencyKeyRequired:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: As `Idempotency-Key`, and required here (IMPLEMENTATION-PLAN §3.4).
+      schema:
+        type: string
+        pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 
     idempotencyKey:
       name: Idempotency-Key
@@ -273,6 +393,7 @@ components:
         - RATE_LIMITED
         - SLUG_TAKEN
         - ORG_REQUEST_PENDING
+        - CLUSTER_NOT_READY
         - INTERNAL
 
     ErrorResponse:
@@ -371,3 +492,149 @@ components:
       properties:
         displayName: { type: string, minLength: 1, maxLength: 80 }
         description: { type: string, maxLength: 500 }
+
+    OrgStatus:
+      type: string
+      enum: [Pending, Active, Rejected, Deleted]
+
+    UserSummary:
+      type: object
+      required: [id, displayName]
+      properties:
+        id: { type: string }
+        email: { type: string, description: Absent when Keycloak gave none }
+        displayName: { type: string }
+
+    AdminOrganization:
+      type: object
+      required: [id, slug, displayName, description, status, reviewNote, createdAt, owner]
+      properties:
+        id: { type: string }
+        slug: { type: string }
+        displayName: { type: string }
+        description: { type: string }
+        status: { $ref: "#/components/schemas/OrgStatus" }
+        reviewNote: { type: string, description: Why the request was rejected; empty otherwise }
+        createdAt: { type: string, format: date-time }
+        owner: { $ref: "#/components/schemas/UserSummary" }
+        proposal:
+          description: Pending only, when an onboarding policy is active
+          allOf: [{ $ref: "#/components/schemas/Approval" }]
+
+    AdminOrganizationList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AdminOrganization" }
+        nextCursor: { type: string, description: Absent on the last page }
+
+    Entitlement:
+      type: object
+      description: Limits that do not depend on a cluster (PRODUCT-PLAN §5.1).
+      required: [maxMembers, maxGroups, maxWorkspacesTotal]
+      additionalProperties: false
+      properties:
+        maxMembers: { type: integer, minimum: 1, maximum: 10000 }
+        maxGroups:
+          type: integer
+          minimum: 3
+          maximum: 1000
+          description: Includes the three default groups.
+        maxWorkspacesTotal: { type: integer, minimum: 0, maximum: 1000 }
+
+    Quantity:
+      type: string
+      minLength: 1
+      maxLength: 32
+      description: A Kubernetes quantity, e.g. `500m` or `2` for CPU, `4Gi` for memory and storage.
+      example: 4Gi
+
+    GrantResources:
+      type: object
+      description: |
+        CPU, memory and pods bound the organization's Shared Workspaces only;
+        storage bounds every Workspace (PRODUCT-PLAN §5.2).
+      required: [requestsCpu, requestsMemory, limitsCpu, limitsMemory, pods, requestsStorage]
+      additionalProperties: false
+      properties:
+        requestsCpu: { $ref: "#/components/schemas/Quantity" }
+        requestsMemory: { $ref: "#/components/schemas/Quantity" }
+        limitsCpu: { $ref: "#/components/schemas/Quantity" }
+        limitsMemory: { $ref: "#/components/schemas/Quantity" }
+        pods: { type: integer, minimum: 0, maximum: 100000 }
+        requestsStorage: { $ref: "#/components/schemas/Quantity" }
+
+    PoolId:
+      type: string
+      maxLength: 63
+      pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+
+    ClusterGrantInput:
+      type: object
+      description: |
+        What an organization may reserve on one cluster (PRODUCT-PLAN §5.2).
+        Every pool must be on `clusterId`; a network pool must be shared or
+        the organization's own. Shared mode is usable when `sharedPoolIds` is
+        not empty.
+      required: [clusterId, maxWorkspaces, maxNamespacesTotal, resources, sharedPoolIds, networkPoolIds, allowedStorageClasses]
+      additionalProperties: false
+      properties:
+        clusterId: { type: string, maxLength: 63 }
+        maxWorkspaces: { type: integer, minimum: 0, maximum: 1000 }
+        maxNamespacesTotal: { type: integer, minimum: 0, maximum: 10000 }
+        resources: { $ref: "#/components/schemas/GrantResources" }
+        sharedPoolIds:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/PoolId" }
+        networkPoolIds:
+          type: array
+          minItems: 1
+          maxItems: 20
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/PoolId" }
+        allowedStorageClasses:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          items: { type: string, maxLength: 253 }
+
+    ClusterGrant:
+      type: object
+      required: [id, isDefault, clusterId, maxWorkspaces, maxNamespacesTotal, resources, sharedPoolIds, networkPoolIds, allowedStorageClasses]
+      properties:
+        id: { type: string }
+        isDefault: { type: boolean }
+        clusterId: { type: string }
+        maxWorkspaces: { type: integer }
+        maxNamespacesTotal: { type: integer }
+        resources: { $ref: "#/components/schemas/GrantResources" }
+        sharedPoolIds: { type: array, items: { type: string } }
+        networkPoolIds: { type: array, items: { type: string } }
+        allowedStorageClasses: { type: array, items: { type: string } }
+
+    Approval:
+      type: object
+      required: [entitlement, clusterGrant]
+      additionalProperties: false
+      properties:
+        entitlement: { $ref: "#/components/schemas/Entitlement" }
+        clusterGrant: { $ref: "#/components/schemas/ClusterGrantInput" }
+
+    ApprovedOrganization:
+      type: object
+      required: [organization, entitlement, clusterGrant]
+      properties:
+        organization: { $ref: "#/components/schemas/AdminOrganization" }
+        entitlement: { $ref: "#/components/schemas/Entitlement" }
+        clusterGrant: { $ref: "#/components/schemas/ClusterGrant" }
+
+    Rejection:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 500 }

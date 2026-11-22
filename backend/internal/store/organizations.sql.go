@@ -24,6 +24,51 @@ func (q *Queries) AddOrganizationMember(ctx context.Context, arg AddOrganization
 	return err
 }
 
+const approveOrganization = `-- name: ApproveOrganization :one
+UPDATE organizations SET status = 'Active', updated_at = now()
+WHERE id = $1 AND status = 'Pending'
+RETURNING id, slug, display_name, description, owner_user_id, status, review_note, created_at, updated_at
+`
+
+func (q *Queries) ApproveOrganization(ctx context.Context, id string) (Organization, error) {
+	row := q.db.QueryRow(ctx, approveOrganization, id)
+	var i Organization
+	err := row.Scan(
+		&i.ID,
+		&i.Slug,
+		&i.DisplayName,
+		&i.Description,
+		&i.OwnerUserID,
+		&i.Status,
+		&i.ReviewNote,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createEntitlement = `-- name: CreateEntitlement :exec
+INSERT INTO organization_entitlements (org_id, max_members, max_groups, max_workspaces_total)
+VALUES ($1, $2, $3, $4)
+`
+
+type CreateEntitlementParams struct {
+	OrgID              string
+	MaxMembers         int32
+	MaxGroups          int32
+	MaxWorkspacesTotal int32
+}
+
+func (q *Queries) CreateEntitlement(ctx context.Context, arg CreateEntitlementParams) error {
+	_, err := q.db.Exec(ctx, createEntitlement,
+		arg.OrgID,
+		arg.MaxMembers,
+		arg.MaxGroups,
+		arg.MaxWorkspacesTotal,
+	)
+	return err
+}
+
 const createOrganizationRequest = `-- name: CreateOrganizationRequest :one
 INSERT INTO organizations (id, slug, display_name, description, owner_user_id, status)
 VALUES ($1, $2, $3, $4, $5, 'Pending')
@@ -106,6 +151,82 @@ func (q *Queries) GetOrganizationForMember(ctx context.Context, arg GetOrganizat
 	return i, err
 }
 
+const getUser = `-- name: GetUser :one
+SELECT id, issuer, subject, email, display_name, status, created_at, updated_at FROM users WHERE id = $1
+`
+
+func (q *Queries) GetUser(ctx context.Context, id string) (User, error) {
+	row := q.db.QueryRow(ctx, getUser, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Issuer,
+		&i.Subject,
+		&i.Email,
+		&i.DisplayName,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const listOrganizationsForAdmin = `-- name: ListOrganizationsForAdmin :many
+SELECT o.id, o.slug, o.display_name, o.description, o.owner_user_id, o.status, o.review_note, o.created_at, o.updated_at, u.email AS owner_email, u.display_name AS owner_display_name
+FROM organizations o
+JOIN users u ON u.id = o.owner_user_id
+WHERE ($1::text IS NULL OR o.status = $1)
+  AND ($2::text IS NULL OR o.id > $2)
+ORDER BY o.id
+LIMIT $3
+`
+
+type ListOrganizationsForAdminParams struct {
+	Status   *string
+	Cursor   *string
+	PageSize int32
+}
+
+type ListOrganizationsForAdminRow struct {
+	Organization     Organization
+	OwnerEmail       *string
+	OwnerDisplayName string
+}
+
+// The Platform Admin's view: every organization with its owner, oldest
+// first, so the review queue (?status=Pending) is served in arrival order.
+func (q *Queries) ListOrganizationsForAdmin(ctx context.Context, arg ListOrganizationsForAdminParams) ([]ListOrganizationsForAdminRow, error) {
+	rows, err := q.db.Query(ctx, listOrganizationsForAdmin, arg.Status, arg.Cursor, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrganizationsForAdminRow
+	for rows.Next() {
+		var i ListOrganizationsForAdminRow
+		if err := rows.Scan(
+			&i.Organization.ID,
+			&i.Organization.Slug,
+			&i.Organization.DisplayName,
+			&i.Organization.Description,
+			&i.Organization.OwnerUserID,
+			&i.Organization.Status,
+			&i.Organization.ReviewNote,
+			&i.Organization.CreatedAt,
+			&i.Organization.UpdatedAt,
+			&i.OwnerEmail,
+			&i.OwnerDisplayName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrganizationsForMember = `-- name: ListOrganizationsForMember :many
 SELECT o.id, o.slug, o.display_name, o.description, o.owner_user_id, o.status, o.review_note, o.created_at, o.updated_at, m.role
 FROM organizations o
@@ -168,6 +289,35 @@ SELECT id, slug, display_name, description, owner_user_id, status, review_note, 
 // is what the change replaced.
 func (q *Queries) LockOrganization(ctx context.Context, id string) (Organization, error) {
 	row := q.db.QueryRow(ctx, lockOrganization, id)
+	var i Organization
+	err := row.Scan(
+		&i.ID,
+		&i.Slug,
+		&i.DisplayName,
+		&i.Description,
+		&i.OwnerUserID,
+		&i.Status,
+		&i.ReviewNote,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const rejectOrganization = `-- name: RejectOrganization :one
+UPDATE organizations SET status = 'Rejected', review_note = $2, updated_at = now()
+WHERE id = $1 AND status = 'Pending'
+RETURNING id, slug, display_name, description, owner_user_id, status, review_note, created_at, updated_at
+`
+
+type RejectOrganizationParams struct {
+	ID         string
+	ReviewNote string
+}
+
+// The slug is released by the partial unique index, which skips Rejected rows.
+func (q *Queries) RejectOrganization(ctx context.Context, arg RejectOrganizationParams) (Organization, error) {
+	row := q.db.QueryRow(ctx, rejectOrganization, arg.ID, arg.ReviewNote)
 	var i Organization
 	err := row.Scan(
 		&i.ID,

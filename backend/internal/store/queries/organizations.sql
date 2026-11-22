@@ -47,3 +47,32 @@ RETURNING *;
 
 -- name: AddOrganizationMember :exec
 INSERT INTO organization_members (org_id, user_id, role) VALUES (@org_id, @user_id, @role);
+
+-- name: ListOrganizationsForAdmin :many
+-- The Platform Admin's view: every organization with its owner, oldest
+-- first, so the review queue (?status=Pending) is served in arrival order.
+SELECT sqlc.embed(o), u.email AS owner_email, u.display_name AS owner_display_name
+FROM organizations o
+JOIN users u ON u.id = o.owner_user_id
+WHERE (sqlc.narg(status)::text IS NULL OR o.status = sqlc.narg(status))
+  AND (sqlc.narg(cursor)::text IS NULL OR o.id > sqlc.narg(cursor))
+ORDER BY o.id
+LIMIT @page_size;
+
+-- name: GetUser :one
+SELECT * FROM users WHERE id = $1;
+
+-- name: ApproveOrganization :one
+UPDATE organizations SET status = 'Active', updated_at = now()
+WHERE id = $1 AND status = 'Pending'
+RETURNING *;
+
+-- name: RejectOrganization :one
+-- The slug is released by the partial unique index, which skips Rejected rows.
+UPDATE organizations SET status = 'Rejected', review_note = $2, updated_at = now()
+WHERE id = $1 AND status = 'Pending'
+RETURNING *;
+
+-- name: CreateEntitlement :exec
+INSERT INTO organization_entitlements (org_id, max_members, max_groups, max_workspaces_total)
+VALUES ($1, $2, $3, $4);
