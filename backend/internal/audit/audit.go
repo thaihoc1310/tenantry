@@ -54,6 +54,7 @@ const (
 	GroupMemberRemove = "group_member.remove"
 
 	WorkspaceCreate        = "workspace.create"
+	WorkspaceUpdate        = "workspace.update"
 	WorkspaceBindingUpdate = "workspace_binding.update"
 	WorkspaceBindingDelete = "workspace_binding.delete"
 	NamespaceCreate        = "namespace.create"

@@ -561,3 +561,95 @@ func TestGrantGuardsWorkspaces(t *testing.T) {
 		t.Fatalf("delete under a Workspace: %d %s", rec.Code, rec.Body)
 	}
 }
+
+func TestPatchWorkspace(t *testing.T) {
+	h, db, orgID, owner, admins, devs := workspaceOrg(t)
+	ctx := context.Background()
+	rec := createWorkspace(h, owner, "zeta", workspaceBody("solar", admins, devs, ""))
+	var created oapi.WorkspaceAccepted
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &created) != nil {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	wsID := created.Workspace.Id
+	patch := func(token, body string) *httptest.ResponseRecorder {
+		return asAdmin(h, token, http.MethodPatch, "/api/v1/workspaces/"+wsID, "", body)
+	}
+	resources := func(cpu, nsQuota string) string {
+		return `{"resources":{"requestsCpu":"` + cpu + `","requestsMemory":"2Gi","limitsCpu":"4","limitsMemory":"4Gi","pods":10,"requestsStorage":"5Gi","namespaceQuota":` + nsQuota + `}}`
+	}
+	refused := func(name string, rec *httptest.ResponseRecorder, status int, code oapi.ErrorCode) {
+		t.Helper()
+		if rec.Code != status || errorBody(t, rec).Code != code {
+			t.Fatalf("%s: %d %s", name, rec.Code, rec.Body)
+		}
+	}
+	refused("while Provisioning", patch(owner, `{"displayName":"Sun"}`), 409, oapi.WORKSPACENOTREADY)
+	settle(t, db, wsID)
+	refused("OrgMember", patch(sessionOf("usr-bob"), `{"displayName":"Sun"}`), 403, oapi.FORBIDDEN)
+	refused("non-member", patch(sessionOf("usr-dave"), `{"displayName":"Sun"}`), 404, oapi.NOTFOUND)
+
+	rec = patch(owner, `{"displayName":"  Sun "}`)
+	var change oapi.WorkspaceChange
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &change) != nil || change.Workspace.DisplayName != "Sun" ||
+		change.Workspace.State != oapi.WorkspaceStateUpdating || change.Operation == nil || change.Operation.Type != "workspace.update" {
+		t.Fatalf("rename: %d %s", rec.Code, rec.Body)
+	}
+	settle(t, db, wsID)
+	if rec := patch(owner, `{"displayName":"Sun"}`); rec.Code != 200 || strings.Contains(rec.Body.String(), `"operation"`) {
+		t.Fatalf("same name: %d %s", rec.Code, rec.Body)
+	}
+
+	// The grant has 2 CPU of requests: 1 is held, 2 asks 1 more and fits; 3 does not.
+	if rec := patch(owner, resources("3", "2")); rec.Code != 409 || (*errorBody(t, rec).Details)["resource"] != "requestsCpu" {
+		t.Fatalf("over the grant: %d %s", rec.Code, rec.Body)
+	}
+	if rec := patch(owner, resources("2", "2")); rec.Code != 202 {
+		t.Fatalf("grow within the grant: %d %s", rec.Code, rec.Body)
+	}
+	var payload []byte
+	if err := db.QueryRow(ctx, `SELECT payload FROM outbox_events ORDER BY id DESC LIMIT 1`).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	var cr v1.PlatformWorkspace
+	if q := cr.Spec.Resources["requests.cpu"]; json.Unmarshal(payload, &cr) != nil || cr.Spec.DisplayName != "Sun" {
+		t.Fatalf("CR %s (%v)", payload, q)
+	}
+	if q := cr.Spec.Resources["requests.cpu"]; q.String() != "2" {
+		t.Fatalf("CR requests.cpu %s", q.String())
+	}
+	settle(t, db, wsID)
+
+	// Not below what the Pods use, nor below the Namespaces it has.
+	if _, err := db.Exec(ctx, `UPDATE workspaces SET usage_snapshot = '{"requests.cpu": "800m", "pods": "4"}' WHERE id = $1`, wsID); err != nil {
+		t.Fatal(err)
+	}
+	rec = patch(owner, resources("500m", "2"))
+	if e := errorBody(t, rec); rec.Code != 409 || e.Code != oapi.WORKSPACEQUOTABELOWUSAGE || (*e.Details)["field"] != "resources.requestsCpu" ||
+		(*e.Details)["used"] != "800m" {
+		t.Fatalf("below usage: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO workspace_namespaces (id, workspace_id, cluster_id, name, source, state)
+		VALUES ('ns-x', $1, 'cluster-a', 'zeta-solar-scratch', 'kubectl', 'Active')`, wsID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := patch(owner, resources("1", "1")); errorBody(t, rec).Code != oapi.WORKSPACEQUOTABELOWUSAGE ||
+		(*errorBody(t, rec).Details)["field"] != "resources.namespaceQuota" {
+		t.Fatalf("namespaceQuota below 2 Namespaces: %d %s", rec.Code, rec.Body)
+	}
+	if rec := patch(owner, resources("1", "2")); rec.Code != 202 {
+		t.Fatalf("shrink to what is used: %d %s", rec.Code, rec.Body)
+	}
+	settle(t, db, wsID)
+
+	// A resize waits for the cluster; a rename does not.
+	if _, err := db.Exec(ctx, `UPDATE clusters SET status = 'Maintenance' WHERE id = 'cluster-a'`); err != nil {
+		t.Fatal(err)
+	}
+	refused("resize in Maintenance", patch(owner, resources("2", "2")), 409, oapi.CLUSTERNOTREADY)
+	if rec := patch(owner, `{"displayName":"Sol"}`); rec.Code != 202 {
+		t.Fatalf("rename in Maintenance: %d %s", rec.Code, rec.Body)
+	}
+	if trail := auditTrail(t, db, "workspace.update"); len(trail) != 4 || trail[0].Org != orgID {
+		t.Fatalf("audit %d events", len(trail))
+	}
+}

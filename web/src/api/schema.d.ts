@@ -707,7 +707,16 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Change a Workspace's display name, quota or namespaceQuota (OrgOwner or OrgAdmin)
+         * @description `resources` replaces the whole quota. A larger quota takes its share
+         *     of the grant (`CLUSTER_GRANT_QUOTA_EXCEEDED`) and needs the cluster
+         *     Ready; a smaller one goes neither below what the Pods use nor below
+         *     the Namespaces the Workspace has (`WORKSPACE_QUOTA_BELOW_USAGE`).
+         *     Answers 200 when nothing changes, otherwise 202 with the
+         *     `workspace.update` operation (PRODUCT-PLAN §17.2).
+         */
+        patch: operations["patchWorkspace"];
         trace?: never;
     };
     "/workspaces/{workspaceId}/bindings": {
@@ -1388,7 +1397,7 @@ export interface components {
          * @description Stable error codes the UI switches on (IMPLEMENTATION-PLAN §3.3). Grows with the endpoints.
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "METHOD_NOT_ALLOWED" | "IDEMPOTENCY_KEY_REUSED" | "RATE_LIMITED" | "SLUG_TAKEN" | "ORG_REQUEST_PENDING" | "CLUSTER_NOT_READY" | "ORG_NOT_ACTIVE" | "ENTITLEMENT_EXCEEDED" | "INVITATION_INVALID" | "INVITATION_EMAIL_MISMATCH" | "TRANSFER_NOT_ALLOWED" | "RECIPIENT_NOT_ORG_ADMIN" | "TRANSFER_INVALID" | "LEAVE_NOT_ALLOWED" | "OWNER_USER_NOT_FOUND" | "ENTITLEMENT_BELOW_USAGE" | "CIDR_OVERLAP" | "CLUSTER_NOT_GRANTED" | "LAST_OWNER_BINDING" | "GROUP_SYNC_PENDING" | "WORKSPACE_NOT_READY" | "CLUSTER_GRANT_QUOTA_EXCEEDED" | "CLUSTER_GRANT_BELOW_ALLOCATION" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "METHOD_NOT_ALLOWED" | "IDEMPOTENCY_KEY_REUSED" | "RATE_LIMITED" | "SLUG_TAKEN" | "ORG_REQUEST_PENDING" | "CLUSTER_NOT_READY" | "ORG_NOT_ACTIVE" | "ENTITLEMENT_EXCEEDED" | "INVITATION_INVALID" | "INVITATION_EMAIL_MISMATCH" | "TRANSFER_NOT_ALLOWED" | "RECIPIENT_NOT_ORG_ADMIN" | "TRANSFER_INVALID" | "LEAVE_NOT_ALLOWED" | "OWNER_USER_NOT_FOUND" | "ENTITLEMENT_BELOW_USAGE" | "CIDR_OVERLAP" | "CLUSTER_NOT_GRANTED" | "LAST_OWNER_BINDING" | "GROUP_SYNC_PENDING" | "WORKSPACE_NOT_READY" | "CLUSTER_GRANT_QUOTA_EXCEEDED" | "CLUSTER_GRANT_BELOW_ALLOCATION" | "WORKSPACE_QUOTA_BELOW_USAGE" | "INTERNAL";
         ErrorResponse: {
             code: components["schemas"]["ErrorCode"];
             message: string;
@@ -1559,6 +1568,15 @@ export interface components {
             namespaces?: components["schemas"]["NamespaceSuffix"][];
             /** @description Groups of the organization and their role; at least one TenantOwner, each group once. */
             bindings: components["schemas"]["WorkspaceBindingInput"][];
+        };
+        WorkspacePatch: {
+            displayName?: string;
+            resources?: components["schemas"]["WorkspaceResources"];
+        };
+        WorkspaceChange: {
+            workspace: components["schemas"]["Workspace"];
+            /** @description Set when something changed */
+            operation?: components["schemas"]["Operation"];
         };
         WorkspaceBindingRole: {
             role: components["schemas"]["WorkspaceRole"];
@@ -3487,6 +3505,60 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    patchWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["workspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspacePatch"];
+            };
+        };
+        responses: {
+            /** @description Unchanged */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceChange"];
+                };
+            };
+            /** @description Changed; the cluster follows */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceChange"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /**
+             * @description `WORKSPACE_NOT_READY`: not Ready or Degraded, or an operation on it is under way.
+             *     `CLUSTER_GRANT_QUOTA_EXCEEDED`: the larger quota does not fit in the grant (`details.resource`).
+             *     `WORKSPACE_QUOTA_BELOW_USAGE`: below what the Workspace uses (`details.field`, `details.used`).
+             *     `CLUSTER_NOT_READY`: resizing waits for the cluster.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
         };
     };
     listWorkspaceBindings: {

@@ -217,3 +217,29 @@ func toNamespaceChange(c workspace.NamespaceChange) (oapi.WorkspaceNamespaceChan
 	n, err := toNamespace(c.Namespace)
 	return oapi.WorkspaceNamespaceChange{Namespace: n, Operation: toOperation(c.Operation)}, err
 }
+
+func (s server) PatchWorkspace(ctx context.Context, req oapi.PatchWorkspaceRequestObject) (oapi.PatchWorkspaceResponseObject, error) {
+	p := workspace.Patch{DisplayName: req.Body.DisplayName, CorrelationID: requestID(ctx)}
+	if req.Body.Resources != nil {
+		r, err := toWorkspaceResources(*req.Body.Resources)
+		if err != nil {
+			return nil, err
+		}
+		p.Resources = &r
+	}
+	c, err := s.workspaces.Update(ctx, userID(ctx), req.WorkspaceId, p)
+	if err != nil {
+		return nil, err
+	}
+	w, err := toWorkspace(c.Workspace)
+	if err != nil {
+		return nil, err
+	}
+	out := oapi.WorkspaceChange{Workspace: w}
+	if c.Operation == nil {
+		return oapi.PatchWorkspace200JSONResponse(out), nil
+	}
+	op := toOperation(*c.Operation)
+	out.Operation = &op
+	return oapi.PatchWorkspace202JSONResponse(out), nil
+}

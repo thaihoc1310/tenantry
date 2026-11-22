@@ -104,6 +104,10 @@ export const errorText: Record<ErrorCode | 'NETWORK', Text> = {
     en: 'The grant cannot go below what the Workspaces already hold.',
     vi: 'Không thể hạ grant xuống dưới phần các Workspace đang giữ.',
   },
+  WORKSPACE_QUOTA_BELOW_USAGE: {
+    en: 'The Workspace already uses more than this. Free some first.',
+    vi: 'Workspace đang dùng nhiều hơn mức này. Hãy giải phóng bớt trước.',
+  },
   INTERNAL: {
     en: 'Something went wrong on our side. Your data is safe; try again in a moment.',
     vi: 'Hệ thống gặp lỗi. Dữ liệu của bạn vẫn an toàn; thử lại sau ít phút.',

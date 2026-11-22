@@ -874,6 +874,47 @@ paths:
               schema: { $ref: "#/components/schemas/Workspace" }
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: patchWorkspace
+      security: [{ session: [], csrf: [] }]
+      summary: Change a Workspace's display name, quota or namespaceQuota (OrgOwner or OrgAdmin)
+      description: |
+        `resources` replaces the whole quota. A larger quota takes its share
+        of the grant (`CLUSTER_GRANT_QUOTA_EXCEEDED`) and needs the cluster
+        Ready; a smaller one goes neither below what the Pods use nor below
+        the Namespaces the Workspace has (`WORKSPACE_QUOTA_BELOW_USAGE`).
+        Answers 200 when nothing changes, otherwise 202 with the
+        `workspace.update` operation (PRODUCT-PLAN §17.2).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkspacePatch" }
+      responses:
+        "200":
+          description: Unchanged
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceChange" }
+        "202":
+          description: Changed; the cluster follows
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceChange" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: |
+            `WORKSPACE_NOT_READY`: not Ready or Degraded, or an operation on it is under way.
+            `CLUSTER_GRANT_QUOTA_EXCEEDED`: the larger quota does not fit in the grant (`details.resource`).
+            `WORKSPACE_QUOTA_BELOW_USAGE`: below what the Workspace uses (`details.field`, `details.used`).
+            `CLUSTER_NOT_READY`: resizing waits for the cluster.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
 
   /workspaces/{workspaceId}/bindings:
     parameters:
@@ -1983,6 +2024,7 @@ components:
         - WORKSPACE_NOT_READY
         - CLUSTER_GRANT_QUOTA_EXCEEDED
         - CLUSTER_GRANT_BELOW_ALLOCATION
+        - WORKSPACE_QUOTA_BELOW_USAGE
         - INTERNAL
 
     ErrorResponse:
@@ -2215,6 +2257,22 @@ components:
           minItems: 1
           maxItems: 50
           items: { $ref: "#/components/schemas/WorkspaceBindingInput" }
+
+    WorkspacePatch:
+      type: object
+      additionalProperties: false
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 80 }
+        resources: { $ref: "#/components/schemas/WorkspaceResources" }
+
+    WorkspaceChange:
+      type: object
+      required: [workspace]
+      properties:
+        workspace: { $ref: "#/components/schemas/Workspace" }
+        operation:
+          description: Set when something changed
+          allOf: [{ $ref: "#/components/schemas/Operation" }]
 
     WorkspaceBindingRole:
       type: object
