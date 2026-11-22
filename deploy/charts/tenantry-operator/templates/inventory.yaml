@@ -1,0 +1,13 @@
+# The cluster's only PlatformNodeInventory: the operator fills its status,
+# the provisioning worker reads it (IMPLEMENTATION-PLAN §4.5). A post-install
+# hook because Helm checks every object of a release against the API before
+# creating any, when this kind does not exist yet on a first install. Created
+# once, never touched by upgrades or deleted by an uninstall.
+apiVersion: tenantry.io/v1alpha1
+kind: PlatformNodeInventory
+metadata:
+  name: cluster
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install

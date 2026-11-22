@@ -1,0 +1,366 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: platformworkspaces.tenantry.io
+spec:
+  group: tenantry.io
+  names:
+    kind: PlatformWorkspace
+    listKind: PlatformWorkspaceList
+    plural: platformworkspaces
+    shortNames:
+    - pws
+    singular: platformworkspace
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.workspaceId
+      name: Workspace
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          PlatformWorkspace is one Workspace on this cluster; its name is
+          <org-slug>-<ws-slug>, the name of the Capsule Tenant too.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              PlatformWorkspaceSpec is the desired state the central plane writes
+              (PRODUCT-PLAN §14.2). Namespace names: spec.namespaces holds suffixes,
+              every other field holds full names (<metadata.name>-<suffix>).
+            properties:
+              accessBindings:
+                description: AccessBindings give organization groups a role in the
+                  Workspace.
+                items:
+                  properties:
+                    groupSubject:
+                      description: 'GroupSubject is the group as kube-apiserver sees
+                        it: oidc:org_<ulid>:group_<ulid>.'
+                      minLength: 1
+                      type: string
+                    role:
+                      description: WorkspaceRole is the role a group holds in a Workspace
+                        (PRODUCT-PLAN §10).
+                      enum:
+                      - TenantOwner
+                      - Developer
+                      - Viewer
+                      type: string
+                  required:
+                  - groupSubject
+                  - role
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - groupSubject
+                x-kubernetes-list-type: map
+              clusterId:
+                minLength: 1
+                type: string
+              compute:
+                properties:
+                  dedicatedNodeGrantId:
+                    description: Dedicated mode.
+                    type: string
+                  mode:
+                    description: ComputeMode is how a Workspace gets its nodes (PRODUCT-PLAN
+                      §6).
+                    enum:
+                    - Shared
+                    - Dedicated
+                    type: string
+                  nodeName:
+                    description: Dedicated mode.
+                    type: string
+                  sharedPoolId:
+                    description: Shared mode.
+                    type: string
+                required:
+                - mode
+                type: object
+              cordoned:
+                description: Cordoned freezes the Tenant (PRODUCT-PLAN §17.3).
+                type: boolean
+              displayName:
+                type: string
+              namespaceQuota:
+                description: NamespaceQuota is how many Namespaces the Tenant may
+                  hold, whoever creates them.
+                format: int32
+                minimum: 1
+                type: integer
+              namespaces:
+                description: 'Namespaces the portal asked for, as suffixes: frontend
+                  → <metadata.name>-frontend.'
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
+              namespacesToDelete:
+                description: NamespacesToDelete holds full names, including ones created
+                  with kubectl.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
+              network:
+                description: Network is set from M9 on; Workspaces created before
+                  have none.
+                properties:
+                  allocationRef:
+                    minLength: 1
+                    type: string
+                  cidr:
+                    minLength: 1
+                    type: string
+                required:
+                - allocationRef
+                - cidr
+                type: object
+              organizationId:
+                minLength: 1
+                type: string
+              resources:
+                additionalProperties:
+                  anyOf:
+                  - type: integer
+                  - type: string
+                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                  x-kubernetes-int-or-string: true
+                description: Resources is the quota shared by every Namespace of the
+                  Workspace (PRODUCT-PLAN §5.4).
+                type: object
+              retryNonce:
+                description: |-
+                  RetryNonce changes when an operation is retried after a failure the
+                  controller reported: a new generation, nothing else changes.
+                type: string
+              routes:
+                description: Routes publish a Service on the apps domain (PRODUCT-PLAN
+                  §7.6).
+                items:
+                  properties:
+                    host:
+                      description: Host is complete, the API puts it together.
+                      minLength: 1
+                      type: string
+                    name:
+                      minLength: 1
+                      type: string
+                    namespace:
+                      description: Namespace is a full name.
+                      minLength: 1
+                      type: string
+                    port:
+                      format: int32
+                      maximum: 65535
+                      minimum: 1
+                      type: integer
+                    service:
+                      minLength: 1
+                      type: string
+                  required:
+                  - host
+                  - name
+                  - namespace
+                  - port
+                  - service
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              storageClasses:
+                description: StorageClasses the Tenant's PVCs may use.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
+              workspaceId:
+                minLength: 1
+                type: string
+            required:
+            - clusterId
+            - compute
+            - organizationId
+            - workspaceId
+            type: object
+          status:
+            description: PlatformWorkspaceStatus is what the controller observed.
+            properties:
+              capsuleTenantRef:
+                type: string
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              namespaces:
+                description: Namespaces of the Tenant, including ones created with
+                  kubectl.
+                items:
+                  properties:
+                    name:
+                      type: string
+                    source:
+                      description: |-
+                        NamespaceSource tells whether a Namespace was asked for on the portal
+                        (it is in spec.namespaces) or created some other way (kubectl, Headlamp).
+                      enum:
+                      - portal
+                      - kubectl
+                      type: string
+                    usage:
+                      additionalProperties:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      description: |-
+                        ResourceList maps a quota key (requests.cpu, limits.memory, pods,
+                        requests.storage) to a quantity. It is corev1.ResourceList without the
+                        k8s.io/api import, so the backend can build a CR from this package alone.
+                      type: object
+                  required:
+                  - name
+                  - source
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              observedGeneration:
+                description: ObservedGeneration is set once a whole reconcile of that
+                  generation is done.
+                format: int64
+                type: integer
+              phase:
+                description: WorkspacePhase is derived from the conditions (architecture/04
+                  §1.4).
+                enum:
+                - Provisioning
+                - Ready
+                - Updating
+                - Degraded
+                - Failed
+                - Deleting
+                type: string
+              routes:
+                items:
+                  properties:
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                    ready:
+                      type: boolean
+                  required:
+                  - name
+                  - namespace
+                  - ready
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              usage:
+                additionalProperties:
+                  anyOf:
+                  - type: integer
+                  - type: string
+                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                  x-kubernetes-int-or-string: true
+                description: Usage sums the Workspace's ResourceQuotas.
+                type: object
+            type: object
+        required:
+        - metadata
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

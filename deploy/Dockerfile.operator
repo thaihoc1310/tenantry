@@ -1,0 +1,18 @@
+# The Workspace Operator (operator/cmd/manager).
+#
+#   docker build -f deploy/Dockerfile.operator -t tenantry/operator:dev operator
+
+FROM golang:1.26.8-bookworm AS build
+WORKDIR /src
+# Modules first so a code change does not download them again.
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/tenantry-operator ./cmd/manager
+
+# No shell, no package manager, uid 65532. Pinned by digest: the tag moves.
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+COPY --from=build /out/tenantry-operator /usr/local/bin/tenantry-operator
+USER nonroot:nonroot
+ENTRYPOINT ["/usr/local/bin/tenantry-operator"]

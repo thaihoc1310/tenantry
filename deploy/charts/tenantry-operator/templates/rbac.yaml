@@ -1,0 +1,32 @@
+# The operator's rights (architecture/06 §7). The rules are generated from the
+# +kubebuilder:rbac markers in operator/internal/controller/rbac.go.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tenantry-operator
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tenantry-operator
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+rules:
+  {{- (.Files.Get "files/role.yaml" | fromYaml).rules | toYaml | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tenantry-operator
+  labels:
+    {{- include "tenantry.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tenantry-operator
+subjects:
+  - kind: ServiceAccount
+    name: tenantry-operator
+    namespace: {{ .Release.Namespace }}

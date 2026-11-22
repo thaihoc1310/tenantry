@@ -1,0 +1,136 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tenantry-operator
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - capsule.clastix.io
+  resources:
+  - proxysettings
+  - tenantresources
+  - tenants
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - crd.projectcalico.org
+  resources:
+  - ipamblocks
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - projectcalico.org
+  resources:
+  - ippools
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - projectcalico.org
+  resources:
+  - workloadendpoints
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - tenantry.io
+  resources:
+  - platformnodegrants
+  - platformsharedpools
+  - platformworkspaces
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - tenantry.io
+  resources:
+  - platformnodegrants/finalizers
+  - platformsharedpools/finalizers
+  - platformworkspaces/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - tenantry.io
+  resources:
+  - platformnodegrants/status
+  - platformnodeinventories/status
+  - platformsharedpools/status
+  - platformworkspaces/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - tenantry.io
+  resources:
+  - platformnodeinventories
+  verbs:
+  - get
+  - list
+  - watch

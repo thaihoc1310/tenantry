@@ -120,3 +120,44 @@ lint: fmt-check vet ## gofmt check, vet, then golangci-lint if installed
 	@if command -v golangci-lint >/dev/null; then cd $(BACKEND) && golangci-lint run ./...; else echo "golangci-lint not installed; ran go vet only"; fi
 test: ## Tests (migration tests need PostgreSQL: make dev-up)
 	cd $(BACKEND) && go test -race -count=1 ./...
+
+# ---- operator (IMPLEMENTATION-PLAN M6) -------------------------------------
+OPERATOR       := $(ROOT)/operator
+OPERATOR_CHART := $(ROOT)/deploy/charts/tenantry-operator
+# envtest's kube-apiserver and etcd, the version of the lab (setup-envtest list).
+ENVTEST_K8S_VERSION ?= 1.36.2
+
+.PHONY: operator-generate operator-fmt-check operator-vet operator-lint operator-test operator-build operator-image operator-chart-lint
+operator-generate: ## Regenerate deepcopy, CRDs and the operator's ClusterRole, and copy them into its chart (commit the result)
+	cd $(OPERATOR) && go tool controller-gen object paths=./api/...
+	cd $(OPERATOR) && go tool controller-gen crd rbac:roleName=tenantry-operator paths=./... \
+		output:crd:artifacts:config=config/crd/bases output:rbac:artifacts:config=config/rbac
+	rm -f $(OPERATOR_CHART)/files/crds/*.yaml
+	cp $(OPERATOR)/config/crd/bases/*.yaml $(OPERATOR_CHART)/files/crds/
+	cp $(OPERATOR)/config/rbac/role.yaml $(OPERATOR_CHART)/files/role.yaml
+operator-fmt-check: ## Fail if any operator Go file is not gofmt-formatted
+	@cd $(OPERATOR) && files=$$(gofmt -l .) && if [ -n "$$files" ]; then echo "not gofmt-formatted:"; echo "$$files"; exit 1; fi
+operator-vet: ## go vet of the operator
+	cd $(OPERATOR) && go vet ./...
+operator-lint: operator-fmt-check operator-vet ## gofmt check, vet, then golangci-lint if installed
+	@# The backend imports api/v1alpha1: it must not pull controller-runtime in (IMPLEMENTATION-PLAN §2.1).
+	@cd $(OPERATOR) && if go list -deps ./api/... | grep -q '^sigs.k8s.io/controller-runtime'; then echo "api/v1alpha1 imports controller-runtime"; exit 1; fi
+	@if command -v golangci-lint >/dev/null; then cd $(OPERATOR) && golangci-lint run ./...; else echo "golangci-lint not installed; ran go vet only"; fi
+operator-test: ## Operator tests, envtest included (downloads kube-apiserver and etcd once)
+	cd $(OPERATOR) && KUBEBUILDER_ASSETS="$$(go tool setup-envtest use $(ENVTEST_K8S_VERSION) -p path)" go test -race -count=1 ./...
+operator-build: ## Build the operator into bin/
+	cd $(OPERATOR) && go build -o $(ROOT)/bin/tenantry-operator ./cmd/manager
+operator-image: ## Build the operator image
+	docker build -f deploy/Dockerfile.operator -t tenantry/operator:dev $(OPERATOR)
+operator-chart-lint: ## Lint and render the operator chart, and check its RBAC and CRDs
+	helm lint $(OPERATOR_CHART)
+	@# No certificates: Routes use the wildcard certificate (architecture/06 §7).
+	@helm template tenantry-operator $(OPERATOR_CHART) | python3 -c 'import sys, yaml; \
+		docs = [d for d in yaml.safe_load_all(sys.stdin) if d]; \
+		rules = [r for d in docs if d["kind"] == "ClusterRole" and d["metadata"]["name"] == "tenantry-operator" for r in d["rules"]]; \
+		crds = [d for d in docs if d["kind"] == "CustomResourceDefinition"]; \
+		assert rules, "no rules in the operator ClusterRole"; \
+		assert not any("certificates" in r["resources"] or "*" in r["resources"] or "*" in r["verbs"] for r in rules), "the operator may not touch certificates or use wildcards"; \
+		assert len(crds) == 4 and all(c["metadata"]["annotations"].get("helm.sh/resource-policy") == "keep" for c in crds), "want 4 CRDs, each kept on uninstall"; \
+		assert all(c["spec"]["scope"] == "Cluster" for c in crds), "every tenantry.io CRD is cluster-scoped"'
+	@diff -r $(OPERATOR)/config/crd/bases $(OPERATOR_CHART)/files/crds && diff $(OPERATOR)/config/rbac/role.yaml $(OPERATOR_CHART)/files/role.yaml || { echo "chart is behind operator/config: run make operator-generate"; exit 1; }
