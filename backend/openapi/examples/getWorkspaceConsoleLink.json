@@ -1,5 +1,5 @@
 {
   "responses": {
-    "200": { "url": "https://console-a.tenantry.site/c/main/namespaces/acme-solar-frontend" }
+    "200": { "url": "https://console-a.tenantry.site/c/cluster-a/namespaces/acme-solar-frontend" }
   }
 }

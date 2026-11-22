@@ -1341,7 +1341,7 @@ func TestKubeconfigAndConsole(t *testing.T) {
 	if err := db.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action = 'workspace.kubeconfig_download' AND actor_user_id = 'usr-bob' AND org_id = $1`, orgID).Scan(&n); err != nil || n != 1 {
 		t.Errorf("audited %d %v", n, err)
 	}
-	if rec := console(sessionOf("usr-bob")); !strings.Contains(rec.Body.String(), `"url":"https://console-a.test/c/main/namespaces/zeta-solar-frontend"`) {
+	if rec := console(sessionOf("usr-bob")); !strings.Contains(rec.Body.String(), `"url":"https://console-a.test/c/cluster-a/namespaces/zeta-solar-frontend"`) {
 		t.Errorf("console: %d %s", rec.Code, rec.Body)
 	}
 

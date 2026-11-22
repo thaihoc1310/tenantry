@@ -65,14 +65,15 @@ func (s server) GetWorkspaceKubeconfig(ctx context.Context, req oapi.GetWorkspac
 	}, nil
 }
 
-// consoleURL opens Headlamp (in-cluster, its cluster is "main") in the
-// Workspace's first Namespace, or on its home page.
+// consoleURL opens Headlamp in the Workspace's first Namespace, or on its
+// home page. Headlamp names its in-cluster context after the cluster's id
+// (config.inClusterContextName in deploy/cluster/values/headlamp.yaml).
 func consoleURL(c workspace.Connection) string {
 	base := strings.TrimSuffix(c.Cluster.ConsoleUrl, "/")
 	if c.Namespace == "" {
 		return base
 	}
-	return base + "/c/main/namespaces/" + url.PathEscape(c.Namespace)
+	return base + "/c/" + url.PathEscape(c.Cluster.ID) + "/namespaces/" + url.PathEscape(c.Namespace)
 }
 
 func (s server) GetWorkspaceConsoleLink(ctx context.Context, req oapi.GetWorkspaceConsoleLinkRequestObject) (oapi.GetWorkspaceConsoleLinkResponseObject, error) {
