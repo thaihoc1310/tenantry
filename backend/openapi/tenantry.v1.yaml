@@ -66,7 +66,9 @@ paths:
         Creates the organization as `Pending` with the caller as OrgOwner; a
         Platform Admin approves or rejects it. Values are trimmed.
         `slug` is permanent and prefixes every Kubernetes name the
-        organization will own, so reserved words and the `kube-` prefix are refused.
+        organization will own (`<org>-<workspace>`): lowercase letters and
+        digits only, no hyphen, so that name points at one Workspace of one
+        organization. Reserved words are refused.
       parameters:
         - $ref: "#/components/parameters/idempotencyKey"
       requestBody:
@@ -532,7 +534,7 @@ components:
           type: string
           minLength: 3
           maxLength: 20
-          pattern: "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+          pattern: "^[a-z][a-z0-9]*$"
         displayName: { type: string, minLength: 1, maxLength: 80 }
         description: { type: string, maxLength: 500 }
 

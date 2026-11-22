@@ -7,8 +7,9 @@ import (
 
 func TestCheckSlug(t *testing.T) {
 	cases := map[string]bool{ // slug -> valid
-		"acme": true, "a1b": true, "my-team-2": true, strings.Repeat("a", 20): true,
-		"kubeflow": true, // only kube- is Kubernetes'
+		"acme": true, "a1b": true, "myteam2": true, strings.Repeat("a", 20): true,
+		"kubeflow": true,  // only kube itself is reserved
+		"my-team":  false, // no hyphen: <org>-<ws> must name one Workspace of one organization
 		"ab":       false, strings.Repeat("a", 21): false,
 		"1abc": false, "Acme": false, "my_team": false, "my--team": false, "team-": false, "-team": false,
 		"admin": false, "default": false, "kube": false, "kube-x": false, "tenantry": false,

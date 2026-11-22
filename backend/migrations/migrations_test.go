@@ -73,8 +73,10 @@ func TestConstraints(t *testing.T) {
 	mustExec(t, db, `INSERT INTO organizations (id, slug, display_name, owner_user_id, status) VALUES
 		('org-acme', 'acme', 'ACME', 'usr-alice', 'Active')`)
 	mustExec(t, db, `INSERT INTO organization_members (org_id, user_id, role) VALUES ('org-acme', 'usr-alice', 'OrgOwner')`)
+	mustExec(t, db, `INSERT INTO operations (id, org_id, resource_type, resource_id, type, correlation_id)
+		VALUES ('op-1', 'org-acme', 'Workspace', 'ws-1', 'workspace.create', 'req-1')`)
 
-	const unique, check = "23505", "23514"
+	const unique, check, foreignKey = "23505", "23514", "23503"
 	cases := []struct {
 		name, sql, code string
 	}{
@@ -84,10 +86,15 @@ func TestConstraints(t *testing.T) {
 		{"slug too short", orgInsert("org-x", "ab", "usr-bob", "Pending"), check},
 		{"slug with underscore", orgInsert("org-x", "ac_me", "usr-bob", "Pending"), check},
 		{"slug ends with dash", orgInsert("org-x", "acme-", "usr-bob", "Pending"), check},
+		{"slug with a hyphen", orgInsert("org-x", "ac-me", "usr-bob", "Pending"), check},
 		{"slug longer than 20", orgInsert("org-x", "abcdefghijklmnopqrstu", "usr-bob", "Pending"), check},
 		{"slug taken by active org", orgInsert("org-x", "acme", "usr-bob", "Pending"), unique},
 		{"org status outside enum", orgInsert("org-x", "beta", "usr-bob", "Suspended"), check},
 		{"second owner in one org", `INSERT INTO organization_members (org_id, user_id, role) VALUES ('org-acme', 'usr-bob', 'OrgOwner')`, unique},
+		{"event for a cluster that is not registered", `INSERT INTO outbox_events (operation_id, ordering_key, target_cluster_id, type, payload, version)
+			VALUES ('op-1', 'Workspace/ws-1', 'cluster-x', 'workspace.apply', '{}', 1)`, foreignKey},
+		{"fewer groups than the three default ones", `INSERT INTO organization_entitlements (org_id, max_members, max_groups, max_workspaces_total)
+			VALUES ('org-acme', 20, 2, 8)`, check},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) { expectCode(t, db, c.sql, c.code) })
@@ -95,10 +102,10 @@ func TestConstraints(t *testing.T) {
 
 	// One subtest, so running it alone with -run still sets up what it checks.
 	t.Run("one pending request per user, rejection releases the slug", func(t *testing.T) {
-		mustExec(t, db, orgInsert("org-p1", "first-req", "usr-bob", "Pending"))
-		expectCode(t, db, orgInsert("org-p2", "second-req", "usr-bob", "Pending"), unique)
+		mustExec(t, db, orgInsert("org-p1", "firstreq", "usr-bob", "Pending"))
+		expectCode(t, db, orgInsert("org-p2", "secondreq", "usr-bob", "Pending"), unique)
 		mustExec(t, db, `UPDATE organizations SET status = 'Rejected' WHERE id = 'org-p1'`)
-		mustExec(t, db, orgInsert("org-p3", "first-req", "usr-bob", "Pending"))
+		mustExec(t, db, orgInsert("org-p3", "firstreq", "usr-bob", "Pending"))
 	})
 }
 
@@ -137,4 +144,21 @@ func expectCode(t *testing.T, db *sql.DB, q, code string) {
 	if !errors.As(err, &pg) || pg.Code != code {
 		t.Fatalf("want SQLSTATE %s, got %v\n%s", code, err, q)
 	}
+}
+
+// 0006 forbids hyphens in organization slugs from then on, without failing on
+// organizations made before, which may have one.
+func TestSlugRuleKeepsOlderOrganizations(t *testing.T) {
+	db := testdb.Open(t)
+	ctx := context.Background()
+	p := provider(t, db)
+	if _, err := p.UpTo(ctx, 5); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `INSERT INTO users (id, issuer, subject) VALUES ('usr-a', 'https://id', 'a')`)
+	mustExec(t, db, orgInsert("org-old", "old-style", "usr-a", "Active"))
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("0006 on a database with a hyphenated slug: %v", err)
+	}
+	expectCode(t, db, orgInsert("org-new", "new-style", "usr-a", "Pending"), "23514")
 }

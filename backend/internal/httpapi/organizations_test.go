@@ -362,7 +362,7 @@ func TestCreateOrganization(t *testing.T) {
 	const path = "/api/v1/organizations"
 
 	// The happy path, checked in full.
-	rec := callBody(h, http.MethodPost, path, "usr-dave", `{"slug":"dave-co","displayName":"  Dave Co  "}`)
+	rec := callBody(h, http.MethodPost, path, "usr-dave", `{"slug":"daveco","displayName":"  Dave Co  "}`)
 	if rec.Code != 201 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -370,14 +370,14 @@ func TestCreateOrganization(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &o); err != nil {
 		t.Fatal(err)
 	}
-	if len(o.Id) != 30 || !strings.HasPrefix(o.Id, "org-") || o.Slug != "dave-co" || o.DisplayName != "Dave Co" ||
+	if len(o.Id) != 30 || !strings.HasPrefix(o.Id, "org-") || o.Slug != "daveco" || o.DisplayName != "Dave Co" ||
 		o.Description != "" || o.Status != "Pending" || o.OwnerUserId != "usr-dave" || o.MyRole == nil || *o.MyRole != "OrgOwner" {
 		t.Fatalf("unexpected organization: %+v", o)
 	}
 	if loc := rec.Header().Get("Location"); loc != path+"/"+o.Id {
 		t.Fatalf("Location %q", loc)
 	}
-	if rec := call(h, http.MethodGet, path+"/dave-co", "usr-dave"); rec.Code != 200 {
+	if rec := call(h, http.MethodGet, path+"/daveco", "usr-dave"); rec.Code != 200 {
 		t.Fatalf("new request not readable by its owner: %d %s", rec.Code, rec.Body)
 	}
 
@@ -388,19 +388,19 @@ func TestCreateOrganization(t *testing.T) {
 		wantCode         oapi.ErrorCode
 		wantField        string
 	}{
-		{"one pending request per user", "usr-dave", `{"slug":"dave-two","displayName":"Dave Two"}`, 409, oapi.ORGREQUESTPENDING, ""},
+		{"one pending request per user", "usr-dave", `{"slug":"davetwo","displayName":"Dave Two"}`, 409, oapi.ORGREQUESTPENDING, ""},
 		{"slug of an active org", "usr-alice", `{"slug":"acme","displayName":"x"}`, 409, oapi.SLUGTAKEN, "slug"},
 		{"slug of a deleted org stays taken", "usr-alice", `{"slug":"gone","displayName":"x"}`, 409, oapi.SLUGTAKEN, "slug"},
-		{"slug of a pending request", "usr-alice", `{"slug":"dave-co","displayName":"x"}`, 409, oapi.SLUGTAKEN, "slug"},
+		{"slug of a pending request", "usr-alice", `{"slug":"daveco","displayName":"x"}`, 409, oapi.SLUGTAKEN, "slug"},
 		{"reserved slug", "usr-alice", `{"slug":"admin","displayName":"x"}`, 400, oapi.VALIDATIONFAILED, "slug"},
-		{"kube- prefix", "usr-alice", `{"slug":"kube-team","displayName":"x"}`, 400, oapi.VALIDATIONFAILED, "slug"},
+		{"hyphen", "usr-alice", `{"slug":"alice-team","displayName":"x"}`, 400, oapi.VALIDATIONFAILED, "slug"},
 		{"slug with uppercase", "usr-alice", `{"slug":"Acme2","displayName":"x"}`, 400, oapi.VALIDATIONFAILED, "slug"},
 		{"slug too short", "usr-alice", `{"slug":"ab","displayName":"x"}`, 400, oapi.VALIDATIONFAILED, "slug"},
-		{"blank display name", "usr-alice", `{"slug":"alice-co","displayName":"   "}`, 400, oapi.VALIDATIONFAILED, "displayName"},
-		{"missing display name", "usr-alice", `{"slug":"alice-co"}`, 400, oapi.VALIDATIONFAILED, ""},
-		{"description too long", "usr-alice", `{"slug":"alice-co","displayName":"x","description":"` + long + `"}`, 400, oapi.VALIDATIONFAILED, "description"},
-		{"unknown field", "usr-alice", `{"slug":"alice-co","displayName":"x","status":"Active"}`, 400, oapi.VALIDATIONFAILED, ""},
-		{"no login", "", `{"slug":"anon-co","displayName":"x"}`, 401, oapi.UNAUTHENTICATED, ""},
+		{"blank display name", "usr-alice", `{"slug":"aliceco","displayName":"   "}`, 400, oapi.VALIDATIONFAILED, "displayName"},
+		{"missing display name", "usr-alice", `{"slug":"aliceco"}`, 400, oapi.VALIDATIONFAILED, ""},
+		{"description too long", "usr-alice", `{"slug":"aliceco","displayName":"x","description":"` + long + `"}`, 400, oapi.VALIDATIONFAILED, "description"},
+		{"unknown field", "usr-alice", `{"slug":"aliceco","displayName":"x","status":"Active"}`, 400, oapi.VALIDATIONFAILED, ""},
+		{"no login", "", `{"slug":"anonco","displayName":"x"}`, 401, oapi.UNAUTHENTICATED, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -463,7 +463,7 @@ func TestCreateOrganizationRace(t *testing.T) {
 
 	// One user, ten slugs. usr-r1..r10 may already own "race", so use alice.
 	got = race(func(int) string { return "usr-alice" },
-		func(i int) string { return fmt.Sprintf(`{"slug":"alice-%d","displayName":"A"}`, i) })
+		func(i int) string { return fmt.Sprintf(`{"slug":"alice%d","displayName":"A"}`, i) })
 	if got[201] != 1 || got[409] != n-1 {
 		t.Fatalf("same user: %v, want one 201 and %d 409", got, n-1)
 	}

@@ -54,7 +54,9 @@ func newDB(t *testing.T) *pgxpool.Pool {
 	}
 	if _, err := sqlDB.Exec(`
 		INSERT INTO users (id, issuer, subject) VALUES ('usr-a', 'iss', 'a');
-		INSERT INTO organizations (id, slug, display_name, owner_user_id, status) VALUES ('org-a', 'acme', 'ACME', 'usr-a', 'Active');`); err != nil {
+		INSERT INTO organizations (id, slug, display_name, owner_user_id, status) VALUES ('org-a', 'acme', 'ACME', 'usr-a', 'Active');
+		INSERT INTO clusters (id, display_name, status, proxy_endpoint, console_url, apps_domain)
+		VALUES ('cluster-a', 'Cluster A', 'Ready', 'https://kube-a.test', 'https://console-a.test', 'apps.test');`); err != nil {
 		t.Fatal(err)
 	}
 	pool, err := pgxpool.New(ctx, url)

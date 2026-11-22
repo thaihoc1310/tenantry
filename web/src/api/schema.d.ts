@@ -43,7 +43,9 @@ export interface paths {
          * @description Creates the organization as `Pending` with the caller as OrgOwner; a
          *     Platform Admin approves or rejects it. Values are trimmed.
          *     `slug` is permanent and prefixes every Kubernetes name the
-         *     organization will own, so reserved words and the `kube-` prefix are refused.
+         *     organization will own (`<org>-<workspace>`): lowercase letters and
+         *     digits only, no hyphen, so that name points at one Workspace of one
+         *     organization. Reserved words are refused.
          */
         post: operations["createOrganization"];
         delete?: never;

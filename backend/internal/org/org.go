@@ -263,22 +263,25 @@ func (s *Service) Update(ctx context.Context, userID, idOrSlug string, p Patch) 
 	return Org{Organization: updated, Role: o.Role}, nil
 }
 
-var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
+// No hyphen in an organization slug: <org>-<ws> then names exactly one
+// Workspace of one organization, and two organizations' names never nest
+// (acme-x of org "acme" against workspace "x" of an org "acme-x") (PRODUCT-PLAN §4.2).
+var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9]*$`)
 
-// reservedSlugs could be mistaken for platform objects (IMPLEMENTATION-PLAN §12, decision 4).
+// reservedSlugs could be mistaken for platform objects (IMPLEMENTATION-PLAN §12,
+// decision 4). "kube" also keeps Namespaces out of Kubernetes' kube- prefix.
 var reservedSlugs = []string{"kube", "default", "system", "capsule", "tenantry", "admin"}
 
 // checkSlug enforces the slug rules. The slug prefixes every Kubernetes name
-// the organization owns (<org>-<ws>-<ns> must fit a 63-char DNS label), and
-// Kubernetes keeps the kube- prefix for itself.
+// the organization owns (<org>-<ws>-<ns> must fit a 63-char DNS label).
 func checkSlug(s string) error {
 	if n := len(s); n < 3 || n > 20 {
 		return apperr.Invalid("slug", "must be 3 to 20 characters")
 	}
 	if !slugPattern.MatchString(s) {
-		return apperr.Invalid("slug", "must be lowercase letters, digits and single hyphens, starting with a letter")
+		return apperr.Invalid("slug", "must be lowercase letters and digits, starting with a letter")
 	}
-	if slices.Contains(reservedSlugs, s) || strings.HasPrefix(s, "kube-") {
+	if slices.Contains(reservedSlugs, s) {
 		return apperr.Invalid("slug", "is reserved")
 	}
 	return nil

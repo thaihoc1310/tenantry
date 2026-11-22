@@ -12,6 +12,9 @@ import (
 
 // op-failed gave up delivering after 10 attempts; op-running is under way.
 const opSeed = `
+INSERT INTO clusters (id, display_name, status, proxy_endpoint, console_url, apps_domain)
+VALUES ('cluster-a', 'Cluster A', 'Ready', 'https://kube-a.test', 'https://console-a.test', 'apps.test')
+ON CONFLICT DO NOTHING;
 INSERT INTO operations (id, org_id, resource_type, resource_id, type, state, error_code, error_message, correlation_id, created_by, finished_at) VALUES
   ('op-failed', 'org-acme', 'Workspace', 'ws-1', 'workspace.create', 'Failed', 'APPLY_FAILED', 'cluster unreachable', 'req-1', 'usr-alice', now()),
   ('op-running', 'org-acme', 'Workspace', 'ws-2', 'workspace.create', 'Running', '', '', 'req-2', NULL, NULL);

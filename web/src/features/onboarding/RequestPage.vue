@@ -61,22 +61,21 @@ watch(
     if (!slugEdited.value)
       form.slug = v
         .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^[^a-z]+|-+$/g, '')
+        .replace(/[^a-z0-9]+/g, '')
+        .replace(/^[^a-z]+/, '')
         .slice(0, 20)
-        .replace(/-+$/, '')
   },
 )
 
+// No hyphen: <org>-<workspace> must name one Workspace of one organization (PRODUCT-PLAN §4.2).
 const slugRule = computed(() => {
   if (!form.slug) return ''
   if (form.slug.length < 3 || form.slug.length > 20) return 'Use 3 to 20 characters.'
-  if (!/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(form.slug))
-    return 'Use lowercase letters, digits and single hyphens. Start with a letter; do not end with a hyphen.'
+  if (!/^[a-z][a-z0-9]*$/.test(form.slug)) return 'Use lowercase letters and digits only, starting with a letter.'
   return ''
 })
 const slugError = computed(() => fieldErrors.slug || slugRule.value)
-const shown = computed(() => form.slug || 'your-slug')
+const shown = computed(() => form.slug || 'yourslug')
 const canSend = computed(
   () => form.name.trim() !== '' && form.slug !== '' && !slugRule.value && !create.isPending.value,
 )
@@ -127,7 +126,7 @@ async function checkAgain() {
           </el-form-item>
           <el-form-item label="Slug" for="org-slug" :error="slugError">
             <el-input id="org-slug" v-model="form.slug" maxlength="20" @input="slugEdited = true" />
-            <div v-if="!slugError" class="t-field-note">3 to 20 lowercase letters, digits or hyphens.</div>
+            <div v-if="!slugError" class="t-field-note">3 to 20 lowercase letters or digits, no hyphen.</div>
           </el-form-item>
           <el-alert
             type="warning"
