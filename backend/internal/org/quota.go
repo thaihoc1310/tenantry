@@ -5,6 +5,7 @@ import (
 
 	"github.com/thaihoc1310/tenantry/backend/internal/apperr"
 	"github.com/thaihoc1310/tenantry/backend/internal/reservation"
+	"github.com/thaihoc1310/tenantry/backend/internal/store"
 )
 
 // What an organization was granted and what it uses (PRODUCT-PLAN §5.6).
@@ -72,4 +73,39 @@ func (s *Service) Usage(ctx context.Context, userID, idOrSlug string) (Usage, er
 		return Usage{}, err
 	}
 	return s.usageOf(ctx, s.q, o)
+}
+
+// AuditPage is one page of an organization's audit trail, newest first.
+type AuditPage struct {
+	Items      []store.ListOrganizationAuditRow
+	NextCursor int64 // 0 on the last page
+}
+
+// Audit is read by the OrgOwner and OrgAdmins of an Active organization
+// (PRODUCT-PLAN §21.3).
+func (s *Service) Audit(ctx context.Context, userID, idOrSlug string, cursor int64, pageSize int) (AuditPage, error) {
+	if pageSize == 0 {
+		pageSize = DefaultPageSize
+	}
+	if pageSize < 1 || pageSize > MaxPageSize {
+		return AuditPage{}, apperr.Invalid("limit", "must be between 1 and 200")
+	}
+	o, err := s.manage(ctx, userID, idOrSlug)
+	if err != nil {
+		return AuditPage{}, err
+	}
+	arg := store.ListOrganizationAuditParams{OrgID: &o.ID, PageSize: int32(pageSize + 1)}
+	if cursor > 0 {
+		arg.Cursor = &cursor
+	}
+	rows, err := s.q.ListOrganizationAudit(ctx, arg)
+	if err != nil {
+		return AuditPage{}, err
+	}
+	p := AuditPage{Items: rows}
+	if len(rows) > pageSize {
+		p.Items = rows[:pageSize]
+		p.NextCursor = p.Items[pageSize-1].ID
+	}
+	return p, nil
 }

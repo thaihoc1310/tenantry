@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"strconv"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/apperr"
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi/oapi"
@@ -28,8 +29,8 @@ func (s server) ListWorkspaces(ctx context.Context, req oapi.ListWorkspacesReque
 	return oapi.ListWorkspaces200JSONResponse(out), nil
 }
 
-func (s server) CreateWorkspace(ctx context.Context, req oapi.CreateWorkspaceRequestObject) (oapi.CreateWorkspaceResponseObject, error) {
-	b := req.Body
+// toNew reads a create body: quantities parsed, the requested block too.
+func toNew(ctx context.Context, b *oapi.WorkspaceCreate) (workspace.New, error) {
 	n := workspace.New{
 		Slug: b.Slug, DisplayName: b.DisplayName, ClusterID: b.ClusterId,
 		ComputeMode: string(b.Compute.Mode), CorrelationID: requestID(ctx),
@@ -50,20 +51,28 @@ func (s server) CreateWorkspace(ctx context.Context, req oapi.CreateWorkspaceReq
 		if net.RequestedCidr != nil {
 			p, err := netip.ParsePrefix(*net.RequestedCidr)
 			if err != nil || !p.Addr().Is4() {
-				return nil, apperr.Invalid("network.requestedCidr", "is not an IPv4 CIDR such as 10.240.12.0/24")
+				return n, apperr.Invalid("network.requestedCidr", "is not an IPv4 CIDR such as 10.240.12.0/24")
 			}
 			n.Network.RequestedCIDR = &p
 		}
 	}
 	var err error
 	if n.Resources, err = toWorkspaceResources(b.Resources); err != nil {
-		return nil, err
+		return n, err
 	}
 	if b.Namespaces != nil {
 		n.Namespaces = *b.Namespaces
 	}
 	for _, bi := range b.Bindings {
 		n.Bindings = append(n.Bindings, workspace.Binding{GroupID: bi.GroupId, Role: workspace.Role(bi.Role)})
+	}
+	return n, nil
+}
+
+func (s server) CreateWorkspace(ctx context.Context, req oapi.CreateWorkspaceRequestObject) (oapi.CreateWorkspaceResponseObject, error) {
+	n, err := toNew(ctx, req.Body)
+	if err != nil {
+		return nil, err
 	}
 	c, err := s.workspaces.Create(ctx, userID(ctx), req.OrgId, n)
 	if err != nil {
@@ -409,4 +418,57 @@ func (s server) GetNetworkPoolAvailability(ctx context.Context, req oapi.GetNetw
 		out.Blocks[i] = oapi.NetworkBlock{Workspace: b.K8sName, Cidr: b.Cidr.String(), State: oapi.NetworkBlockState(b.State)}
 	}
 	return oapi.GetNetworkPoolAvailability200JSONResponse(out), nil
+}
+
+func (s server) ValidateWorkspace(ctx context.Context, req oapi.ValidateWorkspaceRequestObject) (oapi.ValidateWorkspaceResponseObject, error) {
+	n, err := toNew(ctx, req.Body)
+	if err != nil {
+		return nil, err
+	}
+	c, err := s.workspaces.Validate(ctx, userID(ctx), req.OrgId, n)
+	if err != nil {
+		return nil, err
+	}
+	out := oapi.WorkspaceValidation{Valid: true}
+	out.Network.NetworkPoolId, out.Network.Cidr = c.NetworkPoolID, c.CIDR.String()
+	return oapi.ValidateWorkspace200JSONResponse(out), nil
+}
+
+func (s server) ListAuditEvents(ctx context.Context, req oapi.ListAuditEventsRequestObject) (oapi.ListAuditEventsResponseObject, error) {
+	var cursor int64
+	var limit int
+	if req.Params.Cursor != nil {
+		c, err := strconv.ParseInt(*req.Params.Cursor, 10, 64)
+		if err != nil || c < 1 {
+			return nil, apperr.Invalid("cursor", "is not a cursor this API gave")
+		}
+		cursor = c
+	}
+	if req.Params.Limit != nil {
+		limit = *req.Params.Limit
+	}
+	p, err := s.orgs.Audit(ctx, userID(ctx), req.OrgId, cursor, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := oapi.AuditEventList{Items: make([]oapi.AuditEvent, 0, len(p.Items))}
+	for _, e := range p.Items {
+		ev := oapi.AuditEvent{Id: strconv.FormatInt(e.ID, 10), At: e.At, Action: e.Action, TargetType: e.TargetType,
+			TargetId: e.TargetID, Result: e.Result, Detail: map[string]any{}}
+		if err := json.Unmarshal(e.Detail, &ev.Detail); err != nil {
+			return nil, fmt.Errorf("audit event %d detail: %w", e.ID, err)
+		}
+		if e.ActorUserID != nil {
+			ev.Actor = &oapi.UserSummary{Id: *e.ActorUserID, Email: e.ActorEmail}
+			if e.ActorName != nil {
+				ev.Actor.DisplayName = *e.ActorName
+			}
+		}
+		out.Items = append(out.Items, ev)
+	}
+	if p.NextCursor > 0 {
+		c := strconv.FormatInt(p.NextCursor, 10)
+		out.NextCursor = &c
+	}
+	return oapi.ListAuditEvents200JSONResponse(out), nil
 }

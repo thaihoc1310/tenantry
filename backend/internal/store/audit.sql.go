@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"time"
 )
 
 const insertAuditEvent = `-- name: InsertAuditEvent :exec
@@ -35,4 +36,64 @@ func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventPara
 		arg.Detail,
 	)
 	return err
+}
+
+const listOrganizationAudit = `-- name: ListOrganizationAudit :many
+SELECT e.id, e.at, e.action, e.target_type, e.target_id, e.result, e.detail,
+       e.actor_user_id, u.display_name AS actor_name, u.email AS actor_email
+FROM audit_events e LEFT JOIN users u ON u.id = e.actor_user_id
+WHERE e.org_id = $1 AND ($2::bigint IS NULL OR e.id < $2)
+ORDER BY e.id DESC
+LIMIT $3
+`
+
+type ListOrganizationAuditParams struct {
+	OrgID    *string
+	Cursor   *int64
+	PageSize int32
+}
+
+type ListOrganizationAuditRow struct {
+	ID          int64
+	At          time.Time
+	Action      string
+	TargetType  string
+	TargetID    string
+	Result      string
+	Detail      []byte
+	ActorUserID *string
+	ActorName   *string
+	ActorEmail  *string
+}
+
+// An organization's audit trail, newest first, with who acted.
+func (q *Queries) ListOrganizationAudit(ctx context.Context, arg ListOrganizationAuditParams) ([]ListOrganizationAuditRow, error) {
+	rows, err := q.db.Query(ctx, listOrganizationAudit, arg.OrgID, arg.Cursor, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrganizationAuditRow
+	for rows.Next() {
+		var i ListOrganizationAuditRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.At,
+			&i.Action,
+			&i.TargetType,
+			&i.TargetID,
+			&i.Result,
+			&i.Detail,
+			&i.ActorUserID,
+			&i.ActorName,
+			&i.ActorEmail,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

@@ -723,6 +723,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{orgId}/workspaces:validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check a Workspace before creating it (OrgOwner or OrgAdmin)
+         * @description Runs the create to its end, with its locks and checks, then undoes
+         *     it: the same errors as `POST .../workspaces`, nothing written. The
+         *     wizard calls it when leaving each step (IMPLEMENTATION-PLAN §6.4).
+         */
+        post: operations["validateWorkspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{orgId}/audit-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        /** The organization's audit trail, newest first (OrgOwner or OrgAdmin) */
+        get: operations["listAuditEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workspaces/{workspaceId}": {
         parameters: {
             query?: never;
@@ -1832,6 +1883,34 @@ export interface components {
             cidr: string;
             /** @enum {string} */
             state: "Allocated" | "Releasing" | "Quarantined";
+        };
+        WorkspaceValidation: {
+            /** @enum {boolean} */
+            valid: true;
+            /** @description The block the Workspace would get now */
+            network: {
+                networkPoolId: string;
+                cidr: string;
+            };
+        };
+        AuditEvent: {
+            id: string;
+            /** Format: date-time */
+            at: string;
+            /** @description Absent when the platform acted on its own */
+            actor?: components["schemas"]["UserSummary"];
+            /** @description e.g. workspace.create */
+            action: string;
+            targetType: string;
+            targetId: string;
+            result: string;
+            detail: {
+                [key: string]: unknown;
+            };
+        };
+        AuditEventList: {
+            items: components["schemas"]["AuditEvent"][];
+            nextCursor?: string;
         };
         WorkspaceCondition: {
             /** @description e.g. CapsuleTenantReady (architecture/04 §1.2) */
@@ -3794,6 +3873,85 @@ export interface operations {
             };
             422: components["responses"]["IdempotencyKeyReused"];
             429: components["responses"]["RateLimited"];
+        };
+    };
+    validateWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceCreate"];
+            };
+        };
+        responses: {
+            /** @description It would be created so */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceValidation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description The conflicts of `POST .../workspaces`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listAuditEvents: {
+        parameters: {
+            query?: {
+                limit?: number;
+                /** @description Opaque; pass `nextCursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditEventList"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["OrgNotActive"];
         };
     };
     getWorkspace: {

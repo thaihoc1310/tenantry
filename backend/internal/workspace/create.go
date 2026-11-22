@@ -84,10 +84,13 @@ type Network struct {
 	RequestedCIDR *netip.Prefix
 }
 
-// Created is a new Workspace and the operation provisioning it.
+// Created is a new Workspace, the operation provisioning it and its
+// address block.
 type Created struct {
-	Workspace store.Workspace
-	Operation store.Operation
+	Workspace     store.Workspace
+	Operation     store.Operation
+	NetworkPoolID string
+	CIDR          netip.Prefix
 }
 
 // Create writes a Workspace in Provisioning with its bindings and
@@ -95,6 +98,22 @@ type Created struct {
 // transaction holding the locks of 02-data-model §4 in their order
 // (PRODUCT-PLAN §17.1). OrgOwner or OrgAdmin of an Active organization.
 func (s *Service) Create(ctx context.Context, userID, orgIDOrSlug string, n New) (Created, error) {
+	return s.create(ctx, userID, orgIDOrSlug, n, false)
+}
+
+// Validate runs a create to the end, locks, checks and constraints
+// included, then rolls it back (POST .../workspaces:validate): what a create
+// would refuse, it refuses; what it would make (the address block) it shows.
+func (s *Service) Validate(ctx context.Context, userID, orgIDOrSlug string, n New) (Created, error) {
+	return s.create(ctx, userID, orgIDOrSlug, n, true)
+}
+
+// dryRun carries a validated create out of its transaction, rolling it back.
+type dryRun struct{ Created }
+
+func (dryRun) Error() string { return "dry run" }
+
+func (s *Service) create(ctx context.Context, userID, orgIDOrSlug string, n New, validate bool) (Created, error) {
 	o, err := s.manage(ctx, userID, orgIDOrSlug)
 	if err != nil {
 		return Created{}, err
@@ -258,7 +277,10 @@ func (s *Service) Create(ctx context.Context, userID, orgIDOrSlug string, n New)
 		if err := enqueueApply(ctx, q, op, ws); err != nil {
 			return err
 		}
-		out = Created{Workspace: ws, Operation: op}
+		out = Created{Workspace: ws, Operation: op, NetworkPoolID: netPool, CIDR: block}
+		if validate {
+			return dryRun{out}
+		}
 		return audit.Record(ctx, q, audit.Event{
 			Actor: userID, OrgID: o.ID, Action: audit.WorkspaceCreate, TargetType: "Workspace", TargetID: ws.ID,
 			Detail: map[string]any{
@@ -269,6 +291,10 @@ func (s *Service) Create(ctx context.Context, userID, orgIDOrSlug string, n New)
 	})
 	if c, ok := store.UniqueViolation(err); ok && c == "workspaces_k8s_name_uq" {
 		return Created{}, &apperr.Error{Code: apperr.SlugTaken, Message: "the slug is already in use", Details: map[string]any{"field": "slug"}}
+	}
+	var dry dryRun
+	if errors.As(err, &dry) {
+		return dry.Created, nil
 	}
 	return out, err
 }

@@ -1182,3 +1182,47 @@ func TestNetworkAllocation(t *testing.T) {
 		t.Fatalf("shrink a pool under its blocks: %d %s", rec.Code, rec.Body)
 	}
 }
+
+// :validate refuses what a create refuses and writes nothing; the audit
+// trail lists the organization's events for its OrgOwner and OrgAdmins.
+func TestValidateAndAudit(t *testing.T) {
+	h, db, _, owner, admins, devs := workspaceOrg(t)
+	validate := func(body string) *httptest.ResponseRecorder {
+		return asAdmin(h, owner, http.MethodPost, "/api/v1/organizations/zeta/workspaces:validate", "", body)
+	}
+	rec := validate(workspaceBody("solar", admins, devs, ""))
+	var v oapi.WorkspaceValidation
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &v) != nil || v.Network.Cidr != "10.240.0.0/24" {
+		t.Fatalf("validate: %d %s", rec.Code, rec.Body)
+	}
+	for q := range map[string]bool{`SELECT count(*) FROM workspaces`: true, `SELECT count(*) FROM network_allocations`: true,
+		`SELECT count(*) FROM outbox_events`: true, `SELECT count(*) FROM audit_events WHERE action = 'workspace.create'`: true} {
+		if n := count(t, db, q); n != 0 {
+			t.Fatalf("validate wrote: %s = %d", q, n)
+		}
+	}
+	if rec := validate(workspaceBody("solar", admins, devs, `"resources":{"requestsCpu":"9","requestsMemory":"1Gi","limitsCpu":"9","limitsMemory":"1Gi","pods":1,"requestsStorage":"1Gi","namespaceQuota":1}`)); rec.Code != 409 ||
+		errorBody(t, rec).Code != oapi.CLUSTERGRANTQUOTAEXCEEDED {
+		t.Fatalf("validate over the grant: %d %s", rec.Code, rec.Body)
+	}
+	if rec := asAdmin(h, sessionOf("usr-bob"), http.MethodPost, "/api/v1/organizations/zeta/workspaces:validate", "", workspaceBody("solar", admins, devs, "")); rec.Code != 403 {
+		t.Fatalf("OrgMember validates: %d", rec.Code)
+	}
+	if rec := createWorkspace(h, owner, "zeta", workspaceBody("solar", admins, devs, "")); rec.Code != 202 {
+		t.Fatalf("create after validate: %d %s", rec.Code, rec.Body)
+	}
+
+	rec = asAdmin(h, owner, http.MethodGet, "/api/v1/organizations/zeta/audit-events?limit=1", "", "")
+	var l oapi.AuditEventList
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &l) != nil || len(l.Items) != 1 || l.Items[0].Action != "workspace.create" ||
+		l.Items[0].Actor == nil || l.Items[0].Actor.Id != "usr-zeta" || l.NextCursor == nil {
+		t.Fatalf("audit: %d %s", rec.Code, rec.Body)
+	}
+	rec = asAdmin(h, owner, http.MethodGet, "/api/v1/organizations/zeta/audit-events?cursor="+*l.NextCursor, "", "")
+	if rec.Code != 200 || strings.Contains(rec.Body.String(), `"workspace.create"`) {
+		t.Fatalf("second page: %d %s", rec.Code, rec.Body)
+	}
+	if rec := asAdmin(h, sessionOf("usr-bob"), http.MethodGet, "/api/v1/organizations/zeta/audit-events", "", ""); rec.Code != 403 {
+		t.Fatalf("OrgMember reads the audit trail: %d", rec.Code)
+	}
+}
