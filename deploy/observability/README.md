@@ -10,7 +10,9 @@ Grafana and pick the Prometheus data source. It shows:
 - shared pool capacity;
 - Routes not ready;
 - Capsule Proxy probe results;
-- the operator's API requests.
+- the operator's API requests;
+- for the Platform API and workers: request rate and latency, workspace.create duration, the outbox,
+  free address blocks, group sync, and each process's database pool (connections in use, waits).
 
 The operator serves the metrics over HTTPS on port 8443, behind the Service `tenantry-operator-metrics`,
 when the chart's `metrics.enabled` is true. A scraper needs a token of a ServiceAccount bound to the
