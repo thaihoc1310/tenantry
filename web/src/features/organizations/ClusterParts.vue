@@ -33,7 +33,7 @@ const nets = useOrgNetworkPools(
   >
     <div class="t-row t-between" style="margin-bottom: 16px">
       <code>{{ p.id }}</code
-      ><span class="muted small">{{ p.nodeCount }} nodes</span>
+      ><span class="muted small">{{ p.nodeCount }} node{{ p.nodeCount === 1 ? '' : 's' }}</span>
     </div>
     <div class="t-meters two">
       <QuotaMeter
