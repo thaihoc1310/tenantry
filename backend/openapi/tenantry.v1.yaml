@@ -2935,6 +2935,9 @@ components:
         network:
           description: Absent on a Workspace created before network allocations
           allOf: [{ $ref: "#/components/schemas/WorkspaceNetwork" }]
+        appsDomain:
+          type: string
+          description: The cluster's apps domain, where the Workspace's Routes answer; on `GET /workspaces/{workspaceId}` only.
         myRoles:
           type: array
           description: |

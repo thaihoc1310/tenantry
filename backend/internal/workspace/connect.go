@@ -43,6 +43,11 @@ func (s *Service) connection(ctx context.Context, userID, wsID string) (Connecti
 	return out, nil
 }
 
+// ClusterOf is the cluster a Workspace lives on, for what the detail shows of it.
+func (s *Service) ClusterOf(ctx context.Context, ws store.Workspace) (store.Cluster, error) {
+	return s.q.GetCluster(ctx, ws.ClusterID)
+}
+
 // Kubeconfig is what a kubeconfig of the Workspace needs; the download is audited.
 func (s *Service) Kubeconfig(ctx context.Context, userID, wsID string) (Connection, error) {
 	c, err := s.connection(ctx, userID, wsID)

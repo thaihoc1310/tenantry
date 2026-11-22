@@ -270,3 +270,54 @@ export function useDeleteNamespace() {
     ),
   )
 }
+
+// ---- Routes (M11) ---------------------------------------------------------------
+
+// Routes refresh every 2 s while one is on its way or going.
+export function useWorkspaceRoutes(id: MaybeRefOrGetter<string | undefined>) {
+  return useQuery({
+    queryKey: computed(() => ['workspace-routes', toValue(id)]),
+    queryFn: async () =>
+      (await unwrap(api.GET('/workspaces/{workspaceId}/routes', { params: { path: { workspaceId: toValue(id)! } } })))
+        .items,
+    enabled: computed(() => !!toValue(id)),
+    refetchInterval: (q) => (q.state.data?.some((r) => r.state !== 'Active') ? 2000 : false),
+  })
+}
+
+export function useCreateRoute() {
+  const qc = useQueryClient()
+  let key = idempotencyKey()
+  return useMutation({
+    mutationFn: async (v: { id: string; body: Schemas['WorkspaceRouteInput'] }) => {
+      const r = await unwrap(
+        api.POST('/workspaces/{workspaceId}/routes', {
+          params: { path: { workspaceId: v.id }, header: { 'Idempotency-Key': key } },
+          body: v.body,
+        }),
+      )
+      key = idempotencyKey()
+      return r
+    },
+    onSettled: () =>
+      Promise.all(
+        ['workspace', 'workspace-operations', 'workspace-routes'].map((k) => qc.invalidateQueries({ queryKey: [k] })),
+      ),
+  })
+}
+
+export function useDeleteRoute() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { id: string; routeId: string }) =>
+      unwrap(
+        api.DELETE('/workspaces/{workspaceId}/routes/{routeId}', {
+          params: { path: { workspaceId: v.id, routeId: v.routeId } },
+        }),
+      ),
+    onSettled: () =>
+      Promise.all(
+        ['workspace', 'workspace-operations', 'workspace-routes'].map((k) => qc.invalidateQueries({ queryKey: [k] })),
+      ),
+  })
+}

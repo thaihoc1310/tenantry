@@ -263,6 +263,11 @@ func TestWorkspaceVisibility(t *testing.T) {
 	if r := roles(sessionOf("usr-erin"), "wind"); r == nil || len(r) != 0 {
 		t.Errorf("erin's roles %v", r)
 	}
+	var w oapi.Workspace
+	_ = json.Unmarshal(asAdmin(h, owner, http.MethodGet, "/api/v1/workspaces/"+ids["solar"], "", "").Body.Bytes(), &w)
+	if w.AppsDomain == nil || *w.AppsDomain != "apps.test" {
+		t.Errorf("apps domain %v", w.AppsDomain)
+	}
 }
 
 // settle plays the worker: the Workspace's operations succeeded and it is Ready.

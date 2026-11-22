@@ -102,6 +102,11 @@ func (s server) GetWorkspace(ctx context.Context, req oapi.GetWorkspaceRequestOb
 		roles = append(roles, oapi.WorkspaceRole(r))
 	}
 	w.MyRoles = &roles
+	c, err := s.workspaces.ClusterOf(ctx, ws)
+	if err != nil {
+		return nil, err
+	}
+	w.AppsDomain = &c.AppsDomain
 	return oapi.GetWorkspace200JSONResponse(w), nil
 }
 

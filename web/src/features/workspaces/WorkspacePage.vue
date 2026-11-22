@@ -2,8 +2,8 @@
 // One Workspace (docs/design/mockups: Workspace): Overview with its
 // conditions and recent changes followed live, Resources with what its Pods
 // use and a resize, Compute, Network, Namespaces, Access roles, Danger zone
-// with cordon and delete (IMPLEMENTATION-PLAN M7 step 10, M10), Connect
-// (M11). Routes come with M11 too.
+// with cordon and delete (IMPLEMENTATION-PLAN M7 step 10, M10), Routes and
+// Connect (M11).
 import { ElMessage } from 'element-plus'
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -18,6 +18,7 @@ import ComputeDetail from './ComputeDetail.vue'
 import ConnectTab from './ConnectTab.vue'
 import { kubeconfigURL, openConsole } from './connect'
 import NamespacesTab from './NamespacesTab.vue'
+import RoutesTab from './RoutesTab.vue'
 import NetworkDetail from './NetworkDetail.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
@@ -63,6 +64,7 @@ const tabs = [
   ['compute', 'Compute'],
   ['network', 'Network'],
   ['namespaces', 'Namespaces'],
+  ['routes', 'Routes'],
   ['members', 'Access roles'],
   ['access', 'Connect'],
   ['danger', 'Danger zone'],
@@ -441,6 +443,11 @@ const usable = computed(() => ['Ready', 'Degraded'].includes(ws.value?.state ?? 
       <!-- Namespaces -->
       <template v-else-if="tab === 'namespaces'">
         <NamespacesTab :ws="ws" :owns="ownsTenant" :busy="busy" />
+      </template>
+
+      <!-- Routes -->
+      <template v-else-if="tab === 'routes'">
+        <RoutesTab :ws="ws" :owns="ownsTenant" :busy="busy" />
       </template>
 
       <!-- Access roles -->

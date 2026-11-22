@@ -2081,6 +2081,8 @@ export interface components {
             compute: components["schemas"]["WorkspaceCompute"];
             /** @description Absent on a Workspace created before network allocations */
             network?: components["schemas"]["WorkspaceNetwork"];
+            /** @description The cluster's apps domain, where the Workspace's Routes answer; on `GET /workspaces/{workspaceId}` only. */
+            appsDomain?: string;
             /**
              * @description The caller's roles in the Workspace through their groups, on
              *     `GET /workspaces/{workspaceId}` only. The OrgOwner and OrgAdmins
