@@ -126,6 +126,13 @@ const gridErrors = computed(() => ({
   lmem: w.errors.value['resources.limitsMemory'],
 }))
 const err = (field: string) => w.errors.value[field] ?? ''
+// In Auto, the network fields are not on screen: their errors show under the summary.
+const netError = computed(() =>
+  Object.entries(w.errors.value)
+    .filter(([k]) => k.startsWith('network'))
+    .map(([, v]) => v)
+    .join(' '),
+)
 
 const prefix = computed(() => (w.form.netAuto || !f.prefix ? (net.value?.defaultPrefixLength ?? 24) : f.prefix))
 const addresses = (bits: number) => Math.max(2 ** (32 - bits) - 2, 0)
@@ -254,7 +261,7 @@ async function submit() {
                 type="warning"
                 :closable="false"
                 show-icon
-                :title="`${notReady.displayName} is ${notReady.status}`"
+                :title="`${notReady.displayName} is ${notReady.status === 'Maintenance' ? 'in maintenance' : notReady.status.toLowerCase()}`"
                 description="Workspaces can be created on it again once it is Ready. Existing Workspaces keep running."
               />
               <div
@@ -508,7 +515,8 @@ async function submit() {
                 ><span v-else>chosen when the Workspace is created</span></template
               >
             </KeyValues>
-            <el-form v-else label-position="top" style="max-width: 560px" @submit.prevent>
+            <div v-if="f.netAuto && netError" class="t-field-note t-field-err">{{ netError }}</div>
+            <el-form v-else-if="!f.netAuto" label-position="top" style="max-width: 560px" @submit.prevent>
               <el-form-item label="Pool" for="w-pool" :error="err('network.networkPoolId')">
                 <el-select id="w-pool" v-model="f.networkPoolId" style="width: 100%">
                   <el-option

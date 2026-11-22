@@ -173,8 +173,8 @@ export function localErrors(f: WizardForm, orgSlug: string): Errors {
   if (f.slug.length < 2 || f.slug.length > 20 || !slugPattern.test(f.slug))
     e.slug = 'Use 2 to 20 lowercase letters, digits or single hyphens, starting with a letter.'
   if (!f.clusterId) e.clusterId = 'No Ready cluster is granted to the Organization.'
-  if (f.mode === 'Shared' && !f.sharedPoolId) e['compute.sharedPoolId'] = 'The grant lists no shared pool.'
-  if (f.mode === 'Dedicated' && !f.nodeGrantId) e['compute.dedicatedNodeGrantId'] = 'Choose a node.'
+  else if (f.mode === 'Shared' && !f.sharedPoolId) e['compute.sharedPoolId'] = 'The grant lists no shared pool.'
+  else if (f.mode === 'Dedicated' && !f.nodeGrantId) e['compute.dedicatedNodeGrantId'] = 'Choose a node.'
   if (!(f.rcpu > 0)) e['resources.requestsCpu'] = 'Ask for some CPU.'
   if (!(f.rmem > 0)) e['resources.requestsMemory'] = 'Ask for some memory.'
   if (f.mode === 'Shared') {

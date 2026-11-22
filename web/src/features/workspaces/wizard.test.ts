@@ -170,7 +170,6 @@ describe('local checks', () => {
       [
         'bindings',
         'clusterId',
-        'compute.sharedPoolId',
         'displayName',
         'namespaces',
         'resources.limitsCpu',

@@ -1158,6 +1158,56 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
 
+  /workspaces/{workspaceId}/kubeconfig:
+    parameters:
+      - $ref: "#/components/parameters/workspaceId"
+    get:
+      operationId: getWorkspaceKubeconfig
+      summary: A kubeconfig for the Workspace's cluster (anyone who sees the Workspace)
+      description: |
+        No credential in it (PRODUCT-PLAN §11.2): the server is the cluster's
+        Capsule Proxy, and kubectl gets a token from Keycloak through
+        kubelogin (`kubectl oidc-login`, client `kubectl`) with the user's own
+        login. Removing someone from a group needs nothing done to the file
+        (§9.3). The context is named after the Workspace (`k8sName`) and
+        starts in its first Namespace. Each download is audited.
+      responses:
+        "200":
+          description: The kubeconfig, as a file to save
+          headers:
+            Content-Disposition:
+              required: true
+              schema: { type: string }
+          content:
+            application/yaml:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /workspaces/{workspaceId}/console-link:
+    parameters:
+      - $ref: "#/components/parameters/workspaceId"
+    get:
+      operationId: getWorkspaceConsoleLink
+      summary: The web console (Headlamp) of the Workspace's cluster (anyone who sees the Workspace)
+      description: |
+        Headlamp signs in with the same Keycloak session as the portal and
+        sees what the user's groups may see (PRODUCT-PLAN §12). 409
+        `CLUSTER_NOT_READY` while the cluster is Unavailable.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConsoleLink" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`CLUSTER_NOT_READY`: the cluster is Unavailable."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
   /workspaces/{workspaceId}/bindings:
     parameters:
       - $ref: "#/components/parameters/workspaceId"
@@ -2606,6 +2656,12 @@ components:
         groupId: { type: string }
         groupName: { type: string }
         role: { $ref: "#/components/schemas/WorkspaceRole" }
+
+    ConsoleLink:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, description: "The cluster's Headlamp, opened in the Workspace's first Namespace when it has one" }
 
     WorkspaceBindingList:
       type: object

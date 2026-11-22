@@ -108,6 +108,9 @@ func New(db *pgxpool.Pool, cfg config.Auth) (*Service, error) {
 // links the API hands out, such as invitation links.
 func (s *Service) PublicURL() string { return s.cfg.PublicURL }
 
+// Issuer is the Keycloak realm (TENANTRY_OIDC_ISSUER), for kubeconfigs.
+func (s *Service) Issuer() string { return s.cfg.Issuer }
+
 // --- login ---
 
 // loginState is everything the callback must check, carried by the browser

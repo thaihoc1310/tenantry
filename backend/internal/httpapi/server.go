@@ -38,6 +38,7 @@ type server struct {
 	workspaces *workspace.Service
 	health     *health.Service
 	publicURL  string // the portal origin, for links handed out (invitations)
+	issuer     string // the Keycloak realm, for kubeconfigs
 }
 
 // Register mounts every /api/v1 operation and the browser login endpoints
@@ -50,7 +51,7 @@ func Register(r chi.Router, db *pgxpool.Pool, a *auth.Service, trustedProxies []
 	orgs := org.NewService(db)
 	srv := server{
 		orgs: orgs, users: user.NewService(db), clusters: reservation.NewService(db), ops: operation.NewService(db, map[string]operation.Reapply{"Workspace": workspace.Reapply}),
-		workspaces: workspace.NewService(db, orgs), health: health.NewService(db), publicURL: publicURL(a),
+		workspaces: workspace.NewService(db, orgs), health: health.NewService(db), publicURL: publicURL(a), issuer: issuer(a),
 	}
 	api := oapi.NewStrictHandlerWithOptions(srv, nil, oapi.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: badRequest,
@@ -92,6 +93,13 @@ func publicURL(a *auth.Service) string {
 		return ""
 	}
 	return a.PublicURL()
+}
+
+func issuer(a *auth.Service) string {
+	if a == nil {
+		return ""
+	}
+	return a.Issuer()
 }
 
 // timeNow is time.Now; one place to read the clock in handlers.

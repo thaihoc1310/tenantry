@@ -18,6 +18,7 @@ import (
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi/oapi"
 	"github.com/thaihoc1310/tenantry/backend/internal/workspace"
 	v1 "github.com/thaihoc1310/tenantry/operator/api/v1alpha1"
+	"sigs.k8s.io/yaml"
 )
 
 // workspaceOrg is staffedOrg with its three groups already in Keycloak and
@@ -1240,5 +1241,98 @@ func TestValidateAndAudit(t *testing.T) {
 	}
 	if rec := asAdmin(h, sessionOf("usr-bob"), http.MethodGet, "/api/v1/organizations/zeta/audit-events", "", ""); rec.Code != 403 {
 		t.Fatalf("OrgMember reads the audit trail: %d", rec.Code)
+	}
+}
+
+func TestKubeconfigAndConsole(t *testing.T) {
+	h, db, orgID, owner, admins, devs := workspaceOrg(t)
+	rec := createWorkspace(h, owner, "zeta", workspaceBody("solar", admins, devs, ""))
+	var got oapi.WorkspaceAccepted
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	id := got.Workspace.Id
+	settle(t, db, id)
+	ctx := context.Background()
+
+	// Before any Namespace is Active the context has none, and the console opens on its home.
+	kube := func(token string) *httptest.ResponseRecorder {
+		return asAdmin(h, token, http.MethodGet, "/api/v1/workspaces/"+id+"/kubeconfig", "", "")
+	}
+	console := func(token string) *httptest.ResponseRecorder {
+		return asAdmin(h, token, http.MethodGet, "/api/v1/workspaces/"+id+"/console-link", "", "")
+	}
+	if rec := console(owner); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"url":"https://console-a.test"`) {
+		t.Fatalf("console before namespaces: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := db.Exec(ctx, `UPDATE workspace_namespaces SET state = 'Active' WHERE workspace_id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+
+	// bob, a Developer through his group, downloads it: no credential, kubelogin, the Workspace's context.
+	rec = kube(sessionOf("usr-bob"))
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "application/yaml" ||
+		rec.Header().Get("Content-Disposition") != `attachment; filename="zeta-solar.kubeconfig"` {
+		t.Fatalf("kubeconfig: %d %v %s", rec.Code, rec.Header(), rec.Body)
+	}
+	var cfg struct {
+		Clusters []struct {
+			Name    string
+			Cluster map[string]any
+		}
+		Contexts []struct {
+			Name    string
+			Context struct{ Cluster, User, Namespace string }
+		}
+		CurrentContext string `json:"current-context"`
+		Users          []struct {
+			Name string
+			User struct {
+				Exec struct {
+					Command string
+					Args    []string
+				}
+			}
+		}
+	}
+	if err := yaml.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Clusters) != 1 || cfg.Clusters[0].Cluster["server"] != "https://kube-a.test" || len(cfg.Clusters[0].Cluster) != 1 {
+		t.Errorf("cluster %+v", cfg.Clusters)
+	}
+	if cfg.CurrentContext != "zeta-solar" || cfg.Contexts[0].Context.Namespace != "zeta-solar-frontend" || cfg.Contexts[0].Context.Cluster != "cluster-a" {
+		t.Errorf("context %+v %s", cfg.Contexts, cfg.CurrentContext)
+	}
+	exec := cfg.Users[0].User.Exec
+	if exec.Command != "kubectl" || !slices.Equal(exec.Args, []string{"oidc-login", "get-token",
+		"--oidc-issuer-url=http://127.0.0.1:1/realms/none", "--oidc-client-id=kubectl"}) {
+		t.Errorf("exec %+v", exec)
+	}
+	for _, secret := range []string{"token:", "client-secret", "password", "client-certificate", "client-key"} {
+		if strings.Contains(rec.Body.String(), secret) {
+			t.Errorf("kubeconfig mentions %s:\n%s", secret, rec.Body)
+		}
+	}
+	var n int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action = 'workspace.kubeconfig_download' AND actor_user_id = 'usr-bob' AND org_id = $1`, orgID).Scan(&n); err != nil || n != 1 {
+		t.Errorf("audited %d %v", n, err)
+	}
+	if rec := console(sessionOf("usr-bob")); !strings.Contains(rec.Body.String(), `"url":"https://console-a.test/c/main/namespaces/zeta-solar-frontend"`) {
+		t.Errorf("console: %d %s", rec.Code, rec.Body)
+	}
+
+	// Someone who does not see the Workspace gets 404; an Unavailable cluster has no console.
+	if kube(sessionOf("usr-dave")).Code != 404 || console(sessionOf("usr-dave")).Code != 404 {
+		t.Error("dave")
+	}
+	if _, err := db.Exec(ctx, `UPDATE clusters SET status = 'Unavailable' WHERE id = 'cluster-a'`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := console(owner); rec.Code != 409 || !strings.Contains(rec.Body.String(), "CLUSTER_NOT_READY") {
+		t.Errorf("console of an Unavailable cluster: %d %s", rec.Code, rec.Body)
+	}
+	if kube(owner).Code != 200 {
+		t.Error("a kubeconfig needs no Ready cluster")
 	}
 }

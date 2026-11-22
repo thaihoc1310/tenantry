@@ -54,13 +54,14 @@ const (
 	GroupMemberAdd    = "group_member.add"
 	GroupMemberRemove = "group_member.remove"
 
-	WorkspaceCreate   = "workspace.create"
-	WorkspaceUpdate   = "workspace.update"
-	WorkspaceCordon   = "workspace.cordon"
-	WorkspaceUncordon = "workspace.uncordon"
-	WorkspaceDelete   = "workspace.delete"  // asked for
-	WorkspaceDeleted  = "workspace.deleted" // done: the cluster is clean
-	OperationForce    = "operation.force"
+	WorkspaceCreate    = "workspace.create"
+	WorkspaceUpdate    = "workspace.update"
+	WorkspaceCordon    = "workspace.cordon"
+	WorkspaceUncordon  = "workspace.uncordon"
+	WorkspaceDelete    = "workspace.delete"  // asked for
+	WorkspaceDeleted   = "workspace.deleted" // done: the cluster is clean
+	KubeconfigDownload = "workspace.kubeconfig_download"
+	OperationForce     = "operation.force"
 
 	NetworkAllocationRelease = "network_allocation.release"
 	WorkspaceBindingUpdate   = "workspace_binding.update"

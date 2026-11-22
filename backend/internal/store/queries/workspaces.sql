@@ -308,3 +308,6 @@ ORDER BY a.cidr;
 
 -- name: GetNetworkPool :one
 SELECT * FROM network_pools WHERE id = $1;
+
+-- name: GetCluster :one
+SELECT * FROM clusters WHERE id = $1;

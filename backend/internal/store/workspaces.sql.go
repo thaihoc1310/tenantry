@@ -451,6 +451,29 @@ func (q *Queries) FirstGrantNetworkPool(ctx context.Context, grantID string) (st
 	return pool_id, err
 }
 
+const getCluster = `-- name: GetCluster :one
+SELECT id, display_name, status, proxy_endpoint, console_url, apps_domain, capabilities, last_health_check, created_at, updated_at, reserved_cidrs FROM clusters WHERE id = $1
+`
+
+func (q *Queries) GetCluster(ctx context.Context, id string) (Cluster, error) {
+	row := q.db.QueryRow(ctx, getCluster, id)
+	var i Cluster
+	err := row.Scan(
+		&i.ID,
+		&i.DisplayName,
+		&i.Status,
+		&i.ProxyEndpoint,
+		&i.ConsoleUrl,
+		&i.AppsDomain,
+		&i.Capabilities,
+		&i.LastHealthCheck,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ReservedCidrs,
+	)
+	return i, err
+}
+
 const getGrantStorageClasses = `-- name: GetGrantStorageClasses :one
 SELECT allowed_storage_classes FROM organization_cluster_grants WHERE id = $1
 `
