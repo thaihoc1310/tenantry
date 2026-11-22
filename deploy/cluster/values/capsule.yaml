@@ -16,8 +16,15 @@ manager:
         name: oidc:tenantry:tenant-users
       - kind: Group
         name: system:serviceaccounts:tenantry-operator
+    # Capsule reconciles Tenants and GlobalTenantResources one at a time by
+    # default: with several Workspaces at once, each waits for the others
+    # (docs/report/benchmark.md). Four workers in parallel, and a client rate
+    # that does not throttle them. workers is ALPHA in Capsule 0.15.
+    workers: 4
+    clientConnectionQPS: 40
+    clientConnectionBurst: 80
   resources:
-    requests: {cpu: 50m, memory: 128Mi}
+    requests: {cpu: 100m, memory: 128Mi}
     limits: {memory: 512Mi}
 
 nodeSelector: &system

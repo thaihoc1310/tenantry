@@ -45,6 +45,49 @@ Data: `benchmark-control-plane.csv`, `baseline-kind-vcluster.csv`.
 Per Workspace: the operator makes about 180–225 API requests, and Capsule about 900. Every Workspace was Ready
 and was deleted cleanly, with no IPPool or IPAM block left over.
 
+## Capsule tuned: 4 workers, client QPS 40, burst 80
+
+Run on 2026-11-23 after `values/capsule.yaml` set `workers: 4`, `clientConnectionQPS: 40` and
+`clientConnectionBurst: 80`, with requests of 100m CPU (defaults: 1, 20, 30, 50m). Same scenario.
+The operator was `src-fe11a06ba44e`, which only reads Capsule's status differently (see below).
+
+| N | Capsule | Ready p50 | Ready p95 | all Ready | all deleted | Capsule requests | Capsule CPU / mem peak |
+|---|---|---|---|---|---|---|---|
+| 10 | default | 1m42s | 2m22s | 2m35s | 15s | 8,875 | 101m / 50Mi |
+| 10 | tuned | 1m11s | 1m47s | 1m49s | 28s | 8,154 | 191m / 48Mi |
+| 20 | default | 2m36s | 3m52s | 3m55s | 27s | 17,595 | 103m / 53Mi |
+| 20 | tuned | 1m17s | 2m08s | 2m15s | 25s | 15,162 | 161m / 54Mi |
+
+- Tuning helps. At N=20 the median Workspace is Ready in half the time and the last one at 2m15s instead of
+  3m55s.
+- Capsule's peak CPU is under 0.2 core.
+- There was no restart, and no error beyond the known replication race below.
+- The tuned values are kept.
+- The operator's request count was not taken in the tuned runs: the metrics port-forward was not up yet
+  when the script read it. `bench.sh` now waits for it. The tuning does not change what the operator does.
+
+## Capsule's replication race, before and after the operator's fix
+
+Capsule 0.15.2 replicates a GlobalTenantResource into a new Namespace from two controllers at once. The
+loser fails and retries a few seconds later, and Capsule shows Ready=False meanwhile. Seen on the lab, its
+item errors come in three forms:
+- `already exists`: both create the object;
+- `the object has been modified`: both update it;
+- `because it is being terminated`: it writes into a Namespace being deleted.
+
+Draft upstream issue: `upstream-issue-capsule-replication-race.md`.
+
+Since commit d9fb1aa, the operator reads those errors as work under way for up to 2 minutes, from the
+GlobalTenantResource's condition time; any other error, or a longer wait, is still `CapsuleNotReady`.
+
+Measured on one Workspace with a network (6 replicated objects), changing it every 12s: 8 Namespaces
+added, then 4 deleted, sampled every second.
+
+| Operator | Samples | Workspace Degraded | PolicyReady CapsuleNotReady | PolicyReady Progressing |
+|---|---|---|---|---|
+| before the fix (`src-54fc8d58a486`) | 144 | 65 (45%) | 65 | 0 |
+| after the fix (`src-fe11a06ba44e`) | 144 | 0 | 0 | 78 |
+
 ## Baseline: one environment per tenant on the dev machine
 
 Dev machine: 16 CPU, 15 GiB. Images were cached for all three.
@@ -68,4 +111,4 @@ Dev machine: 16 CPU, 15 GiB. Images were cached for all three.
   ~650 MiB, idle, per tenant.
 - Fixes and tuning found by this run:
   - The operator now reads Capsule's `Reconciling` reason as work under way, not `CapsuleNotReady` (commit 0c86d71, deployed after the runs).
-  - Raising Capsule's `--workers` and client QPS is the obvious next tuning; not tried here.
+  - Raising Capsule's `--workers` and client QPS: done, see "Capsule tuned".
