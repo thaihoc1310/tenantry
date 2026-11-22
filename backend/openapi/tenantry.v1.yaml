@@ -523,6 +523,137 @@ paths:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
+  /organizations/{orgId}/groups:
+    parameters:
+      - $ref: "#/components/parameters/orgId"
+    get:
+      operationId: listGroups
+      summary: Groups of the organization with their members, by name (OrgOwner or OrgAdmin)
+      description: |
+        Not paged: at most `maxGroups`. `syncStatus` tells whether Keycloak
+        has caught up; until a group is Synced it gives no Kubernetes access.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GroupList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/OrgNotActive" }
+    post:
+      operationId: createGroup
+      security: [{ session: [], csrf: [] }]
+      summary: Create a group (OrgOwner or OrgAdmin)
+      description: |
+        Within `maxGroups`, which counts the three default groups. The group
+        reaches Keycloak asynchronously (`syncStatus` Pending, then Synced).
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GroupInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: |
+            `ORG_NOT_ACTIVE`: the organization is not approved yet.
+            `ENTITLEMENT_EXCEEDED`: no room for another group (`details.limit` = `maxGroups`).
+            `CONFLICT`: the organization has a group with this name (`details.field` = `name`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /groups/{groupId}:
+    parameters:
+      - $ref: "#/components/parameters/groupId"
+    patch:
+      operationId: patchGroup
+      security: [{ session: [], csrf: [] }]
+      summary: Rename a group (OrgOwner or OrgAdmin of its organization)
+      description: The display name only; the group's name in Keycloak and Kubernetes never changes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GroupInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: The organization has a group with this name (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    delete:
+      operationId: deleteGroup
+      security: [{ session: [], csrf: [] }]
+      summary: Delete a group (OrgOwner or OrgAdmin of its organization)
+      description: |
+        Gone from the portal at once; removed from Keycloak asynchronously.
+        Its members lose the Kubernetes access it gave within one token
+        lifetime (5 minutes).
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /groups/{groupId}/members/{userId}:
+    parameters:
+      - $ref: "#/components/parameters/groupId"
+      - name: userId
+        in: path
+        required: true
+        schema: { type: string, maxLength: 64 }
+    put:
+      operationId: addGroupMember
+      security: [{ session: [], csrf: [] }]
+      summary: Add a member of the organization to the group (OrgOwner or OrgAdmin)
+      description: Adding someone already in the group changes nothing. New access appears with their next token.
+      responses:
+        "204": { description: In the group }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    delete:
+      operationId: removeGroupMember
+      security: [{ session: [], csrf: [] }]
+      summary: Take someone out of the group (OrgOwner or OrgAdmin)
+      description: |
+        Removing someone not in the group changes nothing. Portal access
+        follows at once; Kubernetes access within one token lifetime.
+      responses:
+        "204": { description: Not in the group }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
   /operations/{operationId}:
     parameters:
       - $ref: "#/components/parameters/operationId"
@@ -710,6 +841,12 @@ components:
       required: true
       description: Organization id (`org-<ulid>`). Not a slug, which a Rejected and a Pending request may share.
       schema: { type: string }
+
+    groupId:
+      name: groupId
+      in: path
+      required: true
+      schema: { type: string, maxLength: 64 }
 
     transferId:
       name: transferId
@@ -1222,3 +1359,46 @@ components:
         state: { type: string, enum: [Proposed] }
         expiresAt: { type: string, format: date-time }
         createdAt: { type: string, format: date-time }
+
+    SyncStatus:
+      type: string
+      description: Whether Keycloak has caught up with this row (04-state-machines §9.1).
+      enum: [Pending, Synced, Error]
+
+    GroupInput:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 63 }
+
+    GroupMember:
+      type: object
+      required: [userId, displayName, syncStatus]
+      properties:
+        userId: { type: string }
+        displayName: { type: string }
+        email: { type: string }
+        syncStatus: { $ref: "#/components/schemas/SyncStatus" }
+
+    Group:
+      type: object
+      required: [id, orgId, name, machineName, syncStatus, members, createdAt]
+      properties:
+        id: { type: string }
+        orgId: { type: string }
+        name: { type: string }
+        machineName: { type: string, description: "The group's name in Keycloak and in Kubernetes RBAC: org_<ulid>:group_<ulid>" }
+        syncStatus: { $ref: "#/components/schemas/SyncStatus" }
+        members:
+          type: array
+          items: { $ref: "#/components/schemas/GroupMember" }
+        createdAt: { type: string, format: date-time }
+
+    GroupList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Group" }

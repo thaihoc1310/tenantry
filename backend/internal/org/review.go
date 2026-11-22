@@ -147,7 +147,7 @@ func (s *Service) Approve(ctx context.Context, adminID, orgID string, a Approval
 		for _, name := range DefaultGroups {
 			gid := id.New(id.Group)
 			groups[name] = gid
-			if err := q.CreateGroup(ctx, store.CreateGroupParams{
+			if _, err := q.CreateGroup(ctx, store.CreateGroupParams{
 				ID: gid, OrgID: o.ID, DisplayName: name, MachineName: MachineName(o.ID, gid),
 			}); err != nil {
 				return err

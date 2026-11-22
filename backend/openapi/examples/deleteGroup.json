@@ -1,0 +1,10 @@
+{
+  "responses": {
+    "204": null,
+    "404": {
+      "code": "NOT_FOUND",
+      "message": "group not found",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K"
+    }
+  }
+}

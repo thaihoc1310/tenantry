@@ -420,6 +420,94 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{orgId}/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Groups of the organization with their members, by name (OrgOwner or OrgAdmin)
+         * @description Not paged: at most `maxGroups`. `syncStatus` tells whether Keycloak
+         *     has caught up; until a group is Synced it gives no Kubernetes access.
+         */
+        get: operations["listGroups"];
+        put?: never;
+        /**
+         * Create a group (OrgOwner or OrgAdmin)
+         * @description Within `maxGroups`, which counts the three default groups. The group
+         *     reaches Keycloak asynchronously (`syncStatus` Pending, then Synced).
+         */
+        post: operations["createGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/groups/{groupId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["groupId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a group (OrgOwner or OrgAdmin of its organization)
+         * @description Gone from the portal at once; removed from Keycloak asynchronously.
+         *     Its members lose the Kubernetes access it gave within one token
+         *     lifetime (5 minutes).
+         */
+        delete: operations["deleteGroup"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename a group (OrgOwner or OrgAdmin of its organization)
+         * @description The display name only; the group's name in Keycloak and Kubernetes never changes.
+         */
+        patch: operations["patchGroup"];
+        trace?: never;
+    };
+    "/groups/{groupId}/members/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["groupId"];
+                userId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Add a member of the organization to the group (OrgOwner or OrgAdmin)
+         * @description Adding someone already in the group changes nothing. New access appears with their next token.
+         */
+        put: operations["addGroupMember"];
+        post?: never;
+        /**
+         * Take someone out of the group (OrgOwner or OrgAdmin)
+         * @description Removing someone not in the group changes nothing. Portal access
+         *     follows at once; Kubernetes access within one token lifetime.
+         */
+        delete: operations["removeGroupMember"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/operations/{operationId}": {
         parameters: {
             query?: never;
@@ -852,6 +940,34 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
         };
+        /**
+         * @description Whether Keycloak has caught up with this row (04-state-machines §9.1).
+         * @enum {string}
+         */
+        SyncStatus: "Pending" | "Synced" | "Error";
+        GroupInput: {
+            name: string;
+        };
+        GroupMember: {
+            userId: string;
+            displayName: string;
+            email?: string;
+            syncStatus: components["schemas"]["SyncStatus"];
+        };
+        Group: {
+            id: string;
+            orgId: string;
+            name: string;
+            /** @description The group's name in Keycloak and in Kubernetes RBAC: org_<ulid>:group_<ulid> */
+            machineName: string;
+            syncStatus: components["schemas"]["SyncStatus"];
+            members: components["schemas"]["GroupMember"][];
+            /** Format: date-time */
+            createdAt: string;
+        };
+        GroupList: {
+            items: components["schemas"]["Group"][];
+        };
     };
     responses: {
         /** @description Error */
@@ -905,6 +1021,7 @@ export interface components {
         operationId: string;
         /** @description Organization id (`org-<ulid>`). Not a slug, which a Rejected and a Pending request may share. */
         adminOrgId: string;
+        groupId: string;
         transferId: string;
         /** @description As `Idempotency-Key`, and required here (IMPLEMENTATION-PLAN §3.4). */
         idempotencyKeyRequired: string;
@@ -1628,6 +1745,210 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listGroups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["OrgNotActive"];
+        };
+    };
+    createGroup: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description A UUID the client generates once per intended change and sends again
+                 *     on every retry of it (IMPLEMENTATION-PLAN §3.4). A repeat of a request
+                 *     that succeeded gets the stored response, marked `Idempotent-Replayed:
+                 *     true`, and changes nothing. A request that failed stores nothing, so
+                 *     it can be corrected and sent again under the same key. Keys are per
+                 *     user and kept 24 hours.
+                 */
+                "Idempotency-Key"?: components["parameters"]["idempotencyKey"];
+            };
+            path: {
+                /**
+                 * @description Organization id (`org-<ulid>`, 30 characters) or slug (at most 20
+                 *     characters), so the two can never be confused.
+                 */
+                orgId: components["parameters"]["orgId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Group"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /**
+             * @description `ORG_NOT_ACTIVE`: the organization is not approved yet.
+             *     `ENTITLEMENT_EXCEEDED`: no room for another group (`details.limit` = `maxGroups`).
+             *     `CONFLICT`: the organization has a group with this name (`details.field` = `name`).
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            422: components["responses"]["IdempotencyKeyReused"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["groupId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    patchGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["groupId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Group"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description The organization has a group with this name (`CONFLICT`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    addGroupMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["groupId"];
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description In the group */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    removeGroupMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["groupId"];
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Not in the group */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
             429: components["responses"]["RateLimited"];
         };
     };

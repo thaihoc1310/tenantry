@@ -1,0 +1,13 @@
+{
+  "responses": {
+    "204": null,
+    "400": {
+      "code": "VALIDATION_FAILED",
+      "message": "userId: must be a member of the organization",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K",
+      "details": {
+        "field": "userId"
+      }
+    }
+  }
+}

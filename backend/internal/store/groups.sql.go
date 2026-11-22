@@ -23,8 +23,21 @@ func (q *Queries) AddGroupMember(ctx context.Context, arg AddGroupMemberParams) 
 	return err
 }
 
-const createGroup = `-- name: CreateGroup :exec
+const countGroups = `-- name: CountGroups :one
+SELECT count(*)::int FROM groups WHERE org_id = $1 AND deleted_at IS NULL
+`
+
+// Live groups of the organization: tombstones waiting for Keycloak do not count.
+func (q *Queries) CountGroups(ctx context.Context, orgID string) (int32, error) {
+	row := q.db.QueryRow(ctx, countGroups, orgID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const createGroup = `-- name: CreateGroup :one
 INSERT INTO groups (id, org_id, display_name, machine_name) VALUES ($1, $2, $3, $4)
+RETURNING id, org_id, display_name, machine_name, keycloak_group_id, deleted_at, sync_status, sync_attempts, next_sync_at, last_error, created_at, updated_at
 `
 
 type CreateGroupParams struct {
@@ -34,13 +47,265 @@ type CreateGroupParams struct {
 	MachineName string
 }
 
-// Starts Pending: the group sync worker creates it in Keycloak (M4).
-func (q *Queries) CreateGroup(ctx context.Context, arg CreateGroupParams) error {
-	_, err := q.db.Exec(ctx, createGroup,
+// Starts Pending: the group sync worker creates it in Keycloak.
+func (q *Queries) CreateGroup(ctx context.Context, arg CreateGroupParams) (Group, error) {
+	row := q.db.QueryRow(ctx, createGroup,
 		arg.ID,
 		arg.OrgID,
 		arg.DisplayName,
 		arg.MachineName,
 	)
+	var i Group
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.DisplayName,
+		&i.MachineName,
+		&i.KeycloakGroupID,
+		&i.DeletedAt,
+		&i.SyncStatus,
+		&i.SyncAttempts,
+		&i.NextSyncAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getGroup = `-- name: GetGroup :one
+SELECT id, org_id, display_name, machine_name, keycloak_group_id, deleted_at, sync_status, sync_attempts, next_sync_at, last_error, created_at, updated_at FROM groups WHERE id = $1 AND deleted_at IS NULL
+`
+
+// A live group; a tombstone is gone as far as people are concerned.
+func (q *Queries) GetGroup(ctx context.Context, id string) (Group, error) {
+	row := q.db.QueryRow(ctx, getGroup, id)
+	var i Group
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.DisplayName,
+		&i.MachineName,
+		&i.KeycloakGroupID,
+		&i.DeletedAt,
+		&i.SyncStatus,
+		&i.SyncAttempts,
+		&i.NextSyncAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const joinGroup = `-- name: JoinGroup :execrows
+INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)
+ON CONFLICT (group_id, user_id) DO UPDATE
+SET deleted_at = NULL, sync_status = 'Pending', sync_attempts = 0, next_sync_at = now(), last_error = '', updated_at = now()
+WHERE group_members.deleted_at IS NOT NULL
+`
+
+type JoinGroupParams struct {
+	GroupID string
+	UserID  string
+}
+
+// Adds a member to a group; a tombstone left by an earlier removal comes
+// back to life. 0 rows: already a live member.
+func (q *Queries) JoinGroup(ctx context.Context, arg JoinGroupParams) (int64, error) {
+	result, err := q.db.Exec(ctx, joinGroup, arg.GroupID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const leaveGroup = `-- name: LeaveGroup :execrows
+UPDATE group_members
+SET deleted_at = now(), sync_status = 'Pending', sync_attempts = 0, next_sync_at = now(), last_error = '', updated_at = now()
+WHERE group_id = $1 AND user_id = $2 AND deleted_at IS NULL
+`
+
+type LeaveGroupParams struct {
+	GroupID string
+	UserID  string
+}
+
+// Removal is a tombstone: the row goes once Keycloak has caught up.
+func (q *Queries) LeaveGroup(ctx context.Context, arg LeaveGroupParams) (int64, error) {
+	result, err := q.db.Exec(ctx, leaveGroup, arg.GroupID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const listGroupMembers = `-- name: ListGroupMembers :many
+SELECT gm.group_id, gm.user_id, gm.sync_status, u.display_name, u.email
+FROM group_members gm
+JOIN groups g ON g.id = gm.group_id
+JOIN users u ON u.id = gm.user_id
+WHERE g.org_id = $1 AND g.deleted_at IS NULL AND gm.deleted_at IS NULL
+ORDER BY u.display_name, u.id
+`
+
+type ListGroupMembersRow struct {
+	GroupID     string
+	UserID      string
+	SyncStatus  string
+	DisplayName string
+	Email       *string
+}
+
+// Live memberships of the organization's live groups, by member name.
+func (q *Queries) ListGroupMembers(ctx context.Context, orgID string) ([]ListGroupMembersRow, error) {
+	rows, err := q.db.Query(ctx, listGroupMembers, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListGroupMembersRow
+	for rows.Next() {
+		var i ListGroupMembersRow
+		if err := rows.Scan(
+			&i.GroupID,
+			&i.UserID,
+			&i.SyncStatus,
+			&i.DisplayName,
+			&i.Email,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGroups = `-- name: ListGroups :many
+SELECT id, org_id, display_name, machine_name, keycloak_group_id, deleted_at, sync_status, sync_attempts, next_sync_at, last_error, created_at, updated_at FROM groups WHERE org_id = $1 AND deleted_at IS NULL ORDER BY display_name, id
+`
+
+// The organization's live groups by name. Bounded by maxGroups, so not paged.
+func (q *Queries) ListGroups(ctx context.Context, orgID string) ([]Group, error) {
+	rows, err := q.db.Query(ctx, listGroups, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Group
+	for rows.Next() {
+		var i Group
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.DisplayName,
+			&i.MachineName,
+			&i.KeycloakGroupID,
+			&i.DeletedAt,
+			&i.SyncStatus,
+			&i.SyncAttempts,
+			&i.NextSyncAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockGroup = `-- name: LockGroup :one
+SELECT id, org_id, display_name, machine_name, keycloak_group_id, deleted_at, sync_status, sync_attempts, next_sync_at, last_error, created_at, updated_at FROM groups WHERE id = $1 AND deleted_at IS NULL FOR UPDATE
+`
+
+func (q *Queries) LockGroup(ctx context.Context, id string) (Group, error) {
+	row := q.db.QueryRow(ctx, lockGroup, id)
+	var i Group
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.DisplayName,
+		&i.MachineName,
+		&i.KeycloakGroupID,
+		&i.DeletedAt,
+		&i.SyncStatus,
+		&i.SyncAttempts,
+		&i.NextSyncAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const renameGroup = `-- name: RenameGroup :one
+UPDATE groups SET display_name = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, org_id, display_name, machine_name, keycloak_group_id, deleted_at, sync_status, sync_attempts, next_sync_at, last_error, created_at, updated_at
+`
+
+type RenameGroupParams struct {
+	ID          string
+	DisplayName string
+}
+
+// The display name only: the machine name, the group's name in Keycloak and
+// in Kubernetes RBAC, never changes.
+func (q *Queries) RenameGroup(ctx context.Context, arg RenameGroupParams) (Group, error) {
+	row := q.db.QueryRow(ctx, renameGroup, arg.ID, arg.DisplayName)
+	var i Group
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.DisplayName,
+		&i.MachineName,
+		&i.KeycloakGroupID,
+		&i.DeletedAt,
+		&i.SyncStatus,
+		&i.SyncAttempts,
+		&i.NextSyncAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const shareLockMembership = `-- name: ShareLockMembership :one
+SELECT m.role FROM organization_members m JOIN users u ON u.id = m.user_id
+WHERE m.org_id = $1 AND m.user_id = $2
+FOR SHARE OF m, u
+`
+
+type ShareLockMembershipParams struct {
+	OrgID  string
+	UserID string
+}
+
+// Held while someone is added to a group, so they cannot leave the
+// organization half-way (leaving deletes this row first; 02-data-model §2).
+func (q *Queries) ShareLockMembership(ctx context.Context, arg ShareLockMembershipParams) (string, error) {
+	row := q.db.QueryRow(ctx, shareLockMembership, arg.OrgID, arg.UserID)
+	var role string
+	err := row.Scan(&role)
+	return role, err
+}
+
+const tombstoneGroup = `-- name: TombstoneGroup :exec
+UPDATE groups
+SET deleted_at = now(), sync_status = 'Pending', sync_attempts = 0, next_sync_at = now(), last_error = '', updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+// The worker deletes it in Keycloak, then deletes the row and its memberships.
+func (q *Queries) TombstoneGroup(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, tombstoneGroup, id)
 	return err
 }
