@@ -1508,6 +1508,7 @@ GET    /api/v1/admin/users?q=                      # M5, tìm user theo email/t�
 POST   /api/v1/admin/users/{userId}:disable        # M5, users.status=Disabled + xóa phiên; Group Sync tắt account trên Keycloak
 POST   /api/v1/admin/users/{userId}:enable         # M5
 GET    /api/v1/admin/operations                    # M5, ?state=; Operation của mọi Organization và của Cluster
+GET    /api/v1/admin/health                        # M6, từ DB: backlog outbox và group sync, lỗi sync gần nhất (sức khỏe Keycloak), status và last_health_check từng Cluster (cảnh báo khi quá 2 phút)
 GET    /api/v1/admin/clusters
 POST   /api/v1/admin/clusters
 PATCH  /api/v1/admin/clusters/{clusterId}          # gồm trạng thái, kể cả Registered → Ready (đặt tay trong MVP)

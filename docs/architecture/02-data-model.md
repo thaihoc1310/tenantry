@@ -347,7 +347,7 @@ erDiagram
     int namespace_quota
     text compute_mode "Shared|Dedicated"
     text shared_pool_id FK "nullable, chỉ Shared"
-    bigint desired_generation
+    bigint desired_generation "= annotation tenantry.io/spec-version của CR"
     bigint observed_generation
     jsonb conditions
     timestamptz deleted_at
@@ -472,7 +472,7 @@ Transaction nào bỏ qua một bậc thì vẫn giữ thứ tự các bậc cò
 **Ghi chú**
 
 - **Xóa hẳn row Workspace.** Khi allocation sang `Released` (vòng `housekeeping`), cùng transaction đó xóa hẳn row `workspaces`; allocation, NodeReservation, binding, Namespace và Route của nó bị xóa theo bằng `ON DELETE CASCADE`. Lịch sử nằm ở `audit_events` (xóa là xóa thật, mục 2). Workspace tạo ở M6–M8 không có `network_allocations` (chưa có IPAM): delete bỏ qua quarantine, row bị xóa ngay khi sang `Deleted` và `k8s_name` dùng lại được ngay.
-- Mỗi FK ghép cần `UNIQUE` trên đúng bộ cột ở bảng đích: `UNIQUE (id, org_id, cluster_id)` trên `organization_cluster_grants`, `workspaces`, `dedicated_node_grants`; `UNIQUE (id, org_id)` trên `workspaces`, `groups`.
+- Mỗi FK ghép cần `UNIQUE` trên đúng bộ cột ở bảng đích: `UNIQUE (id, org_id, cluster_id)` trên `organization_cluster_grants`, `workspaces`, `dedicated_node_grants`; `UNIQUE (id, org_id)` trên `workspaces`, `groups`; `UNIQUE (id, cluster_id)` trên `workspaces` cho FK `(workspace_id, cluster_id)` của `workspace_namespaces`.
 - "CIDR còn trống" không phải một state: đó là mọi khoảng trong pool không bị row `network_allocations` nào chưa `Released` phủ lên.
 - "Reservation vẫn giữ khi provisioning `Failed`" thể hiện bằng việc row `workspaces` còn tồn tại ở state `Failed` và vẫn nằm trong `SUM`. Chỉ row `Deleted` mới bị loại khỏi `SUM`; mọi query tính tổng phải viết rõ điều kiện này. Vòng đời NodeReservation: `04-state-machines.md` mục 3.
 - Exclusion constraint là **lớp bảo vệ cuối**; IPAM vẫn tự tính subnet trống dưới lock của `network_pools`. Khi constraint bắn (SQLSTATE `23P01`), API trả `CIDR_OVERLAP`, không phải 500.
