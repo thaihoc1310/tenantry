@@ -20,6 +20,7 @@ Các file còn lại là **góc nhìn**, không định nghĩa gì mới:
 | [`architecture/03-flows.md`](architecture/03-flows.md) | Sequence diagram từng luồng nghiệp vụ, đánh số bước để trích dẫn |
 | [`architecture/07-ux-wireflow.md`](architecture/07-ux-wireflow.md) | Sitemap, wireflow theo persona, wizard, màn hình lỗi |
 | [`architecture/REVIEW-CHECKLIST.md`](architecture/REVIEW-CHECKLIST.md) | Các câu hỏi **còn mở**; câu nào chốt xong thì ghi vào nơi định nghĩa rồi xóa khỏi checklist |
+| [`design/mockups/`](design/mockups/) | Mockup mọi màn hình, dựng bằng Vue + Element Plus với dữ liệu mẫu; bản mẫu cho component và theme của `web/` (IMPLEMENTATION-PLAN mục 6.2) |
 
 Sơ đồ là Mermaid, render trực tiếp trên GitHub/VS Code. Số trong ngoặc vuông như [5.3] trỏ về mục của `PRODUCT-PLAN.md`.
 

@@ -27,7 +27,22 @@
 15. **Quota CPU/RAM/Pod của ClusterGrant chỉ tính Workspace Shared.** Workspace Dedicated chỉ bị giới hạn bởi dung lượng của chính node đã cấp cho Organization; số Workspace, số Namespace và storage vẫn tính cho cả hai mode (5.2, 5.3).
 16. **Bỏ `allowedComputeModes` khỏi ClusterGrant, onboarding policy và NetworkPool.** Mode được suy ra: Shared khi grant có shared pool, Dedicated khi Organization có dedicated node trên Cluster (5.2). NetworkPool không phân biệt mode; cần tách dải địa chỉ theo mode thì tạo hai pool.
 17. **Platform Admin thêm/bớt node của shared pool trên portal.** Operator gắn và gỡ label pool; một CRD phụ thứ ba `PlatformNodeInventory` báo danh sách node của Cluster về central plane (6.2). Một node hoặc thuộc một pool, hoặc là dedicated, không bao giờ cả hai.
-18. **Quy tắc sửa ClusterGrant** được ghi rõ (5.5): grant là trần cho việc giữ chỗ về sau, sửa grant không bao giờ đụng tới Workspace đang chạy.
+18. **Quy tắc sửa ClusterGrant** được ghi rõ (5.5): grant là trần cho việc giữ chỗ về sau, sửa grant không bao giờ đụng tới Workspace đang chạy; riêng đổi `allowedStorageClasses` render lại CR của mọi Workspace trong grant.
+19. **Slug Organization không chứa `-`** (`^[a-z][a-z0-9]*$`, 3–20 ký tự) nên `<org>-<ws>` duy nhất theo cấu tạo; trong một Organization, slug Workspace lồng tiền tố với Workspace khác (`solar`/`solar-prod`) bị `409 SLUG_TAKEN` (4.2, 4.4).
+20. **RoleBinding do tenant tạo chỉ trỏ tới group của chính Organization hoặc ServiceAccount của Workspace** (ValidatingAdmissionPolicy, M11), nên contract thu hồi quyền Kubernetes giữ được (9.3, 10.4).
+21. **Bỏ tỷ lệ limits/requests theo pool**: Shared chỉ cần `limits ≥ requests` trong quota; Dedicated vẫn `limits = requests` (5.4).
+22. **kube-proxy nhận diện Pod local theo interface `cali`** vì supernet tenant nằm ngoài `clusterCIDR`; NetworkPool không overlap `reserved_cidrs` của Cluster và các pool khác (7.1, 7.3).
+23. **Transfer ownership hoàn toàn trong portal**, không link hay token; hạ Owner cũ trước, nâng người nhận sau (9.2).
+24. **Mã lỗi giới hạn thống nhất**: `CLUSTER_GRANT_QUOTA_EXCEEDED` (kèm `details.resource`), `ENTITLEMENT_EXCEEDED`, `ENTITLEMENT_BELOW_USAGE`; entitlement kiểm dưới lock (5.1).
+25. **Thêm endpoint** cho invitation (list, revoke, preview), transfer, cordon/uncordon, xóa Organization, operation events/list, audit, các danh sách admin và disable/enable user (16).
+26. **Cordon Workspace chỉ OrgOwner/OrgAdmin**, qua Operation `workspace.cordon`/`workspace.uncordon`.
+27. **Xóa Organization** (OrgOwner): chặn khi còn Workspace hoặc dedicated node; một transaction xóa grant, hủy invitation/transfer, tombstone group; Organization `Deleted` trả 404 (4.2).
+28. **Retry Operation nhận cả `Failed` và `Blocked`**; `:force` vẫn chỉ Platform Admin.
+29. **Label node của shared pool**: M1–M5 script dựng cụm gắn tạm, từ M6 operator sở hữu theo `PlatformSharedPool.spec.nodes`; cấm pool id `system`; `systemReserve` của pool tính cho mỗi node (6.2).
+30. **Trạng thái Cluster đặt tay ở MVP**, kể cả `Registered → Ready`; duyệt Organization và tạo grant cần Cluster `Ready` (5.2.1, 6.1).
+31. **Cấp dedicated node**: node không còn Pod tenant nào, kể cả Pod Shared của chính Organization; quy trình bớt khỏi pool → drain → uncordon → cấp (6.3).
+32. **Kịch bản demo thống nhất số liệu và chạy được trên lab 4 node**: Solar Shared 2 CPU/4Gi (limits 4/8Gi); node dedicated là `wk3` rút khỏi shared pool (reservable 2,5 CPU), Water 1 + Green 1, Workspace thứ ba 1 CPU bị từ chối (5.4, 6.3, 28).
+33. **Quota của Workspace là một quota chung cho mọi Namespace** (`Tenant.spec.resourceQuotas` scope `Tenant`), không chia trước theo Namespace; chấp nhận giới hạn tạo Pod đồng thời có thể vượt nhẹ (5.4).
 
 ### v0.6 → v0.7
 
@@ -73,7 +88,7 @@ Các quyết định được chốt lại sau review:
 6. **Network: auto-allocate là mặc định** (platform tự cấp subnet size chuẩn từ NetworkPool); chọn prefix/requested CIDR là tùy chọn advanced. Giữ nguyên IPAM, overlap check và quarantine.
 7. **Portal quản lý Namespace** (list/create/delete + usage); workload giao hẳn cho Headlamp/kubectl. Hết mâu thuẫn "Namespace UI là stretch".
 8. **Central plane (Portal/API/PostgreSQL/Keycloak) chạy ngay trong Cluster trên system pool** ở MVP; tách ra ngoài khi lên multi-cluster.
-9. **Tenant storage trong MVP**: dynamic provisioner đơn giản (local-path hoặc NFS), 1–2 StorageClass, enforce `requests.storage` qua ResourcePool.
+9. **Tenant storage trong MVP**: dynamic provisioner đơn giản (local-path hoặc NFS), 1–2 StorageClass, enforce `requests.storage` qua quota của Workspace.
 10. **Tenant ingress trong MVP**: shared ingress controller + wildcard DNS, hostname collision và ingress class được kiểm soát bằng Capsule.
 11. **Platform Admin dùng cùng Keycloak realm**, phân biệt bằng realm role `platform-admin`; portal render khu Admin, backend check role.
 12. **kubectl login dùng `kubelogin` (int128) có sẵn**; CLI riêng là stretch.
@@ -129,7 +144,7 @@ Luận điểm của đồ án:
 - hai compute mode: shared node và dedicated node;
 - Dedicated Workspace chọn một node được grant cho Organization; nhiều Workspace cùng Organization có thể dùng node đó nếu còn capacity;
 - cấp Pod CIDR/IPPool động từ NetworkPool (auto-allocate mặc định);
-- Capsule ResourcePool, Namespace quota và policy;
+- quota chung của Workspace trên Capsule Tenant, Namespace quota và policy;
 - portal quản lý Namespace của Workspace (list/create/delete/usage);
 - tenant PVC qua dynamic provisioner đơn giản và StorageClass allow-list;
 - Route: user khai báo trên portal, platform dựng Ingress trên shared ingress controller + wildcard DNS;
@@ -170,7 +185,7 @@ Workspace hỗ trợ workload namespaced thông thường:
 - PVC theo StorageClass được cho phép (provisioner do platform cài);
 - Route tạo trên portal để đưa Service ra HTTPS (tenant không tự tạo Ingress, xem 7.6);
 - HPA, PDB, NetworkPolicy;
-- Role/RoleBinding trong giới hạn role policy;
+- Role/RoleBinding trong Namespace của mình; subject của RoleBinding chỉ là group của chính Organization hoặc ServiceAccount của Workspace (10.4);
 - Helm chart không yêu cầu cluster-scoped resource.
 
 Workspace không phải một cluster riêng. Các workload cần CRD/operator cluster-wide không thuộc use case của đồ án. Portal phải hiển thị giới hạn này rõ ràng thay vì để user chỉ phát hiện khi deploy thất bại.
@@ -188,7 +203,7 @@ Workspace không phải một cluster riêng. Các workload cần CRD/operator c
 | Node placement | Tenant node selector + `PodNodeSelector` |
 | Pod CIDR | Calico IPPool riêng cho Solar/Water |
 | Network isolation | NetworkPolicy chỉ cho traffic cùng tenant và DNS |
-| Resource budget | Capsule ResourcePool/Claim |
+| Resource budget | Capsule `Tenant.spec.resourceQuotas` scope `Tenant` (một quota chung cho Workspace, 5.4) |
 | Workload guardrail | Registry, QoS, Service type, metadata lock |
 | Monitoring | Prometheus/Grafana cho Capsule và Proxy |
 | Verification | Bash test RBAC, node, CIDR, network và policy |
@@ -259,12 +274,12 @@ Một Organization có thể có nhiều user và nhiều Workspace. Platform Ad
 
 Quy tắc về Organization:
 
-- trạng thái Organization: `Pending` → `Active` → `Deleted`, hoặc `Pending` → `Rejected`. Organization `Pending`/`Rejected` chỉ hiện với người xin (kèm lý do từ chối), không mời member, không tạo group/Workspace được;
+- trạng thái Organization: `Pending` → `Active` → `Deleted`, hoặc `Pending` → `Rejected`. Organization `Pending`/`Rejected` chỉ hiện với người xin (kèm lý do từ chối), không mời member, không tạo group/Workspace được. Organization `Deleted` trả `404` ở mọi endpoint, như chưa từng tồn tại;
 - mỗi user có **tối đa một yêu cầu `Pending`** cùng lúc; bị từ chối thì gửi yêu cầu mới được. Slug của yêu cầu bị từ chối được nhả ra cho người khác;
-- xóa Organization chỉ được khi không còn Workspace nào, nên là thao tác đồng bộ, không có trạng thái `Deleting`;
+- OrgOwner xóa Organization khi không còn Workspace nào (kể cả Workspace `Deleted` đang chờ CIDR hết quarantine) và không còn dedicated node (Platform Admin thu hồi node trước, vì gỡ label/taint trên node là việc của operator). Thao tác đồng bộ, không có trạng thái `Deleting`: một transaction đặt `Deleted`, xóa các ClusterGrant, hủy invitation và transfer đang chờ, đặt tombstone cho group và group member (Group Sync gỡ trên Keycloak), ghi audit;
 - luồng xin nâng quota cho Organization đã `Active` vẫn là stretch;
 - mỗi Organization có **đúng một OrgOwner** và có thể có nhiều OrgAdmin. Owner chuyển quyền cho một OrgAdmin bằng luồng transfer hai bước (Owner đề nghị, người nhận xác nhận); sau khi transfer, Owner cũ trở thành OrgAdmin;
-- Organization slug là **immutable** sau khi tạo vì được dùng làm tiền tố tên Kubernetes (xem 4.4); display name đổi tự do.
+- Organization slug là **immutable** sau khi tạo vì được dùng làm tiền tố tên Kubernetes (xem 4.4); display name đổi tự do. Slug Organization **không chứa dấu `-`**: `^[a-z][a-z0-9]*$`, 3–20 ký tự, để tên `<org-slug>-<ws-slug>` của hai Organization không bao giờ trùng hay lồng tiền tố vào nhau.
 
 ### 4.3 Organization Group
 
@@ -275,7 +290,7 @@ Group là tập user để gán quyền vào Workspace. Ví dụ:
 - `qa-viewers`;
 - `solar-admins`.
 
-Group chỉ thuộc một Organization. OrgOwner có thể:
+Group chỉ thuộc một Organization. OrgOwner và OrgAdmin có thể:
 
 - tạo/đổi display name/xóa group;
 - thêm/xóa member;
@@ -284,10 +299,10 @@ Group chỉ thuộc một Organization. OrgOwner có thể:
 Tên hiển thị có thể đổi nhưng machine identity trong Keycloak là immutable, ví dụ:
 
 ```text
-org_01JABC:group_01JXYZ
+org_01jabc:group_01jxyz
 ```
 
-Kubernetes authentication thêm prefix `oidc:`, vì vậy subject cuối cùng mà RBAC/Capsule thấy là `oidc:org_01JABC:group_01JXYZ`. Không đưa raw display name như `developers` vào Kubernetes vì hai Organization có thể trùng tên group.
+Kubernetes authentication thêm prefix `oidc:`, vì vậy subject cuối cùng mà RBAC/Capsule thấy là `oidc:org_01jabc:group_01jxyz`. Không đưa raw display name như `developers` vào Kubernetes vì hai Organization có thể trùng tên group.
 
 ### 4.4 Workspace
 
@@ -295,8 +310,9 @@ Workspace là resource người dùng nhìn thấy trên portal và ánh xạ 1:
 
 Một Workspace có:
 
-- ID immutable và slug immutable (unique trong Organization);
-- tên Kubernetes-visible `<org-slug>-<ws-slug>`, ví dụ `acme-solar` — global-unique vì Organization slug global-unique; dùng làm tên Capsule Tenant, tiền tố Namespace, hậu tố hostname của Route và tên CR;
+- ID immutable và slug immutable (unique trong Organization; `^[a-z][a-z0-9]*(-[a-z0-9]+)*$`, 2–20 ký tự, được chứa `-`);
+- tên Kubernetes-visible `<org-slug>-<ws-slug>`, ví dụ `acme-solar` — global-unique vì Organization slug global-unique và không chứa `-` (4.2); `UNIQUE (k8s_name)` trong DB chỉ là lưới an toàn. Dùng làm tên Capsule Tenant, tiền tố Namespace, hậu tố hostname của Route và tên CR;
+- trong một Organization, không tạo được Workspace có slug lồng tiền tố với slug của một Workspace chưa `Deleted` tại ranh giới `-` (ví dụ `solar` và `solar-prod`): Capsule `forceTenantPrefix` sẽ cho Workspace `solar` tạo Namespace `acme-solar-prod-…` trong vùng tên của Workspace kia. Vi phạm trả `409 SLUG_TAKEN`, `details` nêu Workspace đang giữ;
 - display name/description;
 - Organization owner;
 - CPU/RAM/Pod/storage allocation;
@@ -318,11 +334,11 @@ Workspace chứa nhiều Namespace. Owner có thể tạo Namespace bằng:
 - `kubectl`;
 - Headlamp.
 
-Capsule enforce prefix, quota, metadata, ResourcePool và replication. Namespace name có tiền tố `<org-slug>-<ws-slug>-`, ví dụ `acme-solar-frontend`, để tránh collision toàn cluster mà vẫn đọc được trong `kubectl get ns`.
+Capsule enforce prefix, quota, metadata và replication. Namespace name có tiền tố `<org-slug>-<ws-slug>-`, ví dụ `acme-solar-frontend`, để tránh collision toàn cluster mà vẫn đọc được trong `kubectl get ns`; quy tắc slug ở 4.2 và 4.4 bảo đảm tiền tố của hai Workspace không lồng nhau.
 
 Portal quản lý Namespace theo mô hình **khai báo qua CR**, không gọi Kubernetes API bằng token của user:
 
-- danh sách Namespace mong muốn nằm trong `PlatformWorkspace.spec.namespaces`; controller tạo/xóa Namespace tương ứng qua Capsule;
+- danh sách Namespace mong muốn nằm trong `PlatformWorkspace.spec.namespaces` (hậu tố, ví dụ `frontend`); controller tạo/xóa Namespace tương ứng qua Capsule. `namespacesToDelete`, `status.namespaces` và tên Namespace trong API là tên đầy đủ (`acme-solar-frontend`);
 - Namespace do user tạo bằng `kubectl`/Headlamp vẫn hiện trên portal nhờ controller ghi `status.namespaces` (observed) và worker sync về DB; portal đánh dấu nguồn `portal`/`kubectl`;
 - xóa Namespace từ portal = xóa khỏi `spec.namespaces` và đặt tên vào `spec.namespacesToDelete` (controller xóa xong thì dọn); xóa Namespace có PVC yêu cầu confirm gõ tên;
 - **được thao tác**: OrgOwner, OrgAdmin và member của group đang giữ role `TenantOwner` tại Workspace đó. Developer/Viewer chỉ xem danh sách và usage;
@@ -344,6 +360,14 @@ maxWorkspacesTotal: 8
 
 `maxGroups` tối thiểu là 3: ba group mặc định `admins/developers/viewers` tạo lúc duyệt cũng tính vào giới hạn này.
 
+Kiểm giới hạn dưới lock row entitlement của Organization (`SELECT ... FOR UPDATE`, thứ tự lock ở `architecture/02-data-model.md` mục 4):
+
+- `maxMembers`: khi tạo invitation và kiểm lại khi accept;
+- `maxGroups`: khi tạo group (group đang chờ xóa không tính);
+- `maxWorkspacesTotal`: trong transaction tạo Workspace, đếm mọi Workspace chưa `Deleted` trên mọi Cluster.
+
+Vượt giới hạn trả `409 ENTITLEMENT_EXCEEDED`, `details.limit` là `maxMembers`, `maxGroups` hoặc `maxWorkspacesTotal`. Platform Admin hạ entitlement xuống dưới mức đang dùng (hoặc `maxGroups` < 3) bị `409 ENTITLEMENT_BELOW_USAGE`.
+
 CPU, RAM, Namespace, node và network được cấp theo từng ClusterGrant vì capacity của mỗi cluster độc lập.
 
 ### 5.2 OrganizationClusterGrant
@@ -351,33 +375,31 @@ CPU, RAM, Namespace, node và network được cấp theo từng ClusterGrant v�
 Mỗi grant nối một Organization với một Cluster:
 
 ```yaml
-organizationId: org-01jabc
+# tên trường theo schema ClusterGrant trong backend/openapi/tenantry.v1.yaml
 clusterId: cluster-a
-displayName: Cluster A
 isDefault: true
 maxWorkspaces: 5            # mọi Workspace, cả hai mode
 maxNamespacesTotal: 30      # mọi Workspace, cả hai mode
 resources:
-  requests.cpu: "20"        # CPU/RAM/Pod: chỉ Workspace Shared
-  requests.memory: 40Gi
-  limits.cpu: "30"
-  limits.memory: 60Gi
+  requestsCpu: "20"         # CPU/RAM/Pod: chỉ Workspace Shared
+  requestsMemory: 40Gi
+  limitsCpu: "30"
+  limitsMemory: 60Gi
   pods: 200
-  requests.storage: 500Gi   # mọi Workspace, cả hai mode
-sharedPoolRefs:
+  requestsStorage: 500Gi    # mọi Workspace, cả hai mode
+sharedPoolIds:
   - shared-general
-dedicatedNodeGrantRefs:
-  - nodegrant-a1
-  - nodegrant-a2
-allowedNetworkPoolRefs:
+networkPoolIds:
   - acme-cluster-a-pod-network
 allowedStorageClasses:
   - standard
 ```
 
-**Phạm vi của từng con số.** `requests/limits` CPU, RAM và `pods` là quota của phần **Shared**: chúng giới hạn tổng allocation của các Workspace Shared, vì ở shared pool Organization dùng chung node với người khác và cần một trần. Workspace Dedicated **không** trừ vào các số này: node đã thuộc riêng Organization, nên trần duy nhất là dung lượng còn lại của node (6.3). `maxWorkspaces`, `maxNamespacesTotal` và `requests.storage` tính cho mọi Workspace, vì chúng không gắn với node (storage nằm trên NFS dùng chung).
+Dedicated node không nằm trong grant: mỗi DedicatedNodeGrant là một bản ghi riêng gắn với Organization và Cluster (6.3).
 
-**Compute mode được suy ra, không có cờ riêng.** Organization dùng được Shared khi grant có ít nhất một `sharedPoolRefs`; dùng được Dedicated khi có ít nhất một `DedicatedNodeGrant` trên Cluster đó. Grant không có shared pool thì các số CPU/RAM/Pod không có ý nghĩa và form ẩn chúng đi.
+**Phạm vi của từng con số.** `requests/limits` CPU, RAM và `pods` là quota của phần **Shared**: chúng giới hạn tổng allocation của các Workspace Shared, vì ở shared pool Organization dùng chung node với người khác và cần một trần. Workspace Dedicated **không** trừ vào các số này: node đã thuộc riêng Organization, nên trần duy nhất là dung lượng còn lại của node (6.3). `maxWorkspaces`, `maxNamespacesTotal` và `requestsStorage` tính cho mọi Workspace, vì chúng không gắn với node (storage nằm trên NFS dùng chung).
+
+**Compute mode được suy ra, không có cờ riêng.** Organization dùng được Shared khi `sharedPoolIds` của grant không rỗng; dùng được Dedicated khi có ít nhất một `DedicatedNodeGrant` trên Cluster đó. Grant không có shared pool thì các số CPU/RAM/Pod không có ý nghĩa và form ẩn chúng đi.
 
 Một Organization có một hoặc nhiều ClusterGrant; đúng một grant được đánh dấu mặc định. Nếu chỉ có một grant, portal preselect Cluster đó (trường hợp mặc định của MVP). Nếu có nhiều grant, OrgOwner chọn Cluster khi tạo Workspace.
 
@@ -389,17 +411,18 @@ Một Organization có một hoặc nhiều ClusterGrant; đúng một grant đ�
 maxWorkspaces: 2
 maxNamespacesTotal: 6
 resources:
-  requests.cpu: "2"
-  requests.memory: 4Gi
-  limits.cpu: "4"
-  limits.memory: 8Gi
+  requestsCpu: "2"
+  requestsMemory: 4Gi
+  limitsCpu: "4"
+  limitsMemory: 8Gi
   pods: 20
-  requests.storage: 20Gi
-sharedPoolRefs: [shared-general]
-allowedNetworkPoolRefs: [onboarding-pod-network]
+  requestsStorage: 20Gi
+sharedPoolIds: [shared-general]
+networkPoolIds: [onboarding-pod-network]
+allowedStorageClasses: [standard]
 ```
 
-Policy mang thêm mẫu global entitlement (5.1), cũng điền sẵn vào form duyệt. Grant phải có ít nhất một `allowedNetworkPoolRefs` vì Workspace nào cũng cần CIDR; `sharedPoolRefs` được để trống cho Organization chỉ dùng dedicated node.
+Policy mang thêm mẫu global entitlement (5.1), cũng điền sẵn vào form duyệt. Grant phải có ít nhất một phần tử trong `networkPoolIds` vì Workspace nào cũng cần CIDR; `sharedPoolIds` được để trống cho Organization chỉ dùng dedicated node. Duyệt yêu cầu, Admin tạo thẳng Organization hay tạo grant mới đều chỉ được trên Cluster `Ready`; ngược lại trả `409 CLUSTER_NOT_READY`.
 
 Admin duyệt nguyên mẫu hoặc sửa trước khi bấm duyệt; grant đã cấp là snapshot, đổi policy sau đó không ảnh hưởng. Nâng quota, cấp thêm Cluster/shared pool/dedicated node về sau vẫn qua admin UI — policy chỉ là giá trị mặc định của cùng data model, không phải một luồng cấp phát riêng.
 
@@ -408,63 +431,70 @@ Admin duyệt nguyên mẫu hoặc sửa trước khi bấm duyệt; grant đã 
 Khi tạo hoặc resize Workspace trong Cluster đã chọn:
 
 ```text
-workspace.cluster_id thuộc ClusterGrant của Organization
+workspace.cluster_id thuộc ClusterGrant của Organization, Cluster Ready
+count(Workspace chưa Deleted của Organization, mọi Cluster) <= maxWorkspacesTotal (5.1)
 count(workspaces), sum(namespace quota), sum(storage) của mọi Workspace trong grant <= grant
 Shared:    sum(CPU/RAM/Pod của các Workspace Shared trong grant) <= grant resources
-Shared:    sum(workspace allocations trên pool) <= allocationOvercommitRatio × (pool allocatable - system reserve)
-Dedicated: dedicated node thuộc đúng org + cluster; sum(active reservations trên node) + reservation mới <= allocatable - system reserve  (ratio cố định = 1)
-workspace CIDR thuộc NetworkPool của grant và không overlap allocation khác trong Cluster
+Shared:    sum(allocation của mọi Workspace Shared trên pool, mọi Organization) <= allocationOvercommitRatio × reservable của pool (6.2)
+Dedicated: dedicated node thuộc đúng org + cluster; sum(NodeReservation Pending/Active/Releasing trên node) + reservation mới <= allocatable - systemReserve  (ratio cố định = 1)
+workspace CIDR nằm trong một NetworkPool của grant và không overlap allocation chưa Released khác trong Cluster
 ```
+
+"Workspace" trong các tổng là Workspace chưa `Deleted`. Shared ceiling của pool tính trên Σ `requests`; `limits` chỉ bị trần bởi quota của Workspace và quota limits của grant.
+
+Mã lỗi khi vượt: grant → `409 CLUSTER_GRANT_QUOTA_EXCEEDED` với `details.resource` (`requestsCpu`, `limitsMemory`, `pods`, `storage`, `workspaces`, `namespaces`…), `details.limit`, `details.allocated`, `details.requested`; `maxWorkspacesTotal` → `ENTITLEMENT_EXCEEDED` (5.1); trần pool → `COMPUTE_POOL_CAPACITY_EXCEEDED`; node → `DEDICATED_NODE_INSUFFICIENT_CAPACITY` kèm `details.remaining` (CPU/RAM/Pod còn lại của node) để portal gợi ý allocation vừa đủ.
 
 **Shared mode là soft allocation**: quota Workspace là trần, không phải capacity giữ chỗ; Admin đặt `allocationOvercommitRatio` cho từng shared pool (ví dụ 3.0) dựa trên mức dùng thực tế quan sát được. Khi mọi Workspace cùng dùng hết quota, Pod có thể `Pending` — đây là hành vi chấp nhận của shared tier và portal hiển thị cảnh báo pool usage. **Dedicated mode là hard reservation**: tổng reservation không bao giờ vượt capacity thật của node; đây là điểm khác biệt bản chất giữa hai mode và là lý do Dedicated yêu cầu Guaranteed QoS.
 
-Backend phải lock ClusterGrant, resource reservation, node-capacity reservation và network allocation trong cùng transaction phù hợp để concurrent request không vượt quota, overbook node hoặc overlap CIDR. Đây là logic của platform database — Kubernetes chỉ biết requests/limits khi Pod thật sự chạy, không biết gì về reservation.
+Backend kiểm lại mọi dòng trên dưới lock, trong cùng transaction tạo/resize, để concurrent request không vượt quota, overbook node hoặc overlap CIDR. Thứ tự lock cố định định nghĩa ở `architecture/02-data-model.md` mục 4; tạo Workspace lock entitlement của Organization → ClusterGrant → shared pool (Shared, luôn lock) hoặc DedicatedNodeGrant (Dedicated) → NetworkPool. Phần Workspace lấy từ ClusterGrant không có row hay trạng thái riêng: nó là tổng cột tài nguyên của các Workspace chưa `Deleted` trong grant. Chỉ NodeReservation của Dedicated là row có trạng thái (`Pending/Active/Releasing/Released`). Đây là logic của platform database — Kubernetes chỉ biết requests/limits khi Pod thật sự chạy, không biết gì về reservation.
 
 ### 5.4 Workspace resource allocation
 
-Sau khi chọn Cluster và compute mode, OrgOwner chọn allocation cho Workspace. Ví dụ Shared mode:
+Sau khi chọn Cluster và compute mode, OrgOwner chọn allocation cho Workspace. Ví dụ Workspace Shared `acme-solar` của demo, vừa trong grant mặc định ở 5.2.1:
 
 ```yaml
-requests.cpu: "4"
-requests.memory: 8Gi
-limits.cpu: "6"
-limits.memory: 12Gi
-pods: 40
-requests.storage: 100Gi
-namespaceQuota: 6
+requestsCpu: "2"
+requestsMemory: 4Gi
+limitsCpu: "4"
+limitsMemory: 8Gi
+pods: 20
+requestsStorage: 10Gi
+namespaceQuota: 3
 ```
 
 Controller trong Cluster render thành:
 
-- Capsule ResourcePool cho toàn bộ Namespace của Workspace;
+- **một quota chung cho mọi Namespace của Workspace**: `Tenant.spec.resourceQuotas` với `scope: Tenant`, `hard` = allocation của Workspace (requests/limits CPU/RAM, `pods`, `requests.storage`). Capsule tạo ResourceQuota trong từng Namespace, cộng usage của mọi Namespace và hạ `hard` của các ResourceQuota đó khi tổng chạm trần, nên Namespace nào cũng dùng được phần đang trống, dù tạo bằng portal, `kubectl` hay Headlamp (4.5): Capsule áp quota cho mọi Namespace của Tenant ngay khi Namespace xuất hiện, platform không phải làm gì thêm. Không chia trước theo Namespace, để không có tài nguyên nằm không;
 - LimitRange mặc định;
 - object-count ResourceQuota nếu cần;
-- Capsule Namespace quota.
+- Capsule Namespace quota (`namespaceQuota`).
 
-Không cho giảm quota xuống dưới usage/reservation hiện tại. Với Dedicated mode, allocation cũng không được vượt remaining reservable capacity của node đã chọn. Đối xứng ở phía Admin: **không thể giảm ClusterGrant xuống dưới tổng allocation hiện tại** của các Workspace trong grant; muốn thu hồi, Organization phải tự thu gọn/xóa Workspace trước.
+Giới hạn đã biết của quota chung: Capsule chỉnh `hard` bằng controller chứ không chặn ở webhook, nên Pod tạo **đồng thời** ở hai Namespace có thể cùng lọt và tổng vượt trần một chút (Capsule tự ghi nhận điều này). Với Shared, đó vẫn nằm trong tinh thần soft allocation. Với Dedicated, phần vượt có thể lấn vào capacity đã giữ cho Workspace khác trên cùng node (kube-scheduler vẫn không xếp quá allocatable của node); ghi vào known limitations của luận văn. Capsule gọi cơ chế này là cách cũ và khuyến nghị ResourcePool/ResourcePoolClaim, nhưng claim chia trước theo Namespace và không sửa được khi đang dùng. M7 phải kiểm trên Capsule 0.15.x của lab rằng `scope: Tenant` còn chạy; nếu không, phương án dự phòng là ResourcePool chia đều theo `namespaceQuota` (cách lab cũ đã chạy).
+
+Không cho giảm quota xuống dưới usage/reservation hiện tại. Với Dedicated mode, allocation cũng không được vượt remaining reservable capacity của node đã chọn. Phía Admin, giảm ClusterGrant theo quy tắc ở 5.5.
+
+MVP dùng hai resource profile rõ ràng:
+
+- Shared mode: `limits ≥ requests`, chặn bởi quota của Workspace và quota `limits` của grant; không có tỷ lệ limits/requests theo container hay theo pool;
+- Dedicated mode yêu cầu Guaranteed QoS cho CPU/RAM (`requests = limits`), và reservation dùng chính CPU/RAM request cùng Pod count. Mỗi Namespace của Workspace Dedicated có LimitRange `maxLimitRequestRatio: {cpu: 1, memory: 1}` với `default` bằng `defaultRequest`;
+- storage vẫn được accounting ở ClusterGrant/StorageClass, không trừ vào node reservation.
+
+Quyết định này làm cho "Workspace được reserve 4 CPU/8 GiB trên node" có ý nghĩa kiểm chứng được, thay vì chỉ nhìn actual usage thay đổi từng giây hoặc cho phép limits của nhiều Workspace vượt capacity vật lý.
 
 ### 5.5 Sửa ClusterGrant
 
-Grant là **trần cho việc giữ chỗ**, không phải thứ Pod đang dùng. Mỗi Workspace đã lấy phần của mình ra khỏi grant lúc tạo hoặc resize, và phần đó nằm trong ResourcePool của Workspace trên Cluster. Vì vậy sửa grant không gửi gì xuống Cluster và không bao giờ đụng tới Workspace đang chạy; nó chỉ quyết định Organization còn tạo thêm hoặc nới rộng được bao nhiêu.
+Grant là **trần cho việc giữ chỗ**, không phải thứ Pod đang dùng. Mỗi Workspace đã lấy phần của mình ra khỏi grant lúc tạo hoặc resize, và phần đó là quota chung của Tenant trên Cluster (5.4). Vì vậy sửa con số, shared pool hay NetworkPool của grant không gửi gì xuống Cluster và không bao giờ đụng tới Workspace đang chạy; nó chỉ quyết định Organization còn tạo thêm hoặc nới rộng được bao nhiêu. Ngoại lệ duy nhất là `allowedStorageClasses`: danh sách này được render vào Tenant của từng Workspace, nên đổi nó tạo generation mới cho CR của mọi Workspace trong grant.
 
 Quy tắc khi Platform Admin lưu grant (`PUT .../cluster-grants/{clusterId}`), kiểm trong một transaction có lock grant:
 
 - mỗi con số phải ≥ tổng đã giữ chỗ tương ứng (CPU/RAM/Pod: tổng của Workspace Shared; Workspace, Namespace, storage: tổng của mọi Workspace); thấp hơn thì từ chối `CLUSTER_GRANT_BELOW_ALLOCATION` kèm con số tối thiểu. Muốn thu hồi nhiều hơn, Organization phải tự thu gọn hoặc xóa Workspace trước;
 - không gỡ một shared pool khỏi grant khi còn Workspace Shared của Organization trên pool đó;
 - không gỡ một NetworkPool khỏi grant khi còn Workspace giữ CIDR trong pool đó;
-- gỡ một StorageClass khỏi danh sách chỉ chặn PVC **mới**; PVC đang có giữ nguyên;
-- xóa grant bị chặn khi còn Workspace hoặc dedicated node trên Cluster đó;
+- thêm hoặc gỡ StorageClass render lại `storageClasses.allowed` của Tenant ở mọi Workspace trong grant (một Operation `workspace.update` mỗi Workspace); gỡ chỉ chặn PVC **mới**, PVC đang có giữ nguyên;
+- xóa grant bị chặn khi còn Workspace hoặc dedicated node trên Cluster đó; xóa grant đang là default thì grant còn lại cũ nhất (theo thời điểm tạo) thành default;
 - mọi lần sửa ghi audit kèm giá trị trước và sau.
 
 Portal hiện số tối thiểu ngay dưới từng ô, và trước khi lưu hiện bảng "trước → sau" của những ô đã đổi để Admin xác nhận.
-
-MVP dùng hai resource profile rõ ràng:
-
-- Shared mode cho phép `requests < limits` trong tỷ lệ Platform Admin cấu hình;
-- Dedicated mode yêu cầu Guaranteed QoS cho CPU/RAM (`requests = limits`), và reservation dùng chính CPU/RAM request cùng Pod count;
-- storage vẫn được accounting ở ClusterGrant/StorageClass, không trừ vào node reservation.
-
-Quyết định này làm cho "Workspace được reserve 4 CPU/8 GiB trên node" có ý nghĩa kiểm chứng được, thay vì chỉ nhìn actual usage thay đổi từng giây hoặc cho phép limits của nhiều Workspace vượt capacity vật lý.
 
 ### 5.6 Usage hiển thị
 
@@ -478,7 +508,7 @@ Quyết định này làm cho "Workspace được reserve 4 CPU/8 GiB trên node
 Các mục dưới đây được thêm dần theo milestone (pool, node và network ở M5/M8/M9, số đo thực tế khi có Prometheus). Portal hiển thị theo từng ClusterGrant:
 
 - allocated/remaining CPU, RAM, Pod, storage và Workspace count;
-- Workspace quota/claimed/used;
+- Workspace quota/used (quota chung cho mọi Namespace, 5.4);
 - shared pool capacity;
 - dedicated node có health `Ready/NotReady/Cordoned`, capacity state `Available/PartiallyAllocated/FullyAllocated/Overcommitted`, kèm reservable/reserved/remaining CPU-RAM-Pod;
 - IP used/available của NetworkPool/CIDR;
@@ -510,7 +540,7 @@ Registered -> Ready -> Maintenance -> Ready
                   \-> Unavailable -> Ready
 ```
 
-MVP: trạng thái Cluster do Platform Admin đặt tay hoặc health check đơn giản từ provisioning worker. Phase 2: Cluster Agent gửi heartbeat định kỳ; quá ngưỡng thì central API chuyển Cluster sang `Unavailable` và ngừng nhận Workspace mới. Không tự chuyển Workspace sang Cluster khác. Xóa ClusterGrant hoặc unregister Cluster bị chặn khi còn Workspace/reservation đang hoạt động. Đổi default Cluster chỉ ảnh hưởng Workspace tạo sau đó.
+MVP: Platform Admin đặt tay mọi trạng thái Cluster, kể cả `Registered → Ready`; không có bước kiểm bootstrap tự động. Worker chỉ ghi `last_health_check`. Outbox event của Cluster `Unavailable` không được giao (số lần thử không tăng), nên Operation giữ `Pending`. Phase 2: Cluster Agent gửi heartbeat định kỳ; quá ngưỡng thì central API chuyển Cluster sang `Unavailable` và ngừng nhận Workspace mới. Không tự chuyển Workspace sang Cluster khác. Xóa ClusterGrant theo quy tắc ở 5.5; unregister Cluster bị chặn khi còn Workspace chưa `Deleted`. Đổi default Cluster chỉ ảnh hưởng Workspace tạo sau đó.
 
 ### 6.2 Shared Nodes mode
 
@@ -531,18 +561,20 @@ tenantry.io/compute-pool=shared-general
 - **soft allocation**: tổng allocation của mọi Workspace trên pool được phép vượt capacity thật theo `allocationOvercommitRatio` của pool (5.3); portal hiển thị `allocated / (ratio × reservable)` và actual usage để Admin điều chỉnh ratio.
 
 ```yaml
-id: shared-general
+id: shared-general           # DNS label do Admin đặt, duy nhất toàn platform; cấm `system`
 clusterId: cluster-a
-nodes: [wk2, wk3]            # operator gắn label tenantry.io/compute-pool=shared-general
+nodes: [wk-1, wk-2]          # operator gắn label tenantry.io/compute-pool=shared-general
 allocationOvercommitRatio: 3.0
-systemReserve: {cpu: "2", memory: 8Gi, pods: 30}
-capacitySnapshot: {allocatableCpu: "24", allocatableMemory: 96Gi, pods: 330}
+systemReserve: {cpu: "1", memory: 4Gi, pods: 15}                        # cho MỖI node
+capacitySnapshot: {allocatableCpu: "24", allocatableMemory: 96Gi, pods: 330}   # tổng allocatable của các node
 ```
 
-**Node của pool do Platform Admin chọn trên portal.** Portal hiện danh sách node của Cluster (operator báo về qua CRD phụ `PlatformNodeInventory`, vì central plane không đọc Node); Admin thêm hoặc bớt node của pool, operator gắn hoặc gỡ label. Quy tắc:
+`reservable` của pool = tổng allocatable của các node − số node × `systemReserve`; ví dụ trên là 22 CPU / 88Gi / 300 pods, trần allocation = 3.0 × reservable. Id `system` bị cấm vì `tenantry.io/compute-pool=system` là label của system pool.
+
+**Node của pool do Platform Admin chọn trên portal.** Portal hiện danh sách node của Cluster (operator báo về qua CRD phụ `PlatformNodeInventory`, vì central plane không đọc Node); Admin thêm hoặc bớt node của pool, operator gắn hoặc gỡ label theo `PlatformSharedPool.spec.nodes` (từ M6; trước đó script dựng cụm gắn tạm label, xem `IMPLEMENTATION-PLAN.md`). Quy tắc:
 
 - chỉ node **tự do** mới thêm được: `Ready`, không phải control-plane hay system node, chưa thuộc pool nào và chưa là dedicated node của Organization nào;
-- bớt node làm dung lượng pool giảm; bị từ chối `COMPUTE_POOL_CAPACITY_EXCEEDED` nếu sau khi bớt tổng allocation vượt `ratio × reservable`;
+- bớt node, hạ `allocationOvercommitRatio` hoặc tăng `systemReserve` làm trần của pool giảm; nếu trần mới nhỏ hơn tổng allocation hiện có thì từ chối `COMPUTE_POOL_CAPACITY_EXCEEDED`;
 - gỡ label **không** đuổi Pod đang chạy trên node (Kubernetes chỉ xét nodeSelector lúc xếp Pod). Admin tự drain node nếu muốn lấy hẳn node ra; portal nhắc điều này trước khi lưu.
 
 Nếu Cluster có nhiều shared pool, ClusterGrant quyết định Organization được dùng pool nào. Portal auto-select khi chỉ có một pool.
@@ -570,14 +602,14 @@ reservable:
   cpu: "8"
   memory: 30Gi
   pods: 100
-reserved:
-  cpu: "5"
+reserved:                    # acme-water 4 CPU/8Gi/40 pods + acme-green 2 CPU/4Gi/20 pods
+  cpu: "6"
   memory: 12Gi
-  pods: 45
+  pods: 60
 remaining:
-  cpu: "3"
+  cpu: "2"
   memory: 18Gi
-  pods: 55
+  pods: 40
 capacityState: PartiallyAllocated
 nodeState: Ready
 ```
@@ -585,28 +617,29 @@ nodeState: Ready
 Quy tắc:
 
 - node grant phải thuộc đúng Organization và ClusterGrant;
-- node phải `Ready`, schedulable và không phải system/control-plane node;
-- node **không thuộc compute pool nào** (không mang label `tenantry.io/compute-pool`): một node hoặc nằm trong một shared pool, hoặc là dedicated node, không bao giờ cả hai. Màn cấp node chỉ liệt kê node tự do. Muốn chuyển node từ shared pool sang dedicated, Platform Admin bớt node khỏi pool trên portal (6.2), drain node, rồi mới grant;
-- khi grant, node **không được còn tenant workload của Organization khác** (Platform Admin cordon/drain trước; operator trong Cluster kiểm tra Pod trên node, chưa sạch thì Operation cấp node thất bại kèm danh sách Pod lạ);
+- node phải `Ready`, schedulable (không cordon) và không phải system/control-plane node;
+- node **không thuộc compute pool nào** (không mang label `tenantry.io/compute-pool`): một node hoặc nằm trong một shared pool, hoặc là dedicated node, không bao giờ cả hai. Màn cấp node chỉ liệt kê node tự do;
+- khi grant, node **không được còn Pod tenant nào**, kể cả Pod của Workspace Shared thuộc chính Organization (chúng chiếm capacity ngoài mọi reservation). Operator trong Cluster kiểm tra Pod trên node; chưa sạch thì Operation cấp node thất bại kèm danh sách Pod;
+- quy trình chuyển node từ shared pool sang dedicated: Platform Admin bớt node khỏi pool trên portal (6.2) → drain → uncordon → cấp cho Organization. Uncordon an toàn vì node đã mất label pool nên Pod Shared không quay lại;
 - chỉ tenant workload của Organization được schedule lên node; CNI, CSI, monitoring và system DaemonSet vẫn có thể chạy;
 - MVP cho mỗi Dedicated Workspace chọn đúng **một node cụ thể**;
 - CPU/RAM/Pod allocation của Workspace trở thành reservation trên node đó;
-- tổng active reservation của mọi Workspace trên node không được vượt `allocatable - system reserve`;
+- tổng reservation chưa `Released` (`Pending/Active/Releasing`) của mọi Workspace trên node không được vượt `allocatable - system reserve`;
 - `system reserve` bao gồm request của system DaemonSet dự kiến chạy trên node và safety margin;
 - Dedicated mode yêu cầu CPU/RAM `requests = limits`; capacity accounting không dựa vào actual usage tức thời;
-- Capsule ResourcePool của Workspace không được lớn hơn node reservation;
+- quota chung của Workspace Dedicated đặt đúng bằng node reservation;
 - API lock node grant và tạo reservation atomically để hai request đồng thời không overbook;
 - Workspace delete chỉ xóa reservation và scheduling membership của chính Workspace; node vẫn thuộc Organization;
-- Platform Admin không thể revoke/move node grant khi còn active reservation;
+- Platform Admin không thể revoke/move node grant khi còn reservation chưa `Released`;
 - node NotReady không tự động được thay bằng node khác trong scope đồ án.
 
-Ví dụ node còn 8 CPU sau system reserve: Workspace Solar reserve 4 CPU, Water reserve 3 CPU, node còn 1 CPU. Workspace thứ ba yêu cầu 2 CPU phải bị từ chối.
+Ví dụ node còn 8 CPU sau system reserve: Workspace Water reserve 4 CPU, Green reserve 2 CPU, node còn 2 CPU. Workspace thứ ba yêu cầu 3 CPU bị từ chối `DEDICATED_NODE_INSUFFICIENT_CAPACITY`.
 
 Capacity được tính theo công thức:
 
 ```text
 reservable = allocatable - systemReserve
-reserved   = sum(active Workspace NodeReservations)
+reserved   = sum(NodeReservation ở Pending/Active/Releasing)
 remaining  = max(reservable - reserved, 0)
 ```
 
@@ -636,17 +669,18 @@ Khi Workspace chọn node, controller thêm một membership label có thể cù
 workspaces.tenantry.io/ws-01jxyz=true
 ```
 
-Capsule Tenant dùng selector membership này. Admission trong Cluster inject Organization toleration và chặn user:
+Capsule Tenant dùng selector membership này. Vị trí Pod được ép bằng hai admission plugin có sẵn của kube-apiserver (bật từ M1), cấu hình qua annotation Namespace mà tenant không sửa được:
 
-- đặt `nodeName` trực tiếp;
-- override selector sang shared pool/node khác;
-- tự thêm toleration của Organization khác;
-- sửa protected scheduling label;
-- schedule lên platform/system nodes.
+- `PodNodeSelector` trộn selector của Namespace vào mọi Pod, và kubelet kiểm lại `nodeSelector` khi nhận Pod, nên kể cả Pod tự đặt `spec.nodeName` cũng không chạy được ngoài pool/node của Workspace. Selector với key khác không bị từ chối, Pod chỉ nằm `Pending`;
+- `PodTolerationRestriction` (annotation `defaultTolerations` + `tolerationsWhitelist`, whitelist gồm các taint `node.kubernetes.io/*`) inject toleration của Organization vào Namespace Dedicated (từ M8) và từ chối toleration ngoài whitelist, kể cả toleration của Organization khác;
+- label/taint `tenantry.io/*` và `workspaces.tenantry.io/*` trên Node chỉ ServiceAccount `tenantry-operator` được đổi (ValidatingAdmissionPolicy, M8);
+- system/control-plane node không mang label pool hay membership nên không Pod tenant nào khớp selector.
+
+Một ValidatingAdmissionPolicy từ chối `spec.nodeName` chỉ là hardening để báo lỗi rõ, không phải lớp bắt buộc; Capsule không có luật nào về `nodeName`. Chi tiết ở `architecture/05-network-and-scheduling.md` mục 2.
 
 Khi Workspace bị xóa, controller xóa riêng membership label của Workspace đó. Organization label/taint và các Workspace membership label khác vẫn được giữ trên node.
 
-Với kubeadm lab có thể tiếp tục dùng `PodNodeSelector`. Thiết kế phải có test bắt buộc vì nếu admission plugin bị tắt, node placement không còn được enforce đầy đủ.
+Phải có test bắt buộc (chạy trong `make cluster-verify`) vì nếu admission plugin bị tắt, node placement không còn được enforce.
 
 ### 6.5 Platform/system nodes
 
@@ -661,18 +695,20 @@ Vì mọi giao tiếp giữa central plane và data plane đều qua Platform AP
 NetworkPool luôn thuộc một Cluster và được Platform Admin đưa vào ClusterGrant của Organization:
 
 ```yaml
-name: acme-cluster-a-pod-network
+id: acme-cluster-a-pod-network   # DNS label do Admin đặt, duy nhất toàn platform
 clusterId: cluster-a
 organizationId: org-01jabc   # optional: null = pool chung, nhiều ClusterGrant có thể tham chiếu
 cidrs:
-  - 10.240.0.0/16
+  - 10.240.64.0/18
 defaultPrefixLength: 24
 allowedPrefixLengths: [20, 21, 22, 23, 24]
 ```
 
 NetworkPool luôn thuộc một Cluster; `organizationId` là tùy chọn. Pool **riêng** (có `organizationId`) chỉ được đưa vào grant của đúng Organization đó. Pool **chung** (`organizationId = null`, ví dụ `onboarding-pod-network`) được nhiều grant tham chiếu; vì allocation luôn per-Workspace và overlap check chạy theo Cluster nên hai Organization dùng chung pool vẫn không đụng CIDR.
 
-Mỗi Cluster nên có supernet riêng, ví dụ Cluster A dùng `10.240.0.0/16`, Cluster B (Phase 2) dùng `10.241.0.0/16`. Đồ án không cung cấp cross-cluster Pod/Service routing; workload ở hai Cluster giao tiếp qua endpoint/Ingress thông thường nếu cần.
+Khi Platform Admin tạo hoặc sửa NetworkPool, CIDR của nó không được overlap `reserved_cidrs` của Cluster (Pod CIDR/pool mặc định của Calico, Service CIDR, Node CIDR; lab: `192.168.0.0/16`, `10.96.0.0/12`) và các NetworkPool khác của cùng Cluster. Nhờ vậy allocation nằm trong pool thì tự động không đụng các dải đó.
+
+Mỗi Cluster nên có supernet riêng, ví dụ Cluster A dùng `10.240.0.0/16` (pool chung `onboarding-pod-network` là `10.240.0.0/18`, pool riêng lấy các `/18` tiếp theo như `10.240.64.0/18`), Cluster B (Phase 2) dùng `10.241.0.0/16`. Đồ án không cung cấp cross-cluster Pod/Service routing; workload ở hai Cluster giao tiếp qua endpoint/Ingress thông thường nếu cần.
 
 ### 7.2 Tạo Workspace network
 
@@ -686,8 +722,8 @@ UI hiển thị cả prefix và estimated usable addresses để người dùng 
 
 IPAM service kiểm tra:
 
-- requested CIDR nằm hoàn toàn trong NetworkPool của đúng Organization và Cluster;
-- không overlap Pod CIDR Cluster, Service CIDR hoặc allocation khác trong Cluster;
+- requested CIDR nằm hoàn toàn trong một NetworkPool thuộc grant của Organization trên đúng Cluster (pool đã không overlap `reserved_cidrs` của Cluster, 7.1);
+- không overlap allocation chưa `Released` khác trong Cluster (`Allocated`, `Releasing`, `Quarantined`);
 - prefix hợp lệ;
 - còn đủ địa chỉ.
 
@@ -703,10 +739,12 @@ Mỗi Workspace có một Calico IPPool:
 - Shared mode dùng node selector của shared pool đã chọn;
 - Dedicated mode dùng selector theo immutable Workspace ID trên node đã chọn;
 - Namespace của Workspace có annotation chọn đúng pool;
-- Capsule cấm tenant sửa annotation IPPool;
-- Pod-level override IPPool bị policy cấm.
+- Capsule cấm tenant sửa annotation của Namespace: `namespaceOptions.forbiddenAnnotations` của Tenant phủ `cni.projectcalico.org/*` và `scheduler.alpha.kubernetes.io/{node-selector,defaultTolerations,tolerationsWhitelist}`;
+- Pod không được tự chọn IP: ValidatingAdmissionPolicy `tenantry-tenant-pod-network` (chart operator, M9) từ chối Pod của tenant trong Namespace tenant mang annotation `cni.projectcalico.org/ipv4pools`, `ipv6pools`, `ipAddrs`, `ipAddrsNoIpam` hoặc `floatingIPs`.
 
 Một shared pool có thể được nhiều IPPool cùng chọn. Namespace annotation quyết định Pod của Workspace lấy IP từ pool nào. IPPool chỉ tồn tại trong Cluster chứa Workspace.
+
+Supernet tenant (`10.240.0.0/16`) nằm ngoài `clusterCIDR` của kube-proxy (lab: `192.168.0.0/16`), nên kube-proxy phải nhận diện Pod local theo interface (`detectLocalMode: InterfaceNamePrefix`, prefix `cali`); nếu không, traffic từ Pod tenant tới Service bị masquerade thành IP node và NetworkPolicy "cùng Workspace" chặn nhầm. Cấu hình đặt ở đầu M9, trước khi có IPPool tenant; chi tiết ở `architecture/05-network-and-scheduling.md` mục 5.
 
 ### 7.4 Network isolation baseline
 
@@ -716,15 +754,17 @@ Mỗi Namespace được replicate policy:
 - default deny egress;
 - allow traffic giữa Namespace cùng Workspace theo immutable tenant label;
 - allow DNS;
-- allow internet egress nếu profile cho phép;
+- allow internet egress cho mọi Workspace ở MVP (trừ dải private và metadata endpoint); profile chặt hơn để Phase 2;
 - allow ingress từ ingress controller của platform tới workload được expose;
 - deny truy cập metadata endpoint;
 - không tin label mà tenant có thể tự sửa.
 
+Baseline này có từ M9 (cùng IPPool). Workspace tạo ở M6–M8 chưa có CIDR riêng và chưa được cô lập mạng.
+
 Test bắt buộc:
 
 - Pod A không gọi Pod/Service của Workspace B;
-- cùng Workspace khác Namespace gọi được nếu policy cho phép;
+- cùng Workspace khác Namespace gọi được nếu policy cho phép, kể cả gọi qua Service khi hai Pod ở hai node khác nhau;
 - DNS hoạt động;
 - Pod IP nằm đúng CIDR;
 - user không đổi namespace/pod IPPool annotation;
@@ -734,7 +774,7 @@ Test bắt buộc:
 
 Deletion flow:
 
-1. cordon Workspace;
+1. gỡ owners và RoleBinding của Tenant rồi bỏ `cordoned` trên Tenant (cordon của Capsule chặn cả lệnh ghi của controller; thứ tự đầy đủ ở 17.4);
 2. xóa workload/Namespace;
 3. đợi Calico workload endpoint/IPAM block được release;
 4. xóa IPPool;
@@ -745,7 +785,7 @@ Không release CIDR ngay khi API nhận lệnh delete.
 
 ### 7.6 Route: đưa app của tenant ra internet
 
-Platform sở hữu toàn bộ đường vào HTTP của Cluster. Tenant **không tạo Ingress**; họ tạo một **Route** trên portal và platform dựng Ingress tương ứng. Lý do: user không phải viết YAML Ingress, private key TLS không bao giờ nằm trong Namespace của tenant, và Ingress do tenant tự viết (kèm annotation tùy ý) là một đường tấn công ingress controller đã biết.
+Platform sở hữu toàn bộ đường vào HTTP của Cluster. Tenant **không tạo Ingress**; họ tạo một **Route** trên portal và platform dựng Ingress tương ứng. Lý do: user không phải viết YAML Ingress, private key TLS của apps domain không bao giờ nằm trong Namespace của tenant (ngoại lệ duy nhất là cert của custom domain, cuối mục này), và Ingress do tenant tự viết (kèm annotation tùy ý) là một đường tấn công ingress controller đã biết.
 
 Hạ tầng per Cluster:
 
@@ -765,7 +805,7 @@ Route:
 
 Giới hạn:
 
-- chỉ HTTP/HTTPS (gồm WebSocket và gRPC); TCP/UDP thuần không expose được. Service `NodePort`/`LoadBalancer` vẫn bị cấm — Route là đường expose duy nhất; truy cập tạm vào database dùng `kubectl port-forward`;
+- chỉ HTTP/HTTPS (gồm WebSocket và gRPC); TCP/UDP thuần không expose được. Service `NodePort`/`LoadBalancer`/`ExternalName` vẫn bị cấm — Route là đường expose duy nhất, và Route không thể trỏ Traefik ra host tùy ý qua `ExternalName`; truy cập tạm vào database dùng `kubectl port-forward`;
 - tenant bị admission chặn tạo/sửa/xóa Ingress và mọi tài nguyên cert-manager trong Namespace của mình; Helm chart có sẵn Ingress phải tắt phần đó;
 - Route chỉ có host → Service:cổng; chia theo path, timeout, giới hạn body chưa có.
 
@@ -775,7 +815,7 @@ Hostname của chính platform (`portal.tenantry.site`, `auth.tenantry.site`, `k
 
 1. user nhập domain; portal trả về hai bản ghi DNS cần tạo: `TXT _tenantry-challenge.<domain>` chứa mã ngẫu nhiên, và `CNAME <domain>` trỏ về ingress của Cluster;
 2. worker kiểm tra bản ghi TXT; khớp thì Route được dựng. Chưa xác minh thì không có Ingress nào được tạo;
-3. cert-manager tự xin cert Let's Encrypt cho domain đó (HTTP-01); user không gửi cert hay key.
+3. cert-manager tự xin cert Let's Encrypt cho domain đó (HTTP-01); user không gửi cert hay key. Certificate và Secret nằm cùng Namespace với Ingress của Route, tức trong Namespace tenant — chấp nhận vì đó là domain của chính họ.
 
 Quy tắc: một domain chỉ thuộc một Workspace trên toàn nền tảng; không nhận `tenantry.site` và tên con của nó; không nhận wildcard; số custom domain mỗi Workspace có giới hạn; xóa Route hoặc Workspace thì nhả domain và xóa cert; không cần Admin duyệt vì xác minh DNS đã chứng minh quyền sở hữu. Tự tải cert lên là tùy chọn về sau.
 
@@ -830,7 +870,7 @@ Portal chịu trách nhiệm:
 
 ### 8.2 Portal session
 
-Portal là BFF: browser chỉ giữ một cookie phiên `HttpOnly`/`Secure`/`SameSite=Lax`; token không bao giờ xuống JavaScript; mọi request ghi có CSRF protection.
+Portal là BFF: browser chỉ giữ một cookie phiên `__Host-tenantry_session` (`HttpOnly`/`Secure`/`SameSite=Lax`); token không bao giờ xuống JavaScript; mọi request ghi có CSRF protection.
 
 Phiên portal **không có đồng hồ riêng**: nó sống đúng bằng SSO session của user trên Keycloak. Hệ quả người dùng thấy:
 
@@ -856,6 +896,8 @@ Không dùng một token/client cho mọi mục đích. Keycloak realm có ba lo
 | `headlamp-{clusterId}` | Confidential + Authorization Code | callback exact của Cluster, audience riêng | Web console của một Cluster |
 | `kubectl` | Public + PKCE/local callback | localhost callback, audience `kubernetes` | OIDC exec credential |
 
+Ngoài ba loại trên, realm có hai client nội bộ không dành cho người dùng: `cluster-verify` (chỉ cho `make cluster-verify`) và `tenantry-sync` (từ M4, service account của Group Sync Worker); bảng đầy đủ ở `architecture/06-security-and-identity.md` mục 2.
+
 Chỉ token của `headlamp-{clusterId}` và `kubectl` có group mapper cần cho Kubernetes. Structured authentication của mỗi Cluster chấp nhận audience `kubernetes` và audience Headlamp của chính Cluster. Token `portal-api` không được dùng để gọi Kubernetes API. Khi đăng ký Cluster mới (Phase 2), Platform Admin/bootstrap workflow phải tạo hoặc cấu hình Headlamp OIDC client/callback tương ứng.
 
 Username Kubernetes map từ immutable `sub` với prefix `oidc:`. `preferred_username` chỉ dùng để hiển thị. Group claim từ Keycloak cũng được prefix `oidc:` tại Kubernetes authentication layer.
@@ -864,32 +906,32 @@ Username Kubernetes map từ immutable `sub` với prefix `oidc:`. `preferred_us
 
 ### 9.1 Invite flow
 
-1. OrgOwner nhập email và Organization role;
-2. portal tạo invitation token một lần, có expiry;
-3. **portal hiển thị invite link để owner copy gửi tay** (email service thật là stretch);
+1. OrgOwner hoặc OrgAdmin nhập email và Organization role (`OrgAdmin` hoặc `OrgMember`; không mời làm `OrgOwner`);
+2. portal kiểm `maxMembers` (5.1) rồi tạo invitation token một lần, có expiry;
+3. **portal hiển thị invite link để người mời copy gửi tay** (email service thật là stretch). Link chỉ hiện một lần: gửi lại cùng `Idempotency-Key` trả về invitation không kèm link, muốn có link thì thu hồi và tạo invitation mới;
 4. người nhận login/register qua Keycloak;
 5. portal chỉ accept invite khi **email đã verify của account đang login khớp** email trong invitation; không khớp thì báo lỗi và không tạo membership;
-6. tạo Organization membership;
+6. kiểm lại `maxMembers` dưới lock rồi tạo Organization membership;
 7. optional thêm user vào group được chọn khi invite;
 8. ghi audit event.
 
-Không tạo membership chỉ dựa trên một email chưa được xác minh.
+Không tạo membership chỉ dựa trên một email chưa được xác minh. OrgOwner/OrgAdmin xem được danh sách invitation đang chờ và thu hồi từng cái.
 
 ### 9.2 Organization roles
 
 | Role | Quyền portal |
 |---|---|
-| `OrgOwner` | **Đúng một mỗi Organization.** Quản lý member, group, Workspace, allocation trong entitlement; transfer ownership; xóa Organization (khi không còn Workspace) |
+| `OrgOwner` | **Đúng một mỗi Organization.** Quản lý member, group, Workspace, allocation trong entitlement; transfer ownership; xóa Organization (khi không còn Workspace và dedicated node, 4.2) |
 | `OrgAdmin` | Như Owner về member/group/Workspace nhưng không transfer ownership, không xóa Organization, không đổi role của Owner |
 | `OrgMember` | Xem Organization và Workspace mình được group cấp quyền; tự rời Organization |
 
 Đây là platform role, không tự động đồng nghĩa với Kubernetes role.
 
-Quota và usage của cả Organization (`/entitlement`, `/usage`) chỉ OrgOwner và OrgAdmin đọc được. OrgMember nhận `403 FORBIDDEN`; người không phải member nhận `404` như mọi endpoint của Organization, để không lộ Organization có tồn tại hay không. OrgMember chỉ thấy Overview rút gọn gồm các Workspace mình có quyền, không thấy Members, Groups, Settings, Clusters.
+Quota và usage của cả Organization (`/entitlement`, `/usage`) chỉ OrgOwner và OrgAdmin đọc được. OrgMember nhận `403 FORBIDDEN`; người không phải member nhận `404` như mọi endpoint của Organization, để không lộ Organization có tồn tại hay không. OrgMember chỉ thấy Overview rút gọn gồm các Workspace mình có quyền, không thấy Members, Groups, Settings, Clusters, Audit.
 
-Organization `Pending` hoặc `Rejected` chưa có entitlement và grant. Mọi endpoint cần Organization đã được duyệt (đọc `/entitlement`, `/usage`; về sau là mời member, tạo group, tạo Workspace) trả `409 ORG_NOT_ACTIVE`. Thứ tự kiểm: membership (404) → role (403) → trạng thái (409).
+Organization `Pending` hoặc `Rejected` chưa có entitlement và grant. Mọi endpoint cần Organization đã được duyệt (đọc `/entitlement`, `/usage`; về sau là mời member, tạo group, tạo Workspace) trả `409 ORG_NOT_ACTIVE`. Organization `Deleted` trả `404` như không tồn tại (4.2). Thứ tự kiểm: membership (404) → role (403) → trạng thái (409).
 
-Transfer ownership: Owner chọn một OrgAdmin làm người nhận → portal tạo yêu cầu có expiry → người nhận xác nhận trong portal → trong một transaction đổi role hai bên (người nhận thành Owner, Owner cũ thành OrgAdmin) và ghi audit.
+Transfer ownership diễn ra hoàn toàn trong portal, không có link hay token: Owner chọn một OrgAdmin làm người nhận → portal tạo yêu cầu có expiry (mỗi Organization tối đa một yêu cầu đang chờ; Owner hủy được) → người nhận thấy yêu cầu khi vào Organization và xác nhận. Transaction xác nhận kiểm lại dưới lock: yêu cầu còn chờ và chưa hết hạn, người nhận vẫn là OrgAdmin, người đề nghị vẫn là OrgOwner; rồi **hạ Owner cũ thành OrgAdmin trước, nâng người nhận thành Owner sau** (unique index "một OrgOwner" không deferrable), và ghi audit.
 
 ### 9.3 Group membership sync
 
@@ -902,15 +944,17 @@ PostgreSQL là source of truth cho Organization group. Một sync worker dùng K
 - logout user trên Keycloak để chặn refresh/new token sau khi thu hồi quyền;
 - không cho user tự sửa group Kubernetes qua Keycloak Account Console.
 
-Ngoài Organization group, worker quản lý một platform group `tenantry:tenant-users`. User có ít nhất một Workspace binding được thêm vào group này; khi mất binding cuối cùng thì bị remove. Sau prefix của Kubernetes, Capsule nhận diện group là `oidc:tenantry:tenant-users`. Đây là bản động của group `projectcapsule.dev` đang được hard-code trong lab.
+Ngoài Organization group, worker quản lý một platform group `tenantry:tenant-users`. User có ít nhất một Workspace binding (qua một group còn sống, tới một Workspace chưa `Deleting`/`Deleted`) được thêm vào group này; khi mất binding cuối cùng thì bị remove. Membership của group này được tính lại cả khi **binding** đổi, không chỉ khi membership đổi: mọi transaction thay đổi tập binding (tạo/xóa Workspace, `PUT`/`DELETE` binding, xóa group) đặt `sync_status = 'Pending'` cho mọi `group_members` còn sống của các group bị ảnh hưởng, để Group Sync tính lại cho từng user. Sau prefix của Kubernetes, Capsule nhận diện group là `oidc:tenantry:tenant-users`. Đây là bản động của group `projectcapsule.dev` đang được hard-code trong lab.
 
-Capsule configuration chỉ xem subject thuộc `oidc:tenantry:tenant-users` là Capsule user. Owner permission vẫn đến từ Owner group của Workspace; platform group này không tự cấp quyền vào bất kỳ Tenant nào.
+Capsule user gồm đúng hai subject: group `oidc:tenantry:tenant-users` (người dùng) và group ServiceAccount của operator (`system:serviceaccounts:<namespace của operator>`). ServiceAccount của operator được render làm owner của mọi Tenant để tạo được các Namespace trong `spec.namespaces` — Capsule chỉ cho owner đồng thời là Capsule user tạo Namespace của Tenant (đã kiểm chứng trên Capsule 0.13.10 ở lab cũ, kiểm lại với 0.15.x ở M6). Quyền của người dùng vẫn đến từ Owner group của Workspace; platform group này không tự cấp quyền vào bất kỳ Tenant nào.
 
 Group claim chỉ có hiệu lực với token mới. Kubernetes tự kiểm tra JWT signature/expiry và không gọi ngược Keycloak cho từng request, vì vậy logout trên Keycloak **không vô hiệu ngay token đã phát hành**. Contract thu hồi quyền:
 
 - quyền Kubernetes bị thu hồi chậm nhất khi token hiện tại hết hạn (5 phút); quyền trên portal bị thu hồi ngay;
 - gỡ user khỏi group đang có binding Workspace kèm logout trên Keycloak để user không lấy được token mới. Logout này đăng xuất user **ở mọi nơi** (portal, Headlamp, kubectl, kể cả Organization khác) — UI phải nói rõ;
 - immediate revocation thực sự cần online token validation và không thuộc scope đồ án.
+
+Contract này đứng được vì quyền Kubernetes của user chỉ đến qua group: TenantOwner không bind được user lẻ hay group của Organization khác vào Namespace của mình (10.4), nên gỡ user khỏi group là gỡ hết quyền khi token hết hạn.
 
 Bảng đầy đủ "thay đổi nào có hiệu lực khi nào": `architecture/06-security-and-identity.md` mục 5.
 
@@ -922,13 +966,13 @@ Xóa member:
 - member tự rời Organization đi qua đúng luồng này (self-service), trừ Owner;
 - xóa khỏi mọi group của Organization đó, sync Keycloak và thu hồi quyền theo 9.3;
 - giữ audit;
-- không nhất thiết xóa Keycloak account nếu user còn Organization khác.
+- không bao giờ xóa account Keycloak: account thuộc về user, không thuộc Organization.
 
 Xóa group:
 
 - bị chặn nếu group còn Workspace AccessBinding;
 - UI hiển thị Workspace đang dùng group;
-- owner phải thay binding hoặc xác nhận cascade rõ ràng.
+- owner phải gỡ hoặc thay binding trước; không có xóa cascade.
 
 ## 10. Hai lớp authorization
 
@@ -939,7 +983,7 @@ Portal/backend kiểm tra Organization membership và role cho mọi endpoint. K
 Ví dụ:
 
 - PlatformAdmin đăng ký Cluster và cấp OrgEntitlement/ClusterGrant/shared pool/dedicated nodes/NetworkPool;
-- OrgOwner tạo Workspace/group/invite;
+- OrgOwner/OrgAdmin tạo Workspace/group/invite;
 - OrgMember chỉ xem Workspace được group gán;
 - Workspace Developer không thể tự nâng group thành Owner.
 
@@ -952,8 +996,8 @@ Keycloak token có claim:
   "sub": "immutable-keycloak-user-id",
   "preferred_username": "alice",
   "groups": [
-    "org_01JABC:group_01JADM",
-    "org_01JABC:group_01JDEV"
+    "org_01jabc:group_01jadm",
+    "org_01jabc:group_01jdev"
   ]
 }
 ```
@@ -983,6 +1027,13 @@ auditors     -> Viewer tại cả hai
 ```
 
 Mỗi Workspace bắt buộc có ít nhất một `TenantOwner` group. API chặn thao tác làm Workspace mất owner cuối cùng.
+
+TenantOwner có ClusterRole `admin` trong Namespace nên tự tạo được RoleBinding. Để mọi quyền Kubernetes vẫn chỉ đến qua group của portal, ValidatingAdmissionPolicy `tenantry-tenant-rolebinding-subjects` (chart operator, M11) kiểm CREATE/UPDATE `rolebindings` trong Namespace mang label `capsule.clastix.io/tenant`, chỉ khi người gọi là tenant user (username bắt đầu bằng `oidc:`). Mỗi subject phải là:
+
+- Group `oidc:org_<ULID của Organization sở hữu Tenant>:…` — Organization đọc từ label Namespace `tenantry.io/org` mà controller gắn qua `Tenant.namespaceOptions.additionalMetadata`; hoặc
+- ServiceAccount có namespace bắt đầu bằng `<tên Tenant>-`.
+
+RoleBinding do Capsule (`additionalRoleBindings`), operator và controller của Kubernetes tạo không phải lời gọi `oidc:` nên không bị kiểm. Test M11: owner không bind được user lẻ, group của Organization khác hay `oidc:tenantry:tenant-users`.
 
 ### 10.5 Không dùng built-in `edit` nguyên trạng
 
@@ -1180,8 +1231,8 @@ MVP: central plane chạy trên system pool của Cluster A; provisioning worker
 - auth: Keycloak OIDC;
 - Kubernetes controller: `controller-runtime`;
 - kubectl auth: `kubelogin` exec plugin;
-- UI component library: chọn một library ổn định, tránh tự thiết kế mọi component;
-- deployment: Helm/Kustomize;
+- UI component library: Element Plus (stack đầy đủ ở `IMPLEMENTATION-PLAN.md` mục 6);
+- deployment: Helm (values trong `deploy/cluster/values/`, không dùng Kustomize);
 - test: Go test, frontend test, Playwright, E2E shell/Go trên cluster thật.
 
 Không cần Redis, Kafka, Temporal, service mesh hoặc nhiều microservice. Một modular monolith API + worker processes là đủ; PostgreSQL kiêm kho phiên, hàng đợi (outbox) và kho idempotency vì cả ba đều phải nhất quán với dữ liệu nghiệp vụ trong cùng transaction hoặc cùng request.
@@ -1214,32 +1265,34 @@ metadata:
   name: acme-solar                 # <org-slug>-<ws-slug>, cũng là tên Capsule Tenant
   labels:
     tenantry.io/organization-id: org-01jabc
-    tenantry.io/workspace-id: ws-01jxyz
+    tenantry.io/workspace-id: ws-01jsol
     tenantry.io/cluster-id: cluster-a
 spec:
   organizationId: org-01jabc
-  workspaceId: ws-01jxyz
+  workspaceId: ws-01jsol
   clusterId: cluster-a
   displayName: Solar
-  namespaceQuota: 5
-  namespaces:                      # desired, do portal quản lý; kubectl tạo thêm vẫn được nếu còn quota
+  cordoned: false                  # true khi OrgOwner/OrgAdmin cordon (17.3)
+  retryNonce: ""                   # API ghi giá trị mới khi retry lỗi controller báo → generation mới, không đổi reservation/CIDR
+  namespaceQuota: 3
+  namespaces:                      # desired, chỉ phần hậu tố; Namespace thật là <metadata.name>-<hậu tố>; kubectl tạo thêm vẫn được nếu còn quota
     - frontend
     - backend
-  namespacesToDelete: []
+  namespacesToDelete: []           # tên đầy đủ, ví dụ acme-solar-scratch
   routes:                          # desired, do portal quản lý; host đã được API ghép sẵn
     - {name: web, namespace: acme-solar-frontend, host: web-acme-solar.mvp.tenantry.site, service: web, port: 80}
   resources:
-    requests.cpu: "4"
-    requests.memory: 8Gi
+    requests.cpu: "2"
+    requests.memory: 4Gi
     limits.cpu: "4"
     limits.memory: 8Gi
-    pods: 40
-    requests.storage: 100Gi
+    pods: 20
+    requests.storage: 10Gi
   compute:
-    mode: Dedicated
-    dedicatedNodeGrantId: nodegrant-a1
-    nodeName: worker-a-05
-  network:
+    mode: Shared
+    sharedPoolId: shared-general
+    # Dedicated thay bằng: mode: Dedicated, dedicatedNodeGrantId: nodegrant-a1, nodeName: worker-a-05 (limits = requests)
+  network:                         # từ M9; Workspace tạo ở M6–M8 không có trường này
     allocationRef: netalloc-01j123
     cidr: 10.240.12.0/24
   storageClasses: [standard]
@@ -1249,25 +1302,30 @@ spec:
     - groupSubject: oidc:org_01jabc:group_01jdev
       role: Developer
 status:
-  phase: Ready
+  phase: Ready                     # Provisioning|Ready|Updating|Degraded|Failed|Deleting; kẹt khi xóa = condition Deleting=False reason BlockedByFinalizer
   observedGeneration: 3
   conditions: []
   capsuleTenantRef: acme-solar
-  namespaces:                      # observed, gồm cả Namespace tạo bằng kubectl
-    - {name: acme-solar-frontend, source: portal}
-    - {name: acme-solar-backend, source: portal}
-    - {name: acme-solar-scratch, source: kubectl}
+  usage:                           # tổng đang dùng của Workspace, đọc từ ResourceQuota; worker chép về DB cho GET /workspaces/{id}/usage
+    requests.cpu: 800m
+    requests.memory: 1536Mi
+    pods: 6
+    requests.storage: 2Gi
+  namespaces:                      # observed, gồm cả Namespace tạo bằng kubectl; usage chép vào workspace_namespaces.usage_snapshot
+    - {name: acme-solar-frontend, source: portal, usage: {requests.cpu: 500m, requests.memory: 1Gi, pods: 4}}
+    - {name: acme-solar-backend, source: portal, usage: {requests.cpu: 300m, requests.memory: 512Mi, pods: 2}}
+    - {name: acme-solar-scratch, source: kubectl, usage: {}}
   routes:
     - {name: web, namespace: acme-solar-frontend, ready: true}
 ```
 
-Customer không được truy cập CRD này.
+Customer không được truy cập CRD này. `PlatformWorkspace` là resource cluster-scoped. Quy ước tên Namespace: `spec.namespaces` và body tạo Workspace/Namespace chỉ chứa hậu tố (`frontend`); `namespacesToDelete`, `status.namespaces`, `routes[].namespace`, cột `workspace_namespaces.name` và `{name}` trong đường dẫn API dùng tên đầy đủ (`acme-solar-frontend`).
 
 ### 14.3 Outbox đơn giản
 
 Khi API tạo Workspace:
 
-1. transaction ghi Workspace, reservations, Operation và outbox event;
+1. transaction ghi Workspace (kèm phần giữ chỗ trên grant), NodeReservation nếu Dedicated, NetworkAllocation, Operation và outbox event;
 2. provisioning worker đọc outbox và apply PlatformWorkspace CR vào đúng Cluster (`workspace.cluster_id`) bằng credential scoped;
 3. Workspace Controller trong Cluster reconcile;
 4. worker watch/poll status của CR và cập nhật observed state trong DB;
@@ -1291,7 +1349,7 @@ Bảng, cột, constraint và thứ tự lock định nghĩa ở [`architecture/
 
 Các invariant nghiệp vụ mà schema phải giữ đã nêu tại nơi chúng thuộc về: danh tính và Organization (4.1–4.3), entitlement và reservation (5.3), dedicated node (6.3), CIDR (7.2), binding (10.4).
 
-## 16. API đề xuất
+## 16. API
 
 ### 16.1 User và Organization
 
@@ -1305,20 +1363,31 @@ GET    /api/v1/organizations                       # các Org user là member, k
 POST   /api/v1/organizations                       # xin tạo Org: slug, displayName, description → Pending
 GET    /api/v1/organizations/{orgId}
 PATCH  /api/v1/organizations/{orgId}               # display name/description; slug immutable
+DELETE /api/v1/organizations/{orgId}               # M7, chỉ OrgOwner; chặn khi còn Workspace chưa Deleted hoặc DedicatedNodeGrant
 GET    /api/v1/organizations/{orgId}/entitlement           # global entitlement + các ClusterGrant; chỉ OrgOwner/OrgAdmin (9.2)
 GET    /api/v1/organizations/{orgId}/usage                 # đã dùng/giới hạn toàn Org và theo từng grant (5.6)
-POST   /api/v1/organizations/{orgId}:transfer-ownership     # Owner đề nghị cho một OrgAdmin
-POST   /api/v1/ownership-transfers/{token}:accept           # người nhận xác nhận
+GET    /api/v1/organizations/{orgId}/audit-events          # M10, chỉ OrgOwner/OrgAdmin; trang Audit phía Org (9.2)
+POST   /api/v1/organizations/{orgId}:transfer-ownership     # M4, Owner đề nghị cho một OrgAdmin, body toUserId
+GET    /api/v1/organizations/{orgId}/ownership-transfer     # M4, yêu cầu đang chờ; Owner và người nhận đọc được
+POST   /api/v1/ownership-transfers/{transferId}:accept      # M4, chỉ người nhận (to_user_id)
+DELETE /api/v1/ownership-transfers/{transferId}             # M4, Owner hủy hoặc người nhận từ chối
 POST   /api/v1/organizations/{orgId}/members/me:leave       # tự rời Org (không áp dụng Owner)
 ```
 
 `POST /organizations` phía user chỉ tạo yêu cầu `Pending`; duyệt/từ chối ở 16.5.
 
+Transfer ownership không dùng token: người nhận đã là member nên thấy yêu cầu ngay trong portal. Transaction accept khóa và kiểm lại: yêu cầu còn `Proposed`, chưa hết hạn, người nhận vẫn là OrgAdmin, người đề nghị vẫn là OrgOwner; rồi hạ Owner cũ xuống OrgAdmin **trước**, nâng người nhận lên OrgOwner **sau** (unique index "một Owner" không deferrable).
+
+Xóa Organization (M7) là thao tác đồng bộ của OrgOwner. Guard: không còn row `workspaces` nào của Organization (Workspace `Deleted` vẫn giữ row tới khi CIDR hết quarantine, `02-data-model.md` mục 4) và không còn DedicatedNodeGrant (Admin thu hồi trước), sai thì `409 ORGANIZATION_NOT_EMPTY`; transaction khóa `organizations` rồi `organization_entitlements` `FOR UPDATE` (thứ tự 02 mục 4) để xếp hàng với tạo Workspace, mời member, tạo group. Trong cùng transaction: trạng thái `Deleted`, xóa các ClusterGrant, hủy invitation và transfer đang chờ, tombstone group và group member để Group Sync gỡ khỏi Keycloak; audit. Organization `Deleted` trả 404 ở mọi endpoint.
+
 ### 16.2 Invitation/member/group
 
 ```text
 GET    /api/v1/organizations/{orgId}/members
+GET    /api/v1/organizations/{orgId}/invitations           # M4, invitation đang chờ (không kèm link)
 POST   /api/v1/organizations/{orgId}/invitations
+DELETE /api/v1/invitations/{invitationId}                  # M4, revoke; OrgOwner/OrgAdmin
+GET    /api/v1/invitations/{token}                         # M4, xem trước cho invitee đang login; không accept
 POST   /api/v1/invitations/{token}:accept
 PATCH  /api/v1/organizations/{orgId}/members/{userId}
 DELETE /api/v1/organizations/{orgId}/members/{userId}
@@ -1331,6 +1400,8 @@ PUT    /api/v1/groups/{groupId}/members/{userId}
 DELETE /api/v1/groups/{groupId}/members/{userId}
 ```
 
+Endpoint mời và group trả `409 ORG_NOT_ACTIVE` khi Organization chưa `Active`. Giới hạn entitlement được kiểm dưới lock row `organization_entitlements`: `maxMembers` lúc tạo invitation và lúc accept, `maxGroups` lúc tạo group (group tombstone không tính); vượt thì `409 ENTITLEMENT_EXCEEDED`.
+
 ### 16.3 Cluster, compute và network catalog
 
 ```text
@@ -1340,10 +1411,10 @@ GET    /api/v1/organizations/{orgId}/clusters/{clusterId}/compute-options
 GET    /api/v1/organizations/{orgId}/clusters/{clusterId}/shared-pools
 GET    /api/v1/organizations/{orgId}/clusters/{clusterId}/dedicated-nodes
 GET    /api/v1/organizations/{orgId}/clusters/{clusterId}/network-pools
-GET    /api/v1/network-pools/{poolId}/availability
+GET    /api/v1/organizations/{orgId}/network-pools/{poolId}/availability   # M9, chỉ pool nằm trong grant của Org
 ```
 
-Các endpoint này chỉ trả resource nằm trong ClusterGrant của Organization. `dedicated-nodes` không trả system labels/annotations nhạy cảm; nó trả reservable/reserved/remaining CPU-RAM-Pod và health/capacity state. UI mặc định filter node `Ready` còn đủ capacity cho allocation user đang nhập.
+Các endpoint này chỉ trả resource nằm trong ClusterGrant của Organization và chỉ OrgOwner/OrgAdmin đọc được (OrgMember không thấy Clusters, 9.2). Ở M5 `dedicated-nodes` trả reserved = 0 cho tới khi có reservation ở M8. `dedicated-nodes` không trả system labels/annotations nhạy cảm; nó trả reservable/reserved/remaining CPU-RAM-Pod và health/capacity state. UI mặc định filter node `Ready` còn đủ capacity cho allocation user đang nhập.
 
 Mỗi node card có grant ID/display name, health, capacity state, reservable/reserved/remaining và danh sách Workspace của chính Organization đang giữ reservation. Node `PartiallyAllocated` vẫn chọn được; `FullyAllocated`, `Overcommitted`, `NotReady` hoặc `Cordoned` bị disable kèm lý do.
 
@@ -1356,6 +1427,9 @@ GET    /api/v1/organizations/{orgId}/workspaces
 GET    /api/v1/workspaces/{workspaceId}
 PATCH  /api/v1/workspaces/{workspaceId}
 DELETE /api/v1/workspaces/{workspaceId}
+POST   /api/v1/workspaces/{workspaceId}:cordon          # M7, OrgOwner/OrgAdmin
+POST   /api/v1/workspaces/{workspaceId}:uncordon        # M7, OrgOwner/OrgAdmin
+GET    /api/v1/workspaces/{workspaceId}/operations      # M7, lịch sử Operation của Workspace
 
 GET    /api/v1/workspaces/{workspaceId}/bindings
 PUT    /api/v1/workspaces/{workspaceId}/bindings/{groupId}
@@ -1376,20 +1450,23 @@ Dedicated Workspace create request minh họa:
 
 ```json
 {
-  "name": "water-prod",
+  "slug": "water",
+  "displayName": "Water",
   "clusterId": "cluster-a",
   "compute": {
     "mode": "Dedicated",
     "dedicatedNodeGrantId": "nodegrant-a1"
   },
   "resources": {
-    "requestsCpu": "8",
-    "requestsMemory": "16Gi",
-    "pods": 80,
-    "namespaceQuota": 6
+    "requestsCpu": "4",
+    "requestsMemory": "8Gi",
+    "pods": 40,
+    "requestsStorage": "10Gi",
+    "namespaceQuota": 2
   },
+  "namespaces": ["api"],
   "network": {
-    "networkPoolId": "acme-cluster-a-network",
+    "networkPoolId": "onboarding-pod-network",
     "allocationMode": "Auto"
   },
   "bindings": [
@@ -1399,34 +1476,52 @@ Dedicated Workspace create request minh họa:
 }
 ```
 
-Client gửi grant ID, không gửi raw node label, kube-apiserver URL hoặc tùy ý một node name. API resolve grant và revalidate ownership/state trong transaction. Trường `network` mặc định `allocationMode: Auto` (prefix theo pool default); `prefixLength`/`requestedCidr` là optional advanced.
+Client gửi grant ID, không gửi raw node label, kube-apiserver URL hoặc tùy ý một node name. API resolve grant và revalidate ownership/state trong transaction. Trường `network` (dùng từ M9) mặc định `allocationMode: Auto` (prefix theo pool default); `prefixLength`/`requestedCidr` là optional advanced. Shared mode gửi `compute: {mode: Shared, sharedPoolId}`.
 
-Với Dedicated mode, API coi `requestsCpu`/`requestsMemory` là phần capacity cần reserve và tự đặt limits bằng requests; request bị từ chối nếu client gửi limits khác. Với Shared mode, client có thể chọn limits theo ratio policy của pool.
+Tên trường theo `backend/openapi/tenantry.v1.yaml` (cùng tên với `GrantResources`: `requestsCpu`, `requestsMemory`, `limitsCpu`, `limitsMemory`, `pods`, `requestsStorage`). `namespaces` là tùy chọn: danh sách hậu tố tạo cùng Workspace, tính vào `namespaceQuota`.
+
+Với Dedicated mode, API coi `requestsCpu`/`requestsMemory`/`pods` là phần capacity cần reserve và tự đặt limits bằng requests; request bị từ chối nếu client gửi limits khác. Với Shared mode, client đặt `limitsCpu`/`limitsMemory` ≥ requests; trần là quota limits của grant, không có tỷ lệ limits/requests theo pool.
+
+`PATCH`, `DELETE` và cordon/uncordon khi Workspace còn Operation `Pending`/`Running`/`Blocked` (đang `Provisioning`/`Updating`/`Deleting`) trả `409 WORKSPACE_NOT_READY`; không có hủy. Muốn bỏ một lần tạo đang chạy thì chờ `Failed` rồi `DELETE` (state machine: `architecture/04-state-machines.md` mục 1).
 
 ### 16.5 Operation và admin
 
 ```text
 GET    /api/v1/operations/{operationId}
-POST   /api/v1/operations/{operationId}:retry
+GET    /api/v1/operations/{operationId}/events     # M7, SSE, cùng payload với GET operation; portal fallback poll 2s
+POST   /api/v1/operations/{operationId}:retry      # nhận Operation Failed hoặc Blocked; OrgOwner/OrgAdmin/Platform Admin
+POST   /api/v1/operations/{operationId}:force      # chỉ Platform Admin: bỏ qua finalizer/PVC kẹt khi delete
 
 GET    /api/v1/admin/organizations                 # ?status=Pending cho hàng đợi duyệt
-POST   /api/v1/admin/organizations/{orgId}:approve # kèm ClusterGrant (mặc định từ onboarding policy)
+GET    /api/v1/admin/organizations/{orgId}         # M5, entitlement + ClusterGrant + usage (cùng số với /usage)
+POST   /api/v1/admin/organizations/{orgId}:approve # kèm entitlement + ClusterGrant (điền sẵn từ onboarding policy)
 POST   /api/v1/admin/organizations/{orgId}:reject  # kèm lý do → review_note
 POST   /api/v1/admin/organizations                 # tạo Org cho khách: slug, owner (email/user), entitlement, ClusterGrant ban đầu
 PUT    /api/v1/admin/organizations/{orgId}/entitlement
-POST   /api/v1/operations/{operationId}:force      # admin only: bỏ qua finalizer/PVC kẹt khi delete
+POST   /api/v1/admin/users/{userId}:disable        # M5, users.status=Disabled + xóa phiên; Group Sync tắt account trên Keycloak
+POST   /api/v1/admin/users/{userId}:enable         # M5
+GET    /api/v1/admin/operations                    # M5, ?state=; Operation của mọi Organization và của Cluster
 GET    /api/v1/admin/clusters
 POST   /api/v1/admin/clusters
-PATCH  /api/v1/admin/clusters/{clusterId}
+PATCH  /api/v1/admin/clusters/{clusterId}          # gồm trạng thái, kể cả Registered → Ready (đặt tay trong MVP)
+GET    /api/v1/admin/onboarding-policy             # M5
 PUT    /api/v1/admin/onboarding-policy
+GET    /api/v1/admin/cluster-grants                # M5, mọi grant của mọi Organization
 PUT    /api/v1/admin/organizations/{orgId}/cluster-grants/{clusterId}
 DELETE /api/v1/admin/organizations/{orgId}/cluster-grants/{clusterId}
-PUT    /api/v1/admin/organizations/{orgId}/cluster-grants/{clusterId}/dedicated-nodes   # trả operation: operator kiểm node rồi mới gắn label/taint
+PUT    /api/v1/admin/organizations/{orgId}/cluster-grants/{clusterId}/dedicated-nodes   # M5 chỉ ghi DB; từ M6 trả Operation node.grant/node.revoke; từ M8 operator kiểm node rồi mới gắn label/taint
 GET    /api/v1/admin/clusters/{clusterId}/nodes                       # danh sách node operator báo về: tự do, thuộc pool nào, dedicated cho ai
+GET    /api/v1/admin/clusters/{clusterId}/shared-pools                # M5
 POST   /api/v1/admin/clusters/{clusterId}/shared-pools
-PUT    /api/v1/admin/clusters/{clusterId}/shared-pools/{poolId}       # ratio, system reserve, danh sách node; đổi node thì trả operation
+PUT    /api/v1/admin/clusters/{clusterId}/shared-pools/{poolId}       # overcommit ratio, system reserve, danh sách node; M5 chỉ ghi DB, từ M6 đổi node trả Operation sharedpool.update
+GET    /api/v1/admin/clusters/{clusterId}/network-pools               # M5
 POST   /api/v1/admin/clusters/{clusterId}/network-pools
+PATCH  /api/v1/admin/clusters/{clusterId}/network-pools/{poolId}      # M5
 ```
+
+`requirePlatformAdmin` chặn mọi đường dẫn `/api/v1/admin/`; `:force` nằm ngoài tiền tố đó nên service tự kiểm `platform-admin`. Id của shared pool và NetworkPool là DNS label do Admin đặt, duy nhất toàn platform; `system` bị cấm vì là label của system pool.
+
+Sửa entitlement (`PUT .../entitlement`): mỗi giới hạn phải ≥ số đang dùng và `maxGroups` ≥ 3, sai thì `409 ENTITLEMENT_BELOW_USAGE`. Quy tắc sửa và xóa grant ở 5.5.
 
 Endpoint dành cho Phase 2 (Cluster Agent):
 
@@ -1436,9 +1531,11 @@ GET    /internal/v1/clusters/{clusterId}/assignments
 POST   /internal/v1/clusters/{clusterId}/workspace-status
 ```
 
-API mutation trả operation ID nếu có Kubernetes reconciliation. Error có stable code; danh sách đầy đủ là enum `ErrorCode` trong `backend/openapi/tenantry.v1.yaml`. Ví dụ:
+API mutation trả operation ID nếu có Kubernetes reconciliation. Error có stable code; danh sách đầy đủ là enum `ErrorCode` trong `backend/openapi/tenantry.v1.yaml`, thêm dần theo endpoint. Vượt giới hạn dùng **một mã cho mỗi lớp**, chi tiết nằm trong `details`:
 
-- `CLUSTER_GRANT_CPU_QUOTA_EXCEEDED`;
+- `CLUSTER_GRANT_QUOTA_EXCEEDED` — vượt quota của ClusterGrant; `details.resource` (`requestsCpu`, `limitsMemory`, `pods`, `storage`, `workspaces`, `namespaces`…), `details.limit`, `details.allocated`, `details.requested`;
+- `ENTITLEMENT_EXCEEDED` — vượt global entitlement; `details.limit` = `maxMembers` | `maxGroups` | `maxWorkspacesTotal`;
+- `ENTITLEMENT_BELOW_USAGE` — Admin hạ entitlement dưới số đang dùng hoặc `maxGroups` < 3;
 - `CLUSTER_GRANT_BELOW_ALLOCATION`;
 - `ORG_NOT_ACTIVE`;
 - `CLUSTER_NOT_GRANTED`;
@@ -1461,20 +1558,22 @@ Một quy tắc xuyên suốt: nếu provisioning thất bại sau khi DB đã c
 
 ### 17.1 Create workflow
 
-1. authorize OrgOwner/OrgAdmin;
-2. validate Workspace name;
+Mọi bước 1–10 chạy trong transaction của request, đã giành `Idempotency-Key` ngay đầu transaction.
+
+1. authorize OrgOwner/OrgAdmin; Organization phải `Active` (`409 ORG_NOT_ACTIVE`; thứ tự kiểm 404 → 403 → 409, xem 9.2);
+2. validate Workspace slug theo 4.4 (unique và không lồng tiền tố với Workspace khác của Organization; sai thì `409 SLUG_TAKEN`);
 3. validate Cluster thuộc ClusterGrant và đang `Ready`;
 4. validate compute mode dùng được: Shared cần shared pool trong grant, Dedicated cần node grant của Organization;
 5. Shared: validate shared pool; Dedicated: validate node grant `Ready` và remaining capacity;
 6. validate at least một Owner group;
 7. validate group thuộc Organization và đã sync Keycloak;
-8. validate global entitlement và ClusterGrant: số Workspace, Namespace, storage cho mọi mode; CPU/RAM/Pod chỉ với Shared;
-9. trong một database transaction, lock ClusterGrant, DedicatedNodeGrant nếu có và NetworkPool allocation range;
-10. tạo ClusterGrant reservation, NodeReservation nếu Dedicated, NetworkAllocation, Workspace, Operation và outbox; commit tất cả hoặc không commit gì;
+8. validate global entitlement (`maxWorkspacesTotal`, `409 ENTITLEMENT_EXCEEDED`) và ClusterGrant (`409 CLUSTER_GRANT_QUOTA_EXCEEDED`): số Workspace, Namespace, storage cho mọi mode; CPU/RAM/Pod chỉ với Shared;
+9. lock theo thứ tự cố định ở [`architecture/02-data-model.md`](architecture/02-data-model.md) mục 4: `organization_entitlements` → Cluster (`FOR SHARE`) → ClusterGrant → shared pool (Shared, luôn khóa vì pool dùng chung giữa nhiều grant) hoặc DedicatedNodeGrant (Dedicated) → NetworkPool (từ M9); kiểm lại invariant 5.3 dưới lock;
+10. ghi Workspace (các cột allocation của nó chính là phần giữ chỗ trên ClusterGrant, không có row reservation riêng; CPU/RAM/Pod chỉ tính khi Shared), NodeReservation `Pending` nếu Dedicated, NetworkAllocation (từ M9), binding, các Namespace tùy chọn trong body, Operation và outbox; commit tất cả hoặc không commit gì;
 11. provisioning worker apply PlatformWorkspace CR vào Cluster;
-12. controller cấu hình node nếu Dedicated và tạo Capsule Tenant, ResourcePool, IPPool, RBAC, policy;
-13. đợi Tenant/Network/Node conditions Ready;
-14. chạy synthetic verification trong đúng Cluster;
+12. controller cấu hình node nếu Dedicated và tạo Capsule Tenant (kèm quota chung), IPPool, RBAC, policy (mỗi phần có từ milestone của nó, xem 25);
+13. đợi mọi Condition áp dụng được chuyển True; Condition của sub-reconciler chưa xây ở milestone hiện tại thì không set và không bắt buộc (`architecture/04-state-machines.md` mục 1.2);
+14. chạy synthetic verification trong đúng Cluster (từ M11);
 15. chuyển Workspace `Ready`;
 16. portal bật kubeconfig/Headlamp link.
 
@@ -1485,12 +1584,12 @@ Cho phép:
 - display name/description;
 - tăng/giảm resource nếu validation pass;
 - Namespace quota;
-- add/remove group binding;
-- đổi Shared pool trong cùng Cluster nếu có explicit validation/drain flow;
-- policy profile trong catalog.
+- add/remove group binding.
 
 Không cho đổi trực tiếp:
 
+- shared pool của Workspace (cần flow drain riêng, ngoài MVP);
+- policy profile (chưa có catalog trong MVP);
 - immutable Workspace ID/slug dùng trong resource name;
 - Cluster của Workspace;
 - Shared ↔ Dedicated mode sau khi workload đã chạy, trừ khi xây migration flow riêng;
@@ -1499,53 +1598,56 @@ Không cho đổi trực tiếp:
 - Organization owner của Workspace;
 - remove Owner cuối cùng.
 
-Resize Dedicated Workspace phải lock đúng DedicatedNodeGrant và cập nhật NodeReservation trong cùng transaction với ClusterGrant reservation. Tăng chỉ hợp lệ khi node còn đủ CPU/RAM/Pod; giảm chỉ hợp lệ khi ResourcePool usage/claim cho phép và controller đã reconcile quota mới an toàn.
+Resize lock cùng thứ tự với create (bước 9 của 17.1). Với Dedicated: tăng chỉ hợp lệ khi node còn đủ CPU/RAM/Pod, NodeReservation được nâng ngay trong transaction PATCH; giảm chỉ hợp lệ khi usage của quota chung/claim cho phép, và NodeReservation **giữ số cũ** cho tới khi Operation update `Succeeded` (số trong DB không bao giờ thấp hơn `hard` đang áp trong Cluster).
 
 ### 17.3 Cordon
 
-OrgOwner hoặc PlatformAdmin có thể cordon Workspace. Capsule chặn customer mutation nhưng workload đang chạy vẫn tồn tại. Dùng cho maintenance/demo lifecycle, không liên quan payment.
+OrgOwner hoặc OrgAdmin cordon/uncordon Workspace qua `POST /workspaces/{id}:cordon|:uncordon` (M7); Platform Admin không có endpoint này (khẩn cấp thì dùng kubectl). API ghi `spec.cordoned` vào CR và tạo Operation `workspace.cordon`/`workspace.uncordon`; Workspace thành `Cordoned` (hoặc về `Ready`) khi Operation `Succeeded`. Capsule chặn customer mutation nhưng workload đang chạy vẫn tồn tại. Dùng cho maintenance/demo lifecycle, không liên quan payment.
 
 ### 17.4 Delete workflow
 
 Chính sách dữ liệu: **delete là xóa ngay và xóa hết**, gồm Namespace, workload và PVC (dữ liệu mất, reclaim policy `Delete`). Không có grace period trong MVP (soft-delete/restore là stretch). UI yêu cầu gõ lại tên Workspace và liệt kê số Namespace/PVC sẽ mất trước khi cho xác nhận.
 
-1. yêu cầu nhập lại Workspace name, hiển thị danh sách Namespace và PVC sẽ bị xóa;
-2. cordon;
-3. revoke Workspace binding/access;
-4. xóa Namespace/workload; PVC bị xóa theo Namespace;
-5. đợi finalizer/PV release — nếu kẹt quá ngưỡng, operation chuyển `Blocked` kèm object đang giữ; OrgOwner chỉ có thể chờ/retry, **chỉ Platform Admin được `:force`** (xóa finalizer) và hành động này được audit;
-6. đợi Calico release;
-7. đợi Pod của Workspace rời dedicated node;
-8. xóa membership label và NodeReservation của Workspace; tính lại remaining capacity của node;
-9. xóa IPPool/Certificate/Tenant/ResourcePool/RBAC;
-10. quarantine CIDR;
-11. release ClusterGrant resource reservation;
-12. giữ audit/tombstone (kể cả `k8s_name` để không tái sử dụng tên trong thời gian quarantine);
-13. mark `Deleted`.
+1. UI hiển thị danh sách Namespace và PVC sẽ bị xóa, user gõ lại slug Workspace (`water`);
+2. API, trong một transaction: Workspace `Deleting`, NodeReservation `Releasing`, NetworkAllocation `Releasing`, Operation `workspace.delete`, outbox, audit. Mọi phần giữ chỗ vẫn tính vào tổng cho tới bước 11;
+3. worker xóa CR `PlatformWorkspace` (propagation `Background`); finalizer `tenantry.io/workspace` của controller chạy bước 4–10;
+4. gỡ owners của Tenant và các RoleBinding Developer/Viewer — tenant mất quyền trước khi dữ liệu bị xóa;
+5. bỏ `cordoned` trên Tenant nếu đang bật (ở lab cũ, cordon của Capsule chặn cả lệnh ghi của controller; kiểm lại trên Capsule 0.15.x ở M6);
+6. xóa mọi Namespace của Tenant (cả nguồn portal và kubectl) và đợi chúng biến mất; PVC bị xóa theo Namespace. Kẹt quá ngưỡng thì condition `Deleting=False` reason `BlockedByFinalizer` kèm object đang giữ, Operation `Blocked`; OrgOwner/OrgAdmin chỉ có thể chờ hoặc `:retry`, **chỉ Platform Admin được `:force`** (xóa finalizer) và hành động này được audit;
+7. xóa TenantResource và Tenant một cách tường minh rồi đợi xong — owner reference chỉ là lưới an toàn;
+8. (từ M9) IPPool: đợi không còn WorkloadEndpoint và không còn địa chỉ nào đang dùng trong CIDR, xóa IPPool qua API `projectcalico.org/v3`, đợi các IPAMBlock của nó biến mất;
+9. (Dedicated, từ M8) gỡ membership label `workspaces.tenantry.io/<ws-id>` khỏi node; giữ label/taint Organization và label của Workspace khác;
+10. gỡ finalizer, CR biến mất;
+11. worker thấy CR mất, trong một transaction: NodeReservation `Released` (remaining của node tăng lại), NetworkAllocation `Quarantined` (từ M9), Workspace `Deleted`, Operation `Succeeded`, audit. Phần giữ chỗ trên ClusterGrant tự giảm vì Workspace `Deleted` không còn nằm trong `SUM`;
+12. trong lúc CIDR còn `Quarantined`, `k8s_name` chưa dùng lại được; CIDR `Released` (trước M9: ngay khi Workspace `Deleted`) thì row Workspace bị xóa hẳn, lịch sử nằm ở `audit_events`.
 
 Không silently force-delete PVC/finalizer từ phía user.
 
 ## 18. Controller resource mapping
 
-| Platform object | Kubernetes/Capsule output |
-|---|---|
-| Workspace | Capsule Tenant |
-| Owner binding | Capsule owner group/TenantOwner mapping |
-| Developer binding | additional RoleBinding → custom developer ClusterRole |
-| Viewer binding | additional RoleBinding → custom viewer ClusterRole |
-| Resource allocation | Capsule ResourcePool + LimitRange/quota policy |
-| Namespace quota | `Tenant.spec.namespaceOptions.quota` |
-| Cluster selection | CR chỉ được apply vào đúng Cluster đó |
-| Shared compute | Tenant nodeSelector tới allowed shared pool |
-| Dedicated node selection | NodeReservation + org label/taint + Workspace membership label + Tenant selector |
-| NetworkAllocation | Calico IPPool + Namespace annotation |
-| Network baseline | GlobalTenantResource/TenantResource NetworkPolicy |
-| Storage allow-list | Capsule StorageClass allowed list |
-| Route (`spec.routes`) | Ingress do controller dựng trong Namespace của tenant; ValidatingAdmissionPolicy chặn tenant ghi Ingress và tài nguyên cert-manager |
-| Ingress TLS | một `Certificate` wildcard của apps domain trong namespace ingress, làm cert mặc định của Traefik |
-| Namespace list (`spec.namespaces`) | Namespace có tiền tố `<org>-<ws>-`, owner = Tenant; observed về `status.namespaces` |
-| Security baseline | Capsule rules + Pod Security labels/policy |
-| Proxy access | Capsule Proxy configuration/reflector labels |
+| Platform object | Kubernetes/Capsule output | Từ |
+|---|---|---|
+| Workspace | Capsule Tenant | M6 |
+| Capsule users | CapsuleConfiguration `users` = group `oidc:tenantry:tenant-users` + group `system:serviceaccounts:<namespace của operator>` | M6 |
+| Owner binding | Capsule owner group/TenantOwner mapping; ServiceAccount của operator cũng là owner của mọi Tenant để tạo được Namespace trong `spec.namespaces` | M6 |
+| Developer binding | additional RoleBinding → custom developer ClusterRole | M6 |
+| Viewer binding | additional RoleBinding → custom viewer ClusterRole | M6 |
+| RoleBinding do tenant tự tạo | ValidatingAdmissionPolicy `tenantry-tenant-rolebinding-subjects`: với caller `oidc:`, mọi subject phải là group `oidc:org_<ULID của Organization sở hữu Tenant>:...` hoặc ServiceAccount trong Namespace có tiền tố `<tên Tenant>-`; nhờ vậy contract thu hồi quyền (9.3) đứng vững | M11 |
+| Resource allocation | Quota chung `Tenant.spec.resourceQuotas` scope `Tenant` + LimitRange/quota policy (sub-reconciler `policy`, 5.4) | M7 |
+| Dedicated Guaranteed QoS | LimitRange mỗi Namespace: `default` = `defaultRequest` và `maxLimitRequestRatio: {cpu: 1, memory: 1}` cho Container | M8 |
+| Namespace quota | `Tenant.spec.namespaceOptions.quota` | M6 |
+| Cluster selection | CR chỉ được apply vào đúng Cluster đó | M6 |
+| Shared pool membership | CRD phụ `PlatformSharedPool` → operator gắn/gỡ label node `tenantry.io/compute-pool=<pool-id>` theo `spec.nodes` (trước M6: script `deploy/cluster/10-nodes.sh` gắn tạm) | M6 |
+| Shared compute | Tenant nodeSelector tới shared pool (annotation `PodNodeSelector` trên Namespace) | M8 |
+| Dedicated node selection | NodeReservation + org label/taint (`PlatformNodeGrant`) + Workspace membership label + Namespace annotation `PodNodeSelector` và `PodTolerationRestriction` (`defaultTolerations`, `tolerationsWhitelist` gồm cả `node.kubernetes.io/*`); VAP chỉ cho SA `tenantry-operator` đổi label/taint `tenantry.io/*`, `workspaces.tenantry.io/*` trên Node | M8 |
+| NetworkAllocation | Calico IPPool + Namespace annotation qua `Tenant.namespaceOptions.additionalMetadata`; `forbiddenAnnotations` của Tenant cấm `cni.projectcalico.org/*` và `scheduler.alpha.kubernetes.io/{node-selector,defaultTolerations,tolerationsWhitelist}`; VAP `tenantry-tenant-pod-network` chặn Pod của tenant mang annotation Calico (`ipv4pools`, `ipv6pools`, `ipAddrs`, `ipAddrsNoIpam`, `floatingIPs`) | M9 |
+| Network baseline | TenantResource NetworkPolicy, thuộc sub-reconciler `network` | M9 |
+| Storage allow-list | Capsule StorageClass allowed list (`Tenant.spec.storageClasses.allowed`) | M6 |
+| Route (`spec.routes`) | Ingress do controller dựng trong Namespace của tenant; ValidatingAdmissionPolicy `tenantry-tenant-ingress-lockdown` chặn Ingress và tài nguyên cert-manager **chỉ với caller `oidc:`** (namespace controller và garbage collector vẫn xóa được Ingress khi xóa Namespace) | M11 |
+| Ingress TLS | một `Certificate` wildcard của apps domain trong namespace ingress, làm cert mặc định của Traefik | M1 |
+| Namespace list (`spec.namespaces`) | Namespace `<tên Tenant>-<hậu tố>`, owner = Tenant; observed về `status.namespaces` | M6 |
+| Security baseline | Capsule rules registry/QoS/Service trong Tenant (sub-reconciler `tenant`, M6) + Pod Security label (sub-reconciler `policy`, M7) | M6 |
+| Proxy access | Capsule Proxy configuration/reflector labels | M11 |
 
 Controller gắn managed labels:
 
@@ -1556,6 +1658,7 @@ tenantry.io/workspace-id=<immutable-id>
 tenantry.io/cluster-id=<cluster-id>
 tenantry.io/compute-mode=<shared-or-dedicated>
 tenantry.io/compute-pool=<pool-id>
+tenantry.io/org=<ULID của Organization, đúng dạng trong tên group Keycloak>   # trên Namespace, cho VAP RoleBinding
 ```
 
 Tenant user bị cấm sửa các label/annotation làm basis cho isolation.
@@ -1593,8 +1696,8 @@ Organization switcher
 │   └── Network pools
 └── Audit
 
-Platform Admin (hiện khi token có realm role platform-admin)
-├── Organizations (tạo Org cho khách + gán Owner + grant ban đầu, xem usage)
+Platform Admin (hiện khi `GET /me` trả `isPlatformAdmin: true`; backend vẫn kiểm realm role platform-admin)
+├── Organizations (tạo Org cho khách + gán Owner + grant ban đầu, xem usage, disable/enable user)
 ├── Cluster registry / health
 ├── Onboarding policy
 ├── ClusterGrant assignment
@@ -1606,6 +1709,8 @@ Platform Admin (hiện khi token có realm role platform-admin)
 
 ### 19.1 Create Workspace wizard
 
+Wizard có 7 màn, gom 12 mục dưới đây: (1) Name — mục 1; (2) Cluster và compute — mục 2–5; (3) Resources — mục 6; (4) Network — mục 7; (5) Namespaces — mục 8, kèm danh sách Namespace tùy chọn tạo cùng Workspace; (6) Access — mục 9–10; (7) Review — mục 11–12.
+
 1. name/description;
 2. chọn Cluster trong danh sách được cấp; auto-select nếu chỉ có một (mặc định MVP);
 3. xem remaining quota của ClusterGrant;
@@ -1613,7 +1718,7 @@ Platform Admin (hiện khi token có realm role platform-admin)
 5. Shared: chọn shared pool nếu có nhiều; Dedicated: chọn một node `Ready` còn đủ capacity;
 6. resource allocation và validation theo pool/node đã chọn;
 7. network: mặc định auto-allocate; mục Advanced mới chọn pool/prefix/requested CIDR;
-8. Namespace quota;
+8. Namespace quota và (tùy chọn) hậu tố các Namespace tạo ngay;
 9. chọn Owner groups;
 10. chọn Developer/Viewer groups;
 11. review Cluster/compute/node/network/resources/access;
@@ -1626,7 +1731,7 @@ Wizard phải giải thích:
 - Dedicated node thuộc riêng Organization nhưng capacity có thể chia cho nhiều Workspace của Organization;
 - resource allocation của Dedicated Workspace chính là phần capacity reserve trên node đã chọn;
 - Dedicated mode dùng Guaranteed QoS; portal khóa CPU/RAM limits bằng requests;
-- resource allocation trừ vào ClusterGrant của Organization;
+- Workspace Shared trừ CPU/RAM/Pod vào quota của grant; Workspace Dedicated chỉ trừ vào dung lượng còn lại của node đã chọn; số Workspace, Namespace và storage trừ vào grant với cả hai mode;
 - CIDR không đổi tùy tiện sau khi chạy workload;
 - Owner có thể tạo Namespace, Developer không thể;
 - Workspace không hỗ trợ cluster-scoped resource.
@@ -1652,11 +1757,11 @@ Không chỉ làm happy-path UI.
 ### 20.1 Portal/API
 
 - OIDC Authorization Code + PKCE;
-- HttpOnly/Secure session cookie;
+- cookie phiên và CSRF mang tiền tố `__Host-`, HttpOnly/Secure (Route của tenant trên apps domain cùng site với portal);
 - CSRF protection;
 - validate Organization scope trên server;
 - admin endpoint check realm role `platform-admin` server-side;
-- invitation token hash + expiry + one-time use;
+- invitation token hash + expiry + one-time use; response chứa link mời không được lưu nguyên văn vào kho `Idempotency-Key` (replay trả invitation không kèm link);
 - rate limit login-sensitive/mutation endpoints;
 - audit member/group/Workspace/resource changes;
 - không log token/password/kubeconfig credential;
@@ -1669,6 +1774,7 @@ Không chỉ làm happy-path UI.
 - Capsule user không có cluster-admin;
 - Headlamp ServiceAccount không có workload permission;
 - custom Developer/Viewer role;
+- RoleBinding do tenant tạo chỉ được trỏ tới group của chính Organization hoặc ServiceAccount của chính Tenant (VAP, mục 18);
 - Pod Security baseline/restricted;
 - cấm privileged, hostPath, hostNetwork, hostPID/IPC và unsafe capability;
 - trusted registry allow-list;
@@ -1689,6 +1795,7 @@ Không chỉ làm happy-path UI.
 - OrgMember tự nâng role;
 - user thường gọi admin endpoint;
 - user gán group của Organization khác vào Workspace;
+- TenantOwner tự tạo RoleBinding cho user ngoài Organization, group `oidc:tenantry:tenant-users` hoặc ServiceAccount của Tenant khác;
 - remove Owner cuối cùng;
 - OrgAdmin tự gọi transfer-ownership, xóa Organization hoặc remove OrgOwner;
 - user gửi nhiều yêu cầu tạo Organization cùng lúc để giữ chỗ slug hoặc nhân quota mặc định;
@@ -1696,7 +1803,7 @@ Không chỉ làm happy-path UI.
 - direct API và Capsule Proxy cho kết quả quyền khác nhau ngoài phần filter dự kiến;
 - list Namespace/Node/PV tenant khác;
 - cross-Workspace network;
-- đổi Calico annotation/node selector/toleration;
+- đổi Calico annotation/node selector/toleration, kể cả annotation Calico đặt trên Pod (`ipv4pools`, `ipAddrs`…);
 - tạo privileged Pod hoặc NodePort;
 - tự tạo Ingress hoặc Certificate để chiếm hostname/xin cert cho tên không phải của mình;
 - vượt CPU/RAM/Pod/PVC/Namespace quota;
@@ -1735,8 +1842,9 @@ Không chỉ làm happy-path UI.
 Ghi tối thiểu:
 
 - login/logout nếu có;
-- Organization create/update;
-- invitation accept/revoke;
+- Organization create/update/delete, transfer ownership;
+- invitation create/accept/revoke;
+- user disable/enable bởi Platform Admin;
 - group/member change;
 - Cluster registration/status change;
 - ClusterGrant/shared pool/dedicated node/network assignment bởi PlatformAdmin;
@@ -1755,14 +1863,14 @@ Ghi tối thiểu:
 - user đăng ký/login qua Keycloak;
 - first login chỉ tạo user record; user chưa có org thấy màn xin tạo Organization;
 - user switch Organization nếu thuộc nhiều org;
-- OrgOwner quản lý Organization profile (display name; slug immutable);
+- OrgOwner quản lý Organization profile (display name; slug immutable) và xóa Organization khi không còn Workspace;
 - Organization có đúng một OrgOwner; transfer ownership hai bước;
 - user xin tạo Organization (`Pending`), Platform Admin duyệt kèm grant hoặc từ chối kèm lý do; Admin cũng tạo thẳng Org kèm Owner + grant.
 
 ### FR-02 Member và invitation
 
 - owner mời bằng invite link (email service là stretch);
-- invitation có expiry và one-time token;
+- invitation có expiry và one-time token; owner xem và revoke invitation đang chờ;
 - accept tạo membership;
 - owner remove/change Organization role;
 - member tự rời Organization (trừ Owner).
@@ -1776,10 +1884,10 @@ Ghi tối thiểu:
 
 ### FR-04 Entitlement
 
-- PlatformAdmin cấp max member/group/Workspace toàn platform;
+- PlatformAdmin cấp global entitlement của Organization (`maxMembers`, `maxGroups` ≥ 3, `maxWorkspacesTotal`), áp chung mọi Cluster;
 - PlatformAdmin cấp một hoặc nhiều ClusterGrant, có một default;
-- onboarding policy là grant mặc định điền sẵn khi duyệt yêu cầu tạo Organization;
-- mỗi grant có CPU/RAM/Pod/storage/Workspace/Namespace quota;
+- onboarding policy gồm mẫu entitlement và mẫu grant, điền sẵn khi duyệt yêu cầu tạo Organization;
+- mỗi grant có CPU/RAM/Pod/storage/Workspace/Namespace quota (CPU/RAM/Pod chỉ tính Workspace Shared);
 - mỗi grant chứa allowed shared pool, Organization-dedicated nodes, NetworkPool và StorageClass;
 - Organization xem allocated/remaining theo Cluster.
 
@@ -1875,23 +1983,24 @@ Các con số là target để đo trong đồ án, không phải SLA thương m
 - Keycloak create group/add member/remove member;
 - token group claim;
 - PlatformWorkspace CR apply/status;
-- Capsule Tenant/ResourcePool ready;
+- Capsule Tenant và quota chung ready;
 - Calico IPPool lifecycle;
+- Pod gọi Service của chính Workspace khi Pod đích nằm ở node khác (kube-proxy nhận Pod cục bộ theo interface `cali`, vì CIDR tenant nằm ngoài `clusterCIDR`);
 - PVC provisioning trong quota;
-- Route → Ingress → URL HTTPS; tenant bị chặn ghi Ingress.
+- Route → Ingress → URL HTTPS; tenant bị chặn ghi Ingress; xóa Namespace hoặc Workspace đang có Route vẫn hoàn tất (Ingress bị dọn).
 
 ### 24.3 E2E personas
 
-- **PlatformAdmin** đăng ký Cluster A, cấu hình onboarding policy, shared pool, một dedicated node 8 CPU, NetworkPool và apps domain.
-- **Alice** login, xin tạo Organization `acme`; PlatformAdmin duyệt với grant mặc định; Alice mời Joe/Bob qua invite link.
-- Alice tạo `backend`, `qa`, `admins` group và add member.
-- Alice tạo Shared Workspace Solar qua wizard (Cluster auto-select, network auto-allocate).
-- Joe tải kubeconfig, deploy app có PVC, tạo Route trên portal; QA chỉ xem.
-- Admin nâng quota và cấp dedicated node cho Organization của Alice.
-- Alice tạo Dedicated Workspace Water, chọn node đó và reserve 4 CPU.
-- Alice tạo thêm Dedicated Workspace Green trên cùng node, reserve 2 CPU; node còn 2 CPU.
-- request tạo Workspace thứ ba reserve 3 CPU trên node phải bị từ chối.
-- Pod các Workspace nhận CIDR đúng và node placement đúng mode.
+- **PlatformAdmin** đăng ký Cluster A, cấu hình onboarding policy, shared pool, NetworkPool và apps domain; shared pool `shared-general` ban đầu gồm `wk2` và `wk3` (mỗi node 3 CPU trên lab).
+- **Alice** login, xin tạo Organization `acme`; PlatformAdmin duyệt với grant mặc định; `acme` có ba group mặc định `admins`, `developers`, `viewers`; Alice mời Joe/Bob qua invite link.
+- Alice thêm Joe vào `developers` (Developer), Bob vào `viewers` (Viewer); tạo thêm group `backend`, `qa` để minh họa.
+- Alice tạo Shared Workspace Solar qua wizard: 2 CPU / 4Gi requests, limits 4 CPU / 8Gi (vừa grant mặc định), Cluster auto-select, network auto-allocate; gán `developers` và `viewers` vào Solar.
+- Alice tạo Namespace `frontend` trên portal; Joe tải kubeconfig, deploy app có PVC vào đó; Alice tạo Route trên portal; Bob chỉ xem.
+- Admin nâng grant lên `maxWorkspaces: 4`, `maxNamespacesTotal: 10`, `requestsStorage: 50Gi` (CPU/RAM/Pod giữ nguyên vì Dedicated không trừ vào phần này của grant) rồi bớt `wk3` khỏi shared pool `shared-general` trên portal, drain, uncordon và cấp `wk3` cho `acme` (reservable 2,5 CPU / 10Gi).
+- Alice tạo Dedicated Workspace Water, chọn node đó và reserve 1 CPU / 4Gi.
+- Alice tạo thêm Dedicated Workspace Green trên cùng node, reserve 1 CPU / 4Gi; node còn 0,5 CPU.
+- request tạo Dedicated Workspace thứ ba reserve 1 CPU trên node bị từ chối `DEDICATED_NODE_INSUFFICIENT_CAPACITY`.
+- Pod các Workspace nhận CIDR đúng và node placement đúng mode; Solar và Water không gọi được nhau.
 - Joe không truy cập Workspace không được gán.
 - Alice remove Joe; token mới mất quyền.
 - Alice mở Headlamp từ Workspace mà không nhập lại password nếu SSO còn session.
@@ -1902,14 +2011,15 @@ Các con số là target để đo trong đồ án, không phải SLA thương m
 - Organization A không gọi API của B;
 - Workspace A không đọc K8s resource B;
 - group A không bind vào Workspace B;
+- TenantOwner không tạo được RoleBinding cho user ngoài Organization hoặc cho `oidc:tenantry:tenant-users`;
 - Organization không chọn được Cluster chưa có ClusterGrant;
 - shared mode vẫn network isolated;
 - Dedicated mode không schedule sang node khác; node không chạy tenant workload của Organization khác;
 - tổng Workspace reservations trên node không vượt allocatable sau system reserve;
-- Dedicated workload có Guaranteed QoS và ResourcePool không vượt NodeReservation;
+- Dedicated workload có Guaranteed QoS (container khai requests khác limits bị LimitRange từ chối) và quota chung của Workspace không vượt NodeReservation;
 - direct Kubernetes API không bypass được admission;
 - Headlamp không bypass được Capsule Proxy/RBAC;
-- IPPool, node selector và trusted label không sửa được;
+- IPPool, node selector và trusted label không sửa được; Pod mang annotation Calico bị từ chối;
 - tenant không tạo được Ingress/Certificate, nên không chiếm được hostname của Workspace khác;
 - PVC không vượt storage quota, không dùng StorageClass ngoài allow-list;
 - quota và namespace max được enforce.
@@ -1943,23 +2053,23 @@ Kết quả này là phần đánh giá khoa học/kỹ thuật quan trọng c�
 
 ## 25. Roadmap theo milestone
 
-Thời gian thực hiện linh hoạt (một người làm, quỹ thời gian ~1 năm). Thứ tự milestone là thứ tự dependency, không phải lịch cứng; mỗi milestone có deliverable kiểm chứng được.
+Thời gian thực hiện linh hoạt (một người làm, quỹ thời gian ~1 năm). Thứ tự milestone là thứ tự dependency, không phải lịch cứng (M9 chỉ phụ thuộc M7 nên làm song song với M8 được); mỗi milestone có deliverable kiểm chứng được. Công việc chi tiết từng milestone: `IMPLEMENTATION-PLAN.md` mục 7.
 
 ### Phase 1 — MVP một Cluster
 
-- **M0 — Chốt spec/ADR**: use case/persona, capability/non-goal, data model, threat model, các ADR ở mục 29. *Deliverable: specification và architecture diagram được chốt.*
-- **M1 — Cluster foundation**: chuẩn hóa Cluster demo với system pool, `csi-driver-nfs` (`standard`), Traefik + wildcard DNS `*.mvp.tenantry.site`, cert-manager với Let's Encrypt, PostgreSQL/Keycloak persistent, giữ verification suite hiện tại chạy được. *Deliverable: cluster nền reproducible.*
-- **M2 — Backend skeleton**: Go API, migrations, OpenAPI/error model, user/org/membership tables, operation/outbox framework. *Deliverable: API health + basic Organization CRUD.*
-- **M3 — Portal auth + onboarding**: OIDC client, signup/login/logout, BFF/session, first-login upsert, xin tạo Organization + màn duyệt của Admin, Organization dashboard skeleton. *Deliverable: user mới login xin được org, Admin duyệt, org có quota dùng được.*
-- **M4 — Invitation/member/group**: invite link flow, group CRUD/membership, Keycloak sync worker, group claim mapper, role enforcement. *Deliverable: Alice mời Joe, tạo group, token Joe có group claim.*
-- **M5 — Admin & entitlement**: admin UI/API (realm role), Cluster registry, onboarding policy, ClusterGrant, shared pool/dedicated node/NetworkPool assignment, usage/remaining. *Deliverable: admin cấp và điều chỉnh tài nguyên qua UI.*
-- **M6 — CRD + Controller**: CRD PlatformWorkspace, per-Cluster controller render Capsule Tenant (tên `<org>-<ws>`), `spec.namespaces` → Namespace, owner/developer/viewer binding, custom ClusterRoles, observed `status.namespaces`; provisioning worker apply CR qua scoped credential. *Deliverable: outbox → CR → Capsule Tenant Ready, Namespace từ portal xuất hiện trong cluster.*
-- **M7 — Resource lifecycle**: reservation transaction, Capsule ResourcePool, Namespace quota/baseline, create/update/cordon/delete states, drift/idempotent reconcile. *Deliverable: dynamic Workspace resource enforcement.*
-- **M8 — Compute modes**: shared pool validation, dedicated node reservation state machine, protected labels/taints, admission guard, concurrent reservation tests. *Deliverable: nhiều Dedicated Workspace chung node không overbook.*
-- **M9 — Network/IPAM**: NetworkPool/allocation, overlap protection, Calico IPPool render, annotation lock, baseline policy, delete quarantine. *Deliverable: Workspace nhận CIDR tự động, cross-Workspace traffic bị chặn.*
-- **M10 — Wizard + Namespace UI**: create wizard đầy đủ, group-role selector, capacity preview, operation status UI, Workspace detail, Namespace list/create/delete. *Deliverable: OrgOwner tự phục vụ hoàn toàn trên portal.*
-- **M11 — Access & ingress**: Capsule Proxy public TLS, kubeconfig generation + kubelogin, Headlamp SSO, logout/revoke tests, Route (API, UI, `spec.routes` → Ingress, admission chặn tenant ghi Ingress), demo app có PVC + URL HTTPS thật. *Deliverable: user thao tác data plane bằng kubectl và web, app truy cập được qua URL của Route.*
-- **M12 — Hardening & evaluation**: metrics/dashboard/audit, persona E2E, isolation/tenant-escape suite, concurrency/failure tests, benchmark + baseline comparison, secret/config cleanup. *Deliverable: test report, benchmark, known limitations.*
+- **M0 — Chốt spec/ADR**: use case/persona, capability/non-goal, data model, threat model, các ADR không cần code để quyết (danh sách ở IMPLEMENTATION-PLAN M0; phần còn lại ở M12). *Deliverable: specification và architecture diagram được chốt.*
+- **M1 — Cluster foundation**: dựng mới `deploy/cluster/` chạy một lệnh: system pool, label tạm `tenantry.io/compute-pool=shared-general` cho node shared (script `10-nodes.sh`, operator nhận lại từ M6), `csi-driver-nfs` (`standard`), Traefik + wildcard DNS `*.mvp.tenantry.site`, cert-manager với Let's Encrypt, PostgreSQL/Keycloak persistent, OIDC trên kube-apiserver + `PodNodeSelector`/`PodTolerationRestriction`, Capsule, Capsule Proxy, Headlamp, `make cluster-verify`. *Deliverable: cluster nền reproducible.*
+- **M2 — Backend skeleton**: Go API, migrations, OpenAPI/error model, user/org/membership tables, operation/outbox framework. *Deliverable: API health + xin tạo/đọc/sửa Organization (xóa Organization ở M7).*
+- **M3 — Portal auth + onboarding**: OIDC client, signup/login/logout, BFF/session, first-login upsert, Idempotency-Key/audit/rate limit, xin tạo Organization + màn duyệt của Admin, `/entitlement` và `/usage`, Organization dashboard skeleton. *Deliverable: user mới login xin được org, Admin duyệt, org có quota dùng được.*
+- **M4 — Invitation/member/group**: invite link flow (list, revoke, xem trước), member/leave, transfer ownership trong app, group CRUD/membership, kiểm `maxMembers`/`maxGroups`, Group Sync Worker + client `tenantry-sync`, role enforcement. *Deliverable: Alice mời Joe, tạo group, token Joe có group claim.*
+- **M5 — Admin & entitlement**: admin UI/API (realm role), Cluster registry (trạng thái đặt tay), onboarding policy, entitlement, ClusterGrant, shared pool/dedicated node/NetworkPool và danh sách node (chỉ ghi DB, operator thực thi từ M6/M8), admin xem Org/grant/Operation, disable/enable user, catalog 16.3 phía Org. Guard sửa grant cần bảng của milestone sau được thêm ở M7 (tổng Workspace/Namespace/resource, xóa grant), M8 (gỡ shared pool, bớt node của pool, dedicated node), M9 (gỡ NetworkPool). *Deliverable: admin cấp và điều chỉnh tài nguyên qua UI.*
+- **M6 — CRD + Controller**: CRD PlatformWorkspace và ba CRD phụ `PlatformNodeGrant`/`PlatformSharedPool`/`PlatformNodeInventory` (operator nhận việc gắn label shared pool từ script), per-Cluster controller render Capsule Tenant (tên `<org>-<ws>`), Capsule users thêm group ServiceAccount của operator (SA là owner mọi Tenant), `spec.namespaces` → Namespace, owner/developer/viewer binding, custom ClusterRoles, observed `status.namespaces`; provisioning worker apply CR qua scoped credential. *Deliverable: outbox → CR → Capsule Tenant Ready, Namespace từ portal xuất hiện trong cluster.*
+- **M7 — Resource lifecycle**: transaction giữ chỗ trên grant, quota chung của Tenant, LimitRange, Namespace quota, Pod Security, create/update/cordon/delete states, retry cả Operation `Blocked`, SSE operation, xóa Organization, drift/idempotent reconcile. *Deliverable: dynamic Workspace resource enforcement.*
+- **M8 — Compute modes**: shared pool validation + Tenant nodeSelector, dedicated node reservation state machine, `PlatformNodeGrant` gắn label/taint, annotation `PodTolerationRestriction`, LimitRange Guaranteed QoS cho Dedicated, VAP bảo vệ label/taint node, concurrent reservation tests. *Deliverable: nhiều Dedicated Workspace chung node không overbook.*
+- **M9 — Network/IPAM**: bước đầu tiên đổi kube-proxy sang `detectLocalMode: InterfaceNamePrefix` (`cali`) trước khi có IPPool tenant; NetworkPool/allocation, overlap protection, Calico IPPool render, annotation lock + VAP chặn annotation Calico trên Pod, baseline NetworkPolicy (sub-reconciler `network`), delete quarantine, endpoint availability theo Organization. Workspace tạo ở M6–M8 chưa có CIDR riêng và chưa cô lập mạng. *Deliverable: Workspace nhận CIDR tự động, cross-Workspace traffic bị chặn, Service cùng Workspace gọi được qua hai node.*
+- **M10 — Wizard + Namespace UI**: create wizard 7 màn (19.1), group-role selector, capacity preview, operation status UI, Workspace detail, Namespace list/create/delete, trang Audit phía Org. *Deliverable: OrgOwner tự phục vụ hoàn toàn trên portal.*
+- **M11 — Access & ingress**: Capsule Proxy public TLS, kubeconfig generation + kubelogin, Headlamp SSO, logout/revoke tests, VAP chặn RoleBinding trỏ ra ngoài Organization, Route (API, UI, `spec.routes` → Ingress, VAP chặn caller `oidc:` ghi Ingress/cert-manager), synthetic verification, demo app có PVC + URL HTTPS thật. *Deliverable: user thao tác data plane bằng kubectl và web, app truy cập được qua URL của Route.*
+- **M12 — Hardening & evaluation**: metrics/dashboard/audit, persona E2E, isolation/tenant-escape suite, concurrency/failure tests, benchmark + baseline comparison, secret/config cleanup, các ADR còn lại (kể cả 21–22). *Deliverable: test report, benchmark, known limitations.*
 
 ### Phase 2 — Multi-cluster
 
@@ -1989,7 +2099,7 @@ Thời gian thực hiện linh hoạt (một người làm, quỹ thời gian ~1
 - invitation link/member/group + Keycloak group claim;
 - Workspace create qua portal wizard;
 - Owner/Developer/Viewer group binding;
-- Capsule Tenant + ResourcePool;
+- Capsule Tenant + quota chung;
 - Shared/Dedicated compute và per-Workspace capacity reservation trên Organization-dedicated node;
 - dynamic CIDR/IPPool (auto-allocate);
 - Namespace UI trên portal;
@@ -2014,9 +2124,9 @@ Demo được toàn bộ flow không sửa YAML thủ công:
 1. PlatformAdmin đăng ký Cluster, cấu hình onboarding policy, quota, pools, nodes, network;
 2. Alice login qua Keycloak, xin tạo Organization; Admin duyệt và Organization có quota mặc định;
 3. Alice mời Joe và Bob qua invite link;
-4. Alice tạo group, add member;
-5. Alice tạo Shared Workspace qua wizard; platform tạo Capsule Tenant/ResourcePool/IPPool/RBAC;
-6. Joe tải kubeconfig và deploy workload có PVC, tạo Route trên portal để có URL;
+4. Alice tạo group, add member: Joe vào `developers` (Developer), Bob vào `viewers` (Viewer);
+5. Alice tạo Shared Workspace qua wizard và gán `developers`, `viewers`; platform tạo Capsule Tenant (kèm quota chung)/IPPool/RBAC;
+6. Alice tạo Namespace; Joe tải kubeconfig và deploy workload có PVC vào đó; Alice tạo Route trên portal để có URL;
 7. Bob Viewer không sửa được workload;
 8. user mở Headlamp từ portal qua SSO;
 9. Pod có IP đúng CIDR và chạy đúng shared pool;
@@ -2045,30 +2155,32 @@ Demo được toàn bộ flow không sửa YAML thủ công:
 
 - Alice đăng ký mới, login, thấy màn trống và xin tạo Organization `acme`;
 - PlatformAdmin duyệt với grant mặc định từ onboarding policy; `acme` chuyển `Active` kèm group `admins`, `developers`, `viewers`;
-- Alice mời Joe/Bob qua invite link.
+- Alice mời Joe/Bob qua invite link; Joe vào `developers`, Bob vào `viewers`.
 
 ### Phần 3 — Workspace Shared
 
-- tạo Workspace Solar qua wizard: Shared → 4 CPU/8 GiB → network auto-allocate;
-- gán group roles;
+- tạo Workspace Solar qua wizard: Shared → 2 CPU/4 GiB requests, limits 4 CPU/8 GiB (vừa grant mặc định) → network auto-allocate;
+- gán `developers` = Developer, `viewers` = Viewer;
 - xem operation từ Provisioning tới Ready.
 
 ### Phần 4 — Data plane
 
-- Joe tải kubeconfig/login OIDC;
-- deploy app có PVC, tạo Namespace và Route từ portal, mở URL thật;
+- Alice tạo Namespace `frontend` trên portal;
+- Joe tải kubeconfig/login OIDC, deploy app có PVC vào `frontend`;
+- Alice tạo Route trên portal, mở URL thật;
 - mở Headlamp từ portal;
 - Bob chỉ xem;
 - thử policy violation và bị deny.
 
 ### Phần 5 — Admin và Dedicated compute
 
-- PlatformAdmin nâng quota, cấp dedicated node 8 CPU cho Organization;
-- xem Pod IP thuộc Solar CIDR; chứng minh cross-Workspace traffic bị chặn;
-- tạo Workspace Water: Dedicated → chọn node → reserve 4 CPU;
-- tạo Workspace Green trên cùng node → reserve 2 CPU;
-- chứng minh Pod Water/Green chỉ chạy trên node đó và node còn 2 CPU;
-- thử tạo Workspace yêu cầu 3 CPU và bị từ chối kèm error code;
+- PlatformAdmin nâng grant lên `maxWorkspaces: 4`, `maxNamespacesTotal: 10`, `requestsStorage: 50Gi` (CPU/RAM/Pod giữ nguyên vì Dedicated không trừ vào phần này của grant);
+- PlatformAdmin bớt `wk3` khỏi shared pool `shared-general` trên portal (Pod Shared dời sang `wk2` sau khi drain), uncordon rồi cấp `wk3` cho `acme`: allocatable 3 CPU / ~11,5Gi, system reserve 0,5 CPU / 1,5Gi → reservable 2,5 CPU / 10Gi;
+- tạo Workspace Water: Dedicated → chọn node → reserve 1 CPU / 4Gi;
+- xem Pod IP thuộc CIDR của Solar và Water; chứng minh traffic Solar ↔ Water bị chặn;
+- tạo Workspace Green trên cùng node → reserve 1 CPU / 4Gi;
+- chứng minh Pod Water/Green chỉ chạy trên node đó và node còn 0,5 CPU;
+- thử tạo Dedicated Workspace thứ ba yêu cầu 1 CPU và bị từ chối `DEDICATED_NODE_INSUFFICIENT_CAPACITY`;
 - chứng minh resource/namespace quota.
 
 ### Phần 6 — Lifecycle và evaluation
@@ -2132,8 +2244,8 @@ Mỗi ADR ghi context, decision, alternatives, consequences và validation/test.
 8. Platform Admin đăng ký Cluster có sẵn; platform không tạo Kubernetes cluster;
 9. tên gọi thống nhất `Cluster` ở mọi nơi (code/DB/API/UI);
 10. MVP một Cluster; data model/API multi-cluster từ đầu; Organization có một hoặc nhiều ClusterGrant và đúng một default;
-11. onboarding policy là grant mặc định điền sẵn khi Admin duyệt yêu cầu tạo Organization, trên default Cluster;
-12. ClusterGrant giới hạn resource/Workspace/shared pool/dedicated node/network/StorageClass theo Cluster;
+11. onboarding policy gồm mẫu entitlement và mẫu grant, điền sẵn khi Admin duyệt yêu cầu tạo Organization, trên default Cluster;
+12. ClusterGrant giới hạn resource/Workspace/shared pool/dedicated node/network/StorageClass theo Cluster; CPU/RAM/Pod của grant chỉ tính Workspace Shared;
 13. Dedicated Workspace chọn đúng một granted node trong MVP và reserve CPU/RAM/Pod; nhiều Workspace cùng org có thể dùng node nếu còn capacity;
 14. mỗi Workspace có Calico IPPool cấp từ NetworkPool, auto-allocate mặc định;
 15. Workspace không migrate Cluster trong scope đồ án;
@@ -2149,7 +2261,7 @@ Mỗi ADR ghi context, decision, alternatives, consequences và validation/test.
 25. tên sản phẩm `Tenantry`; API group/label prefix `tenantry.io`;
 26. user xin tạo Organization (`Pending`, tối đa một yêu cầu mỗi user), Admin duyệt kèm grant hoặc từ chối kèm lý do; Admin cũng tạo thẳng Org kèm Owner + grant;
 27. mỗi Organization đúng một OrgOwner, transfer hai bước; nhiều OrgAdmin;
-28. tên Kubernetes-visible `<org-slug>-<ws-slug>`; cả hai slug immutable; label mang immutable ID;
+28. tên Kubernetes-visible `<org-slug>-<ws-slug>`; cả hai slug immutable; slug Organization không chứa `-`; label mang immutable ID;
 29. app ra ngoài qua Route do platform dựng Ingress; hostname `<tên>-<org>-<ws>.<apps domain>`, một wildcard cert Let's Encrypt chung; tenant không ghi Ingress;
 30. Shared pool soft allocation với `allocationOvercommitRatio` per pool; Dedicated hard reservation;
 31. delete Workspace xóa ngay kể cả PVC, confirm gõ tên; chỉ Admin được force finalizer;

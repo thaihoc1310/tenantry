@@ -1,7 +1,7 @@
 # 05 — Network, scheduling, ingress, access và storage
 
 > Nơi định nghĩa cho node layout, capacity model, IP plan, NetworkPolicy, Route/Ingress/TLS và storage; quy tắc nghiệp vụ nền ở `PRODUCT-PLAN.md` mục 6, 7, 11, 12, 18. Sơ đồ kế thừa cách làm của lab bản đầu (nhánh `feat/tenantry-scaffold`) (Calico IPPool `Manual` per tenant, `PodNodeSelector`, NetworkPolicy replicate qua `GlobalTenantResource`) và thay tên lab (`solar`, `water`, `capsule.clastix.io/tenant=solar`) bằng tên Tenantry (`acme-solar`, `tenantry.io/...`).
-> Chỗ plan chưa nói rõ được đánh dấu **(giả định)**.
+> Câu hỏi còn mở nằm ở `REVIEW-CHECKLIST.md`; chỗ nào phụ thuộc câu hỏi mở thì ghi "→ REVIEW-CHECKLIST <mã>".
 
 Ví dụ dùng xuyên suốt:
 
@@ -9,10 +9,12 @@ Ví dụ dùng xuyên suốt:
 |---|---|
 | Cluster | `cluster-a`, apps domain `mvp.tenantry.site` |
 | Organization | slug `acme`, id `org-01jabc` |
-| Workspace Shared | `acme-solar` (`ws-01jsol`), pool `shared-general`, CIDR `10.240.12.0/24` |
+| Workspace Shared | `acme-solar` (`ws-01jsol`), pool `shared-general`, CIDR `10.240.64.0/24` |
 | Workspace Dedicated | `acme-water` (`ws-01jxyz`, reserve 4 CPU) và `acme-green` (`ws-01jgrn`, reserve 2 CPU) trên node `worker-a-05` |
 | Dedicated node | `worker-a-05`, allocatable 9 CPU, systemReserve 1 CPU → reservable 8 CPU |
-| NetworkPool | `onboarding-pod-network` (chung) và `acme-cluster-a-pod-network` (riêng), cùng supernet `10.240.0.0/16` |
+| NetworkPool | `onboarding-pod-network` (chung, `10.240.0.0/18`) và `acme-cluster-a-pod-network` (riêng, `10.240.64.0/18`), cùng supernet `10.240.0.0/16` |
+
+Ví dụ ở đây giả sử Admin đã cấp thêm pool riêng `acme-cluster-a-pod-network` cho `acme`, nên CIDR của acme nằm trong `10.240.64.0/18`. Kịch bản demo (`PRODUCT-PLAN.md` mục 28, M9) chỉ dùng grant mặc định, nên ở đó Solar và Water lấy `/24` từ pool chung `onboarding-pod-network`.
 
 ---
 
@@ -23,14 +25,15 @@ Ví dụ dùng xuyên suốt:
 ```mermaid
 flowchart TB
   subgraph CP["Control plane: cp-1"]
-    CP1["kube-apiserver + PodNodeSelector<br/>etcd, scheduler, controller-manager<br/>taint node-role.kubernetes.io/control-plane:NoSchedule"]
+    CP1["kube-apiserver + PodNodeSelector + PodTolerationRestriction<br/>etcd, scheduler, controller-manager<br/>taint node-role.kubernetes.io/control-plane:NoSchedule"]
+    EDGEI["Traefik (class platform-shared)<br/>hostPort 80/443, nơi IP public đi vào"]
   end
 
-  subgraph SYS["System pool: sys-1, sys-2<br/>label tenantry.io/compute-pool=system (giả định)<br/>taint tenantry.io/compute-pool=system:NoSchedule (giả định)"]
+  subgraph SYS["System pool: sys-1<br/>label tenantry.io/compute-pool=system<br/>taint tenantry.io/compute-pool=system:NoSchedule"]
     direction LR
     CENTRAL["Central plane<br/>Portal, Platform API, Provisioning Worker,<br/>Group Sync Worker, PostgreSQL, Keycloak"]
     TENANCY["Capsule Operator + webhook<br/>Capsule Proxy<br/>Workspace Controller"]
-    EDGE["Traefik (class platform-shared)<br/>cert-manager<br/>Headlamp"]
+    EDGE["cert-manager<br/>Headlamp"]
     OBS["Prometheus / Grafana<br/>csi-nfs-controller"]
   end
 
@@ -43,7 +46,7 @@ flowchart TB
     direction LR
     W["Pod acme-water<br/>reserve 4 CPU"]
     G["Pod acme-green<br/>reserve 2 CPU"]
-    DS["System DaemonSet<br/>calico-node, kube-proxy,<br/>node-exporter (toleration riêng)"]
+    DS["System DaemonSet<br/>calico-node, kube-proxy, csi-nfs-node,<br/>node-exporter (toleration riêng)"]
   end
 
   CP1 --- SYS
@@ -53,20 +56,33 @@ flowchart TB
   classDef sys fill:#eef,stroke:#446;
   classDef shared fill:#efe,stroke:#464;
   classDef ded fill:#fee,stroke:#644;
-  class CENTRAL,TENANCY,EDGE,OBS sys;
+  class CENTRAL,TENANCY,EDGE,OBS,EDGEI sys;
   class S1 shared;
   class W,G,DS ded;
 ```
 
 Ánh xạ với lab bản đầu: lab gắn `capsule.clastix.io/tenant=solar` lên `wk1,wk2` và `=water` lên `wk3` (scripts/40-platform.sh), tức mỗi tenant một pool cứng. Tenantry tách thành hai kiểu: pool chung `tenantry.io/compute-pool=shared-general` cho Shared mode và label/taint theo Organization + membership label theo Workspace cho Dedicated mode (plan 6.2, 6.4).
 
+**Cụm MVP.** Một node worker riêng làm system pool, mang label `tenantry.io/compute-pool=system` và taint `tenantry.io/compute-pool=system:NoSchedule` (`deploy/cluster/10-nodes.sh`); mọi Pod của central plane và thành phần nền khai nodeSelector cùng toleration cho taint đó. Hai worker còn lại là shared pool. Ngoại lệ duy nhất: Traefik chạy trên node control-plane, nơi IP public đi vào (mục 7). Phase 2 tách central plane (Portal, API, worker, PostgreSQL, Keycloak) sang một cụm riêng; mỗi cụm tenant vẫn giữ một system pool nhỏ cho thành phần theo cụm: Capsule, Capsule Proxy, operator, Traefik, cert-manager, Headlamp.
+
+**Ai gắn label/taint nào.**
+
+| Label/taint trên Node | Ai gắn và gỡ | Từ |
+|---|---|---|
+| `tenantry.io/compute-pool=system` + taint | `deploy/cluster/10-nodes.sh` | M1 |
+| `tenantry.io/compute-pool=<pool-id>` của shared pool | M1–M5: `10-nodes.sh` gắn cho `SHARED_NODES` (tạm), `tenantry-seed` ghi vào `cluster_nodes.shared_pool_id`. Từ M6: reconciler của `PlatformSharedPool` gắn/gỡ theo `spec.nodes`, script thôi gắn | M1 / M6 |
+| `tenantry.io/dedicated-org=<org-id>` + taint | Reconciler của `PlatformNodeGrant` | M8 |
+| `workspaces.tenantry.io/<ws-id>=true` | Sub-reconciler `compute` của Workspace Controller | M8 |
+
+- Platform Admin chọn node của shared pool trên portal. Danh sách node lấy từ `PlatformNodeInventory` (một object mỗi cụm, do chart operator tạo; worker chép về `cluster_nodes`). Ở M5 việc thêm/bớt node của pool và cấp dedicated node chỉ ghi DB (vòng provisioning khi đó chỉ log rồi đánh dấu event đã giao, nên Operation sẽ mất); từ M6 worker dựng `PlatformSharedPool` và `PlatformNodeGrant` từ DB lúc khởi động và ở mỗi lần resync.
+- Một node hoặc thuộc một shared pool, hoặc là dedicated, không bao giờ cả hai (plan 6.3). API chặn trước bằng `cluster_nodes` (lock row node, `02-data-model.md` mục 3); operator chặn lần hai trên Cluster: `PlatformSharedPool` từ chối node control-plane, system hoặc đang dedicated, `PlatformNodeGrant` từ chối node còn mang label `tenantry.io/compute-pool`.
+- Id pool `system` bị cấm: đó là giá trị label của system pool.
+- Quy trình chuyển node từ shared pool sang dedicated: bớt node khỏi pool trên portal → drain → uncordon → cấp cho Organization. Không còn label pool thì Pod Shared không quay lại được; controller của `PlatformNodeGrant` đòi node `Ready`, schedulable và không còn Pod tenant nào (`04-state-machines.md` mục 5.1).
+- Trên dedicated node, `calico-node`, `kube-proxy` và `csi-nfs-node` mặc định đã tolerate mọi taint; DaemonSet monitoring (M12) cần thêm toleration cho `tenantry.io/dedicated-org`. Request của chúng tính vào `systemReserve`.
+
 **Điểm cần review**
 
-- **Cụm MVP**: một node worker riêng làm system pool, mang label `tenantry.io/compute-pool=system` và taint `tenantry.io/compute-pool=system:NoSchedule`; mọi Pod của central plane và thành phần nền khai nodeSelector cùng toleration cho taint đó. Hai worker còn lại là shared pool. Ngoại lệ duy nhất: Traefik chạy trên node control-plane, nơi IP public đi vào (mục 7).
-- Phase 2 tách central plane (Portal, API, worker, PostgreSQL, Keycloak) sang một cụm riêng. Mỗi cụm tenant vẫn giữ một system pool nhỏ cho thành phần theo cụm: Capsule, Capsule Proxy, operator, Traefik, cert-manager, Headlamp.
-- Cluster demo tối thiểu cần bao nhiêu node: 1 control-plane + 1–2 system + 2 shared + 1 dedicated = 5–6 node; đủ tài nguyên lab không?
-- Trên dedicated node, system DaemonSet cần toleration cho taint `tenantry.io/dedicated-org` — phải thêm vào Helm values của Calico/monitoring, và tính vào `systemReserve`. `csi-nfs-node` mặc định đã tolerate mọi taint, chỉ cần tính vào `systemReserve`.
-- Một node không bao giờ vừa thuộc shared pool vừa là dedicated (plan 6.3). Central plane không đọc Node, nên chỗ chặn là controller của `PlatformNodeGrant`: node còn mang label `tenantry.io/compute-pool` thì từ chối grant, cùng nhánh với system node (`03-flows.md` mục 2b). Platform Admin chọn node của shared pool trên portal; operator gắn và gỡ label theo `PlatformSharedPool.spec.nodes` và cũng từ chối node đang dedicated (plan 6.2).
+- Cụm lab có 4 node: `fdp-k8s-cp1` (control-plane, Traefik), `fdp-k8s-wk1` (system pool), `fdp-k8s-wk2` và `fdp-k8s-wk3` (shared pool), mỗi worker 3 CPU. Không có node thứ năm: ở phần demo Dedicated, Admin bớt `wk3` khỏi shared pool rồi cấp cho `acme` (`PRODUCT-PLAN.md` mục 28), nên shared pool còn `wk2`. Sơ đồ trên và các ví dụ `worker-a-05` (9 CPU) chỉ để minh họa, số liệu demo thật ở PRODUCT-PLAN mục 28.
 
 ---
 
@@ -89,16 +105,16 @@ flowchart LR
 
   subgraph NS["Namespace (Capsule inject, tenant không sửa được)"]
     NSS["acme-solar-frontend<br/>annotation scheduler.alpha.kubernetes.io/node-selector<br/>= tenantry.io/compute-pool=shared-general"]
-    NSD["acme-water-api<br/>annotation scheduler.alpha.kubernetes.io/node-selector<br/>= workspaces.tenantry.io/ws-01jxyz=true<br/>annotation scheduler.alpha.kubernetes.io/defaultTolerations<br/>= dedicated-org=org-01jabc (giả định)"]
+    NSD["acme-water-api<br/>annotation scheduler.alpha.kubernetes.io/node-selector<br/>= workspaces.tenantry.io/ws-01jxyz=true<br/>annotation scheduler.alpha.kubernetes.io/defaultTolerations<br/>+ tolerationsWhitelist = dedicated-org=org-01jabc"]
     TS --> NSS
     TD --> NSD
   end
 
   subgraph ADM["kube-apiserver admission"]
     A1["RBAC + Capsule webhook<br/>registry, QoS, Service type,<br/>protected label/annotation"]
-    A2["PodNodeSelector<br/>merge selector từ Namespace,<br/>conflict → reject"]
-    A3["PodTolerationRestriction (giả định)<br/>inject default toleration của Org,<br/>toleration ngoài whitelist → reject"]
-    A4["Workspace Controller validating webhook (giả định)<br/>reject spec.nodeName"]
+    A2["PodNodeSelector<br/>merge selector từ Namespace,<br/>cùng key khác giá trị → reject"]
+    A3["PodTolerationRestriction<br/>inject default toleration của Org,<br/>toleration ngoài whitelist → reject"]
+    A4["ValidatingAdmissionPolicy (hardening)<br/>reject spec.nodeName"]
     A1 --> A2 --> A3 --> A4
   end
 
@@ -111,11 +127,11 @@ flowchart LR
 
   subgraph REJ["Thao tác của user bị từ chối"]
     R1["spec.nodeName: worker-a-05<br/>bỏ qua scheduler"] --x A4
-    R2["nodeSelector: compute-pool=shared-general<br/>trong Namespace Dedicated"] --x A2
-    R3["toleration dedicated-org=org-khac"] --x A3
+    R3["toleration dedicated-org=org-khac<br/>trong Namespace Dedicated"] --x A3
     R4["kubectl label node ... / sửa annotation Namespace"] --x A1
-    R5["nodeSelector: compute-pool=system"] --x A2
+    R5["nodeSelector: compute-pool=system<br/>trong Namespace Shared"] --x A2
   end
+  R2["nodeSelector key khác, ví dụ compute-pool=shared-general<br/>trong Namespace Dedicated: admission nhận,<br/>Pod Pending vì không node nào khớp cả hai"]
 ```
 
 Bảng tương ứng với lab bản đầu:
@@ -123,15 +139,16 @@ Bảng tương ứng với lab bản đầu:
 | Lớp | Lab (Solar/Water) | Tenantry |
 |---|---|---|
 | Tenant nodeSelector | `capsule.clastix.io/tenant: solar` | Shared: `tenantry.io/compute-pool: shared-general`; Dedicated: `workspaces.tenantry.io/<ws-id>: "true"` |
-| Node label | script gắn tay `capsule.clastix.io/tenant=solar` lên wk1,wk2 | Admin gắn pool label một lần; Workspace Controller gắn/gỡ org label+taint và membership label |
-| Admission | `PodNodeSelector` bật trong `60-enable-oidc.sh`; test `tests/wrong-node-pod.yaml` | Giữ `PodNodeSelector`; thêm toleration injection và chặn `nodeName` |
+| Node label | script gắn tay `capsule.clastix.io/tenant=solar` lên wk1,wk2 | Bảng "Ai gắn label/taint nào" ở mục 1 |
+| Admission | `PodNodeSelector` bật trong `60-enable-oidc.sh`; test `tests/wrong-node-pod.yaml` | `PodNodeSelector` + `PodTolerationRestriction` bật ở M1 (`deploy/cluster/70-apiserver.sh`); VAP chặn `nodeName` là hardening |
 | Node visibility | Capsule Proxy lọc Node theo `Tenant.spec.nodeSelector` | Shared: không grant Node `List` (portal chỉ show pool summary); Dedicated: Proxy chỉ trả node có membership label |
 
-**Điểm cần review**
+Quy tắc:
 
-- **Đã chốt**: ép vị trí Pod bằng hai admission plugin có sẵn của kube-apiserver, `PodNodeSelector` và `PodTolerationRestriction` (cấu hình qua annotation Namespace), bật cùng lúc ở M1 để chỉ khởi động lại kube-apiserver một lần. Ở M1 chưa Namespace nào mang annotation toleration nên hành vi chưa đổi; annotation được gắn từ M8. Whitelist toleration khi gắn phải gồm các taint `node.kubernetes.io/*` mà Kubernetes tự thêm vào Pod, nếu không mọi Pod bị từ chối. Webhook riêng là hardening về sau.
-- `spec.nodeName` bỏ qua scheduler và kubelet không kiểm tra taint `NoSchedule`, nên **bắt buộc** có lớp reject `nodeName` (A4); Capsule không làm việc này.
-- Nếu `PodNodeSelector`/`PodTolerationRestriction` bị tắt, enforcement hỏng im lặng — plan 6.4 yêu cầu test bắt buộc; test nên chạy trong `make cluster-verify`.
+- Vị trí Pod do hai admission plugin có sẵn của kube-apiserver ép, `PodNodeSelector` và `PodTolerationRestriction`, cấu hình qua annotation Namespace; bật cùng lúc ở M1 để chỉ khởi động lại kube-apiserver một lần. Annotation `defaultTolerations` và `tolerationsWhitelist` được gắn lên Namespace Dedicated từ M8; whitelist phải gồm các taint `node.kubernetes.io/*` mà Kubernetes tự thêm vào Pod, nếu không mọi Pod bị từ chối. Namespace Shared không có whitelist nên toleration lạ không bị từ chối, nhưng selector pool đã giữ Pod ngoài dedicated node.
+- `PodNodeSelector` merge selector của Namespace vào mọi Pod và chỉ từ chối khi cùng key khác giá trị; selector khác key được nhận và Pod nằm `Pending`. Kubelet kiểm lại nodeSelector khi nhận Pod, nên `spec.nodeName` (bỏ qua scheduler, và kubelet không xét taint `NoSchedule`) vẫn không đặt được Pod ra ngoài pool hoặc node của nó: kubelet từ chối với lý do `NodeAffinity`. VAP chặn `nodeName` (A4) chỉ để báo lỗi rõ ngay lúc tạo, là hardening, không phải lớp bắt buộc. Capsule không có luật nào về `nodeName`.
+- Label/taint của Node: từ M8 một VAP chỉ cho ServiceAccount `tenantry-operator` đổi key `tenantry.io/*` và `workspaces.tenantry.io/*` trên Node (tenant vốn không có quyền ghi Node).
+- Nếu `PodNodeSelector`/`PodTolerationRestriction` bị tắt, enforcement hỏng im lặng — plan 6.4 yêu cầu test bắt buộc, chạy trong `make cluster-verify`.
 - Với Shared mode, nếu Organization có nhiều Workspace cùng pool, `PodNodeSelector` không tách Workspace với nhau — đúng ý định (cô lập bằng Namespace/NetworkPolicy/quota), cần nói rõ trong luận văn.
 
 ---
@@ -173,16 +190,16 @@ flowchart LR
 
 Quy tắc đi kèm (plan 5.4, 6.3):
 
-- Dedicated bắt buộc Guaranteed QoS: API đặt `limits = requests`, từ chối nếu client gửi limits khác; reservation dùng chính `requests.cpu/memory` và `pods`.
-- Capsule ResourcePool của Workspace không được lớn hơn NodeReservation; controller render `hard` bằng đúng reservation.
+- Dedicated bắt buộc Guaranteed QoS: API đặt `limits = requests`, từ chối nếu client gửi limits khác; reservation dùng chính `requests.cpu/memory` và `pods`. Mỗi Namespace của Workspace Dedicated có LimitRange `maxLimitRequestRatio: {cpu: 1, memory: 1}` và `default` = `defaultRequest` cho container (M8), nên từng container cũng có limits = requests.
+- Quota chung của Workspace Dedicated không được lớn hơn NodeReservation; controller render `hard` bằng đúng reservation.
 - `requests.storage` được trừ vào ClusterGrant, **không** trừ vào node.
+- Capacity state so theo từng chiều: hết CPU dù còn RAM vẫn là `FullyAllocated` (định nghĩa ở `04-state-machines.md` mục 5.1).
+- Snapshot `allocatable` đến từ status của `PlatformNodeGrant`, worker chép về DB khi status đổi và ở lần resync định kỳ (IMPLEMENTATION-PLAN mục 5.1); node reboot với ít CPU hơn thì đi vào nhánh `Overcommitted`.
 - Xóa `acme-water` release 4 CPU; `acme-green` và org label/taint trên node không bị ảnh hưởng.
 
 **Điểm cần review**
 
-- `systemReserve` do Admin nhập tay hay tính từ tổng request của DaemonSet đang chạy trên node cộng margin? Plan nói "bao gồm request của system DaemonSet dự kiến", nên có thể tự gợi ý rồi Admin xác nhận.
-- Snapshot `allocatable` refresh khi nào; nếu node reboot với ít CPU hơn thì đi vào nhánh `Overcommitted` (xem 04-state-machines mục 5).
-- Pods reservation: `pods` của Workspace là trần ResourcePool, nhưng Pod thực tế còn bị giới hạn bởi `max-pods` của kubelet — có nên cảnh báo khi Σ pods reserved > allocatable pods không?
+- `systemReserve` (một giá trị cho mỗi node) do Admin nhập tay hay tính từ tổng request của DaemonSet đang chạy trên node cộng margin? Plan nói "bao gồm request của system DaemonSet dự kiến", MVP để Admin nhập tay; portal gợi ý từ request của DaemonSet để Phase 2.
 
 ---
 
@@ -192,11 +209,11 @@ Quy tắc đi kèm (plan 5.4, 6.3):
 
 ```mermaid
 flowchart TB
-  subgraph SHAREDP["Shared pool shared-general (soft allocation)"]
+  subgraph SHAREDP["Shared pool shared-general, 2 node (soft allocation)"]
     direction TB
-    SA["allocatable snapshot<br/>24 CPU / 96Gi / 330 pods"]
-    SS["systemReserve<br/>2 CPU / 8Gi / 30 pods"]
-    SRV["reservable = 22 CPU / 88Gi / 300 pods"]
+    SA["allocatable snapshot (cộng 2 node)<br/>24 CPU / 96Gi / 330 pods"]
+    SS["systemReserve mỗi node 1 CPU / 4Gi / 15 pods<br/>× 2 node = 2 CPU / 8Gi / 30 pods"]
+    SRV["reservable = Σ node (allocatable − systemReserve)<br/>= 22 CPU / 88Gi / 300 pods"]
     RATIO["allocationOvercommitRatio = 3.0<br/>(Admin đặt per pool)"]
     CAP["allocation ceiling = ratio × reservable<br/>66 CPU / 264Gi / 900 pods"]
     SUM["Σ allocation của mọi Workspace trên pool<br/>(mọi Organization)<br/>phải ≤ ceiling"]
@@ -240,49 +257,49 @@ flowchart TB
 
 | Tiêu chí | Shared | Dedicated |
 |---|---|---|
-| Ý nghĩa allocation | Trần ResourcePool (quota) | Giữ chỗ trên node cụ thể |
-| Ceiling | `ratio × (allocatable − systemReserve)`, ratio per pool | `allocatable − systemReserve`, ratio = 1 |
+| Ý nghĩa allocation | Trần quota chung của Tenant | Giữ chỗ trên node cụ thể |
+| Ceiling | `ratio × Σ node (allocatable − systemReserve)`, ratio per pool | `allocatable − systemReserve`, ratio = 1 |
 | Trừ vào quota CPU/RAM/Pod của ClusterGrant | Có | Không; chỉ số Workspace, Namespace và storage tính chung |
 | Ai chia sẻ | Mọi Organization có pool trong grant | Chỉ Workspace của Organization được grant node |
-| QoS | `requests < limits` theo ratio policy của pool | `requests = limits` bắt buộc |
+| QoS | `limits ≥ requests`, giới hạn bởi quota của Workspace và quota limits của grant; không có tỷ lệ per container | `requests = limits` bắt buộc |
 | Khi vượt | `COMPUTE_POOL_CAPACITY_EXCEEDED` | `DEDICATED_NODE_INSUFFICIENT_CAPACITY` |
 | Rủi ro runtime | Pod Pending khi mọi tenant dùng hết quota | Không có, nếu snapshot đúng; drift → `Overcommitted` |
 
+`systemReserve` là một giá trị áp cho từng node: reservable của pool là tổng `allocatable − systemReserve` của các node trong pool. Mọi thay đổi làm ceiling của pool tụt dưới Σ allocation hiện tại đều bị từ chối `COMPUTE_POOL_CAPACITY_EXCEEDED`: bớt node khỏi pool (plan 6.2), hạ `allocationOvercommitRatio`, hoặc tăng `systemReserve`. Mức dùng thực của pool (Prometheus, metric theo label pool) hiển thị cạnh ceiling để Admin có cơ sở chỉnh ratio.
+
 **Điểm cần review**
 
-- Shared ceiling tính trên `requests` hay `limits`? Tài liệu giả định trên `requests` (khớp reservation invariant 5.3 dùng "allocation"); `limits` được kiểm bằng ratio `limits/requests` riêng của pool.
-- Khi Admin hạ `allocationOvercommitRatio` xuống dưới Σ hiện tại: chặn (đối xứng với ClusterGrant) hay cho phép và hiển thị cảnh báo? Plan chỉ chặn với ClusterGrant.
-- Pool usage thực (Prometheus) nên hiển thị bên cạnh ceiling để Admin có cơ sở điều chỉnh ratio — cần metric per pool label.
+- Shared ceiling tính trên Σ `requests`; `limits` chỉ bị trần bởi quota của Workspace và của grant.
 
 ---
 
 ## 5. Kế hoạch địa chỉ IP
 
-**Mục đích:** cho thấy supernet Cluster, hai loại NetworkPool, `/24` per Workspace được cấp tự động, và cách CIDR biến thành Calico IPPool + Namespace annotation.
+**Mục đích:** cho thấy supernet Cluster, hai loại NetworkPool, `/24` per Workspace được cấp tự động, và cách CIDR biến thành Calico IPPool + Namespace annotation. Áp dụng từ M9: Workspace tạo ở M6–M8 không có CIDR riêng và không được cô lập mạng (`04-state-machines.md` mục 1.2).
 
 ```mermaid
 flowchart TB
   subgraph CL["Cluster A: supernet 10.240.0.0/16 (Pod CIDR tenant)"]
     direction TB
-    subgraph ONB["NetworkPool onboarding-pod-network<br/>organizationId = null (pool chung)<br/>cidrs 10.240.0.0/18 (giả định chia supernet)<br/>defaultPrefixLength 24"]
+    subgraph ONB["NetworkPool onboarding-pod-network<br/>organizationId = null (pool chung)<br/>cidrs 10.240.0.0/18<br/>defaultPrefixLength 24"]
       P1["10.240.1.0/24 → Workspace globex-demo"]
       P2["10.240.2.0/24 → Workspace initech-lab"]
       PF["... free /24 ..."]
     end
-    subgraph ACME["NetworkPool acme-cluster-a-pod-network<br/>organizationId = org-01jabc<br/>cidrs 10.240.64.0/18 (giả định)<br/>allowedPrefixLengths 20–24, Shared + Dedicated"]
+    subgraph ACME["NetworkPool acme-cluster-a-pod-network<br/>organizationId = org-01jabc (pool riêng)<br/>cidrs 10.240.64.0/18<br/>allowedPrefixLengths 20–24"]
       A1["10.240.64.0/24 → acme-solar (Shared)"]
       A2["10.240.65.0/24 → acme-water (Dedicated)"]
       A3["10.240.66.0/24 → acme-green (Dedicated)"]
       AQ["10.240.67.0/24 Quarantined<br/>(Workspace vừa xóa, quarantine_until)"]
       AF["... free ..."]
     end
-    RESERVED["Vùng không cấp:<br/>Service CIDR 10.96.0.0/12 (kubeadm default)<br/>Calico default pool 192.168.0.0/16 cho system Pod<br/>Node CIDR"]
+    RESERVED["clusters.reserved_cidrs, không cấp:<br/>Calico default pool / Pod CIDR 192.168.0.0/16 cho system Pod<br/>Service CIDR 10.96.0.0/12<br/>Node CIDR"]
   end
 
   subgraph IPAM["IPAM (Platform API, transaction + exclusion constraint)"]
     I1["Auto: chọn /24 trống đầu tiên trong pool của grant"]
     I2["Advanced: prefix trong allowedPrefixLengths<br/>hoặc requestedCidr"]
-    I3["Check: trong pool đúng Org + Cluster,<br/>không overlap Pod/Service CIDR,<br/>không overlap Allocated/Releasing/Quarantined"]
+    I3["Check: trong pool đúng Org + Cluster,<br/>không overlap reserved_cidrs,<br/>không overlap Allocated/Releasing/Quarantined"]
     I1 --> I3
     I2 --> I3
   end
@@ -290,9 +307,9 @@ flowchart TB
   I3 -->|"NetworkAllocation Allocated<br/>cidr 10.240.64.0/24"| CRN["PlatformWorkspace acme-solar<br/>spec.network.allocationRef / cidr"]
 
   subgraph CALICO["Trong Cluster (Workspace Controller render)"]
-    POOL["Calico IPPool acme-solar<br/>cidr 10.240.64.0/24<br/>assignmentMode Manual<br/>allowedUses [Workload]<br/>blockSize 26<br/>nodeSelector tenantry.io/compute-pool == 'shared-general'<br/>(Dedicated: workspaces.tenantry.io/ws-01jxyz == 'true')<br/>vxlanMode CrossSubnet, natOutgoing true"]
+    POOL["Calico IPPool acme-solar<br/>cidr 10.240.64.0/24<br/>assignmentMode Manual<br/>allowedUses [Workload]<br/>blockSize 26<br/>nodeSelector tenantry.io/compute-pool == 'shared-general'<br/>(Dedicated: workspaces.tenantry.io/ws-01jxyz == 'true';<br/>trước M8: all())<br/>vxlanMode CrossSubnet, natOutgoing true"]
     NSA["Namespace acme-solar-frontend<br/>annotation cni.projectcalico.org/ipv4pools = ['acme-solar']<br/>(Capsule additionalMetadata inject,<br/>forbiddenAnnotations denied)"]
-    POD["Pod nhận IP trong 10.240.64.0/24<br/>Pod-level override ipv4pools bị policy cấm"]
+    POD["Pod nhận IP trong 10.240.64.0/24<br/>annotation Calico ở mức Pod bị VAP tenantry-tenant-pod-network chặn"]
     CRN --> POOL
     CRN --> NSA
     POOL --> POD
@@ -300,7 +317,7 @@ flowchart TB
   end
 
   A1 -.-> I1
-  AQ -.->|"quarantine hết hạn → Available"| AF
+  AQ -.->|"quarantine hết hạn → Released, dùng lại được"| AF
 
   classDef q fill:#ffe,stroke:#aa3;
   classDef r fill:#eee,stroke:#666;
@@ -310,18 +327,20 @@ flowchart TB
 
 So với lab: lab dùng `/18` cứng cho Solar (`10.240.0.0/18`) và Water (`10.240.64.0/18`) với `nodeSelector: capsule.clastix.io/tenant == "solar"`; Tenantry giữ nguyên mọi field IPPool (`Manual`, `Workload`, `blockSize 26`, `vxlanMode CrossSubnet`, `natOutgoing`) nhưng CIDR đến từ NetworkAllocation và selector theo pool/Workspace.
 
-**Điểm cần review**
+Quy tắc:
 
-- Cách chia supernet giữa pool chung và pool riêng (`/18` mỗi loại) là giả định; plan chỉ đưa ví dụ một pool `10.240.0.0/16`. Cần chốt để tránh pool chung và pool riêng overlap ngay trong cấu hình Admin.
-- `blockSize 26` với `/24` cho 4 block: trên shared pool 2 node là đủ; Workspace Shared có nhiều node hơn số block sẽ hết block dù còn IP — cân nhắc `blockSize 27/28` hoặc `defaultPrefixLength 23`.
-- `natOutgoing: true` nghĩa là egress Internet được SNAT; kết hợp với NetworkPolicy "internet egress theo profile" (mục 6) — hai lớp cần khớp.
-- Service CIDR và Node CIDR được kiểm tra trong IPAM bằng cấu hình `clusters` (cần thêm cột hoặc lấy từ `kubeadm-config`).
+- **Dải địa chỉ.** `clusters.reserved_cidrs` (Admin nhập khi đăng ký Cluster) giữ Pod CIDR mặc định của Calico, Service CIDR và Node CIDR; lab: `192.168.0.0/16`, `10.96.0.0/12`. NetworkPool của một Cluster không được overlap nhau và không overlap `reserved_cidrs`; service kiểm khi tạo pool (M5). Seed tạo `onboarding-pod-network` là `10.240.0.0/18`, chừa chỗ cho pool riêng của Organization (`10.240.64.0/18`, ...).
+- **kube-proxy nhận Pod theo interface, không theo CIDR.** Lab: kubeadm `podSubnet` và kube-proxy `clusterCIDR` = `192.168.0.0/16`, chế độ iptables. kube-proxy SNAT mọi gói tới Service từ IP ngoài `clusterCIDR`; Pod tenant mang IP `10.240.x.x` nên gọi Service sang Pod ở node khác sẽ bị SNAT thành IP node, và `tenant-allow-same-workspace` (mục 6) ở node đích từ chối. Vì vậy đầu M9, trước khi có IPPool tenant, ConfigMap `kube-proxy` đặt `detectLocalMode: InterfaceNamePrefix`, `detectLocal.interfaceNamePrefix: cali` (script trong `deploy/cluster`); `cluster-verify` từ M9 có test gọi Service trong một Workspace giữa hai node. Không chọn cách đổi Pod CIDR của cả cụm sang `10.x`: phải sửa `podSubnet`, `--cluster-cidr` của controller-manager, tạo lại pool mặc định và khởi động lại mọi Pod hệ thống để đổi IP, trong khi `clusterCIDR` vẫn chỉ nhận một dải IPv4 nên mọi NetworkPool về sau buộc phải nằm trong dải đó. Nhận theo interface không đổi IP Pod nào và không giới hạn dải của NetworkPool; pool `192.168.0.0/16` chỉ cấp IP cho Pod hệ thống, không chiếm chỗ của tenant.
+- **Annotation Calico ở mức Pod.** Calico ưu tiên annotation của Pod hơn của Namespace, và pool `Manual` cấp cho bất kỳ ai xin đúng tên. ValidatingAdmissionPolicy `tenantry-tenant-pod-network` (chart operator, M9) từ chối Pod do user tenant tạo trong Namespace có label `capsule.clastix.io/tenant` nếu mang annotation `cni.projectcalico.org/ipv4pools`, `ipv6pools`, `ipAddrs`, `ipAddrsNoIpam` hoặc `floatingIPs`. Tenant `namespaceOptions.forbiddenAnnotations` gồm `cni.projectcalico.org/*` và `scheduler.alpha.kubernetes.io/{node-selector,defaultTolerations,tolerationsWhitelist}`.
+- **Node selector của IPPool.** Theo mode từ M8; Workspace tạo khi M9 đã có mà M8 chưa có thì IPPool dùng `nodeSelector: all()`, M8 đổi sang selector theo mode.
+- **blockSize.** `blockSize 26` với `/24` cho 4 block. Lab để IPAMConfig `strictAffinity: false`, nên khi node không lấy thêm được block, Calico cho mượn địa chỉ trong block của node khác: Workspace Shared trên nhiều node hơn số block không hết IP sớm.
+- **Egress.** `natOutgoing: true` nghĩa là egress Internet được SNAT; khớp với rule egress Internet ở mục 6 (MVP cho mọi Workspace).
 
 ---
 
 ## 6. Network policy baseline per Namespace
 
-**Mục đích:** liệt kê rule baseline mà mọi Namespace nhận qua replication, và minh họa traffic được phép/bị chặn giữa Workspace `acme-solar` và `acme-water`.
+**Mục đích:** liệt kê rule baseline mà mọi Namespace nhận qua replication, và minh họa traffic được phép/bị chặn giữa Workspace `acme-solar` và `acme-water`. Áp dụng từ M9, do sub-reconciler `network` render.
 
 ```mermaid
 flowchart LR
@@ -344,7 +363,7 @@ flowchart LR
   SF -->|"allow egress DNS"| DNS
   SB -->|"allow egress DNS"| DNS
   ING -->|"allow ingress từ Traefik<br/>tới Pod được expose"| SF
-  SF -->|"allow egress Internet<br/>nếu profile cho phép"| NET
+  SF -->|"allow egress Internet<br/>nếu rule #5 có"| NET
   SF -. "deny: khác tenant label" .-x WA
   WA -. "deny: khác tenant label" .-x SB
   SF -. "deny metadata" .-x META
@@ -361,18 +380,17 @@ Bộ rule replicate (kế thừa `manifests/tenant-resources.yaml`, mở rộng 
 | 1 | `tenant-default-deny` | `podSelector: {}`, `policyTypes: [Ingress, Egress]`, không rule → deny all | — |
 | 2 | `tenant-allow-same-workspace` | ingress + egress `namespaceSelector: capsule.clastix.io/tenant = {{tenant.name}}` | Label do Capsule gắn khi tạo Namespace; tenant không sửa được (Capsule webhook) |
 | 3 | `tenant-allow-dns` | egress tới `kube-system` `k8s-app=kube-dns` UDP/TCP 53 | Lab đã có |
-| 4 | `tenant-allow-ingress-controller` | ingress từ `namespaceSelector: kubernetes.io/metadata.name=ingress-system` | Namespace label bất biến của Kubernetes |
-| 5 | `tenant-allow-internet-egress` | egress `ipBlock 0.0.0.0/0` `except [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.169.254/32]` — chỉ replicate khi policy profile của Workspace bật (giả định: profile `internet-egress` mặc định bật cho MVP) | — |
+| 4 | `tenant-allow-ingress-controller` | ingress từ `namespaceSelector: kubernetes.io/metadata.name=ingress-system` (Traefik dùng `hostPort`, không `hostNetwork`, nên gói tới Pod mang IP Pod của Traefik) | Namespace label bất biến của Kubernetes |
+| 5 | `tenant-allow-internet-egress` | egress `ipBlock 0.0.0.0/0` `except [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.169.254/32]`. MVP không có catalog policy profile nên rule này áp cho mọi Workspace; metadata endpoint luôn bị chặn | — |
 | 6 | (ẩn trong #5) deny metadata | `169.254.169.254/32` nằm trong `except` nên không có rule nào cho phép | — |
 
 Nguyên tắc "không tin label tenant tự sửa": mọi selector chỉ dùng `capsule.clastix.io/tenant` (Capsule set), `kubernetes.io/metadata.name` (Kubernetes set) hoặc label trong namespace system mà tenant không có quyền — không dùng Pod label do user tự đặt.
 
+Ingress của Water không trỏ được sang Service của Solar: Ingress chỉ tham chiếu Service cùng Namespace, và Ingress do controller tạo đúng Namespace của Route — không cần rule mạng riêng, nhưng phải có test.
+
 **Điểm cần review**
 
-- Lab hiện không có rule Internet egress (Pod tenant không ra ngoài được); Tenantry thêm rule #5 theo profile — chốt mặc định bật hay tắt cho onboarding Organization.
-- Rule #4 cho phép mọi Pod trong Namespace nhận traffic từ Traefik, không chỉ Pod "được expose"; muốn chặt hơn cần Pod label do user đặt (không tin được) hoặc chấp nhận trade-off này.
-- Ingress của Water không trỏ được sang Service của Solar: Ingress chỉ tham chiếu Service cùng Namespace, và Ingress do controller tạo đúng Namespace của Route — không cần rule mạng riêng, nhưng nên ghi thành test.
-- Calico NetworkPolicy (CRD) có thể thay Kubernetes NetworkPolicy để dùng `GlobalNetworkPolicy` một lần thay vì replicate — plan chọn replicate qua Capsule để gắn với Tenant lifecycle; giữ hay đổi?
+- Rule #4 cho phép mọi Pod trong Namespace nhận traffic từ Traefik, không chỉ Pod "được expose"; muốn chặt hơn cần Pod label do user đặt (không tin được) hoặc chấp nhận trade-off này. MVP chấp nhận: Route chỉ trỏ tới Service mà tenant chọn.
 
 ---
 
@@ -432,8 +450,18 @@ flowchart TB
 **Ba lớp giữ hostname**
 
 1. **API ghép hostname** `<tên>-<k8s_name>.<apps domain>` và DB giữ `UNIQUE (hostname)`; user không nhập được phần đuôi. Hai cặp (tên, Workspace) khác nhau ghép ra cùng một chuỗi (ví dụ `a-b` + `c` và `a` + `b-c`) thì cái đến sau nhận `ROUTE_HOSTNAME_TAKEN`.
-2. **ValidatingAdmissionPolicy `tenantry-tenant-ingress-lockdown`**: trong mọi Namespace có label `capsule.clastix.io/tenant`, từ chối CREATE/UPDATE/DELETE trên `ingresses` (`networking.k8s.io`), mọi resource của `cert-manager.io`, `acme.cert-manager.io`, `gateway.networking.k8s.io` và `traefik.io`, trừ khi người gọi là ServiceAccount `tenantry-operator` hoặc ServiceAccount của cert-manager. Cần luật này vì ClusterRole `admin` mà Capsule cấp cho chủ Workspace có sẵn quyền ghi Ingress, và cert-manager tự gộp quyền ghi `Certificate`/`Issuer` vào `admin`. Không chặn thì tenant tự xin được cert cho hostname của người khác qua ClusterIssuer.
+2. **ValidatingAdmissionPolicy `tenantry-tenant-ingress-lockdown`**: trong mọi Namespace có label `capsule.clastix.io/tenant`, từ chối CREATE/UPDATE/DELETE trên `ingresses` (`networking.k8s.io`), mọi resource của `cert-manager.io`, `acme.cert-manager.io`, `gateway.networking.k8s.io` và `traefik.io` **khi người gọi là user tenant** (`request.userInfo.username` bắt đầu bằng `oidc:`). Luật chỉ khớp người gọi là tenant, không viết dạng "từ chối mọi người trừ X": operator, cert-manager, namespace controller và garbage collector đều phải ghi/xóa được, nếu không xóa một Namespace có Route sẽ kẹt `Terminating`. Cần luật này vì ClusterRole `admin` mà Capsule cấp cho chủ Workspace có sẵn quyền ghi Ingress, và cert-manager tự gộp quyền ghi `Certificate`/`Issuer` vào `admin`. Không chặn thì tenant tự xin được cert cho hostname của người khác qua ClusterIssuer. Policy đặt `validations[].reason: Forbidden` để tenant nhận 403 thay vì 422 mặc định; mọi luật trong bảng dưới cũng vậy.
 3. **Service `NodePort`/`LoadBalancer`/`ExternalName` bị Capsule cấm**, nên Route là đường ra duy nhất.
+
+**Các luật admission dành cho tenant.** Đều nằm trong chart operator, đều chỉ khớp người gọi là user tenant (`username` bắt đầu bằng `oidc:`), nên Capsule, operator và controller của Kubernetes đi qua:
+
+| Luật | Chặn gì | Từ |
+|---|---|---|
+| `tenantry-tenant-pod-network` | Pod mang annotation Calico ở mức Pod (mục 5) | M9 |
+| `tenantry-tenant-ingress-lockdown` | Ghi Ingress, tài nguyên cert-manager, Gateway API, Traefik (lớp 2 ở trên) | M11 |
+| `tenantry-tenant-rolebinding-subjects` | CREATE/UPDATE `rolebindings` trong Namespace có label `capsule.clastix.io/tenant` nếu có subject không phải Group `oidc:org_<ULID của Organization sở hữu Tenant>:...` hoặc ServiceAccount thuộc Namespace bắt đầu bằng `<tên Tenant>-`. Organization của Tenant đọc từ label `tenantry.io/org=<org ULID>` mà controller gắn lên Namespace qua `Tenant.namespaceOptions.additionalMetadata` | M11 |
+
+Nhờ luật RoleBinding, chủ Workspace không tự bind được người ngoài Organization hay group `oidc:tenantry:tenant-users`, nên contract thu hồi quyền ở `06-security-and-identity.md` mục 5 đứng vững: member bị gỡ khỏi group mất quyền Kubernetes trong thời hạn token. Test ở M11: owner không bind được user ngoài và không bind được `oidc:tenantry:tenant-users`; xóa Namespace và xóa Workspace có Route vẫn xong.
 
 **TLS**
 
@@ -447,10 +475,11 @@ flowchart TB
 
 **Custom domain** (sau MVP): Ingress của Route mang `tls.secretName`, Certificate nằm cùng Namespace và do controller tạo với solver HTTP-01; private key khi đó nằm trong Namespace của tenant, chấp nhận vì đó là domain của chính họ.
 
+Let's Encrypt giới hạn số cert mỗi domain mỗi tuần; MVP chỉ cần năm cert nên không chạm, custom domain thì xin trên domain của khách.
+
 **Điểm cần review**
 
-- Luật admission ở lớp 2 chưa được chạy thử: cần test âm ở M11 (tenant `kubectl apply` Ingress và Certificate đều bị từ chối; controller và HTTP-01 solver vẫn ghi được).
-- Let's Encrypt giới hạn số cert mỗi domain mỗi tuần; MVP chỉ cần năm cert nên không chạm, custom domain thì xin trên domain của khách.
+- Luật admission ở lớp 2 chưa được chạy thử; M11 có test âm (tenant ghi Ingress/Certificate bị chặn) và dương (operator, cert-manager ghi được; xóa Namespace có Route vẫn xong).
 
 ---
 
@@ -511,18 +540,19 @@ flowchart LR
 | Portal | `portal` | `portal-api` | Portal BFF → Platform API | Token không hợp lệ với kube-apiserver vì audience không khớp |
 | Provisioning Worker | (ServiceAccount) | — | apiserver trực tiếp | Chỉ quyền trên CRD `tenantry.io`; Phase 2 thay bằng Cluster Agent |
 
+kube-apiserver dùng `sub` + prefix `oidc:` cho username và group, audience `[kubernetes, headlamp-cluster-a]` (`deploy/cluster/70-apiserver.sh`); lab bản đầu dùng `preferred_username` không prefix, nên mọi RoleBinding/Tenant owner và `users` của Capsule giờ mang prefix `oidc:`. Thời hạn token và contract thu hồi quyền: `06-security-and-identity.md` mục 3 và 5.
+
+Capsule Proxy chỉ có một endpoint, `kube-a.tenantry.site`, cho cả kubectl và Headlamp. Headlamp không gọi thẳng Service của Proxy được: nó dùng cấu hình in-cluster của client-go, vốn luôn nói HTTPS, còn Proxy chạy HTTP phía sau Traefik (mục 7). Để request không đi vòng ra NAT public rồi quay lại, Pod Headlamp có `hostAliases` trỏ `kube-a.tenantry.site` về IP nội bộ của node chạy Traefik. Hệ quả: Headlamp phụ thuộc Traefik, và đổi node ingress thì phải cài lại Headlamp để cập nhật IP đó.
+
 **Điểm cần review**
 
-- Lab bản đầu dùng `username.claim: preferred_username`, `prefix: ""`, audiences `[headlamp, kubernetes]`; plan yêu cầu `sub` + prefix `oidc:` và audience `headlamp-{clusterId}`. Lab viết mới ở M1 dùng luôn cấu hình của plan; mọi RoleBinding/Tenant owner và `userGroups` của Capsule phải mang prefix `oidc:`.
-- Với Shared mode "không grant Node List" (plan 6.2) nhưng Proxy vẫn lọc theo nodeSelector: Headlamp trang Nodes sẽ rỗng hoặc lỗi 403 — chọn hành vi nào cho UX.
-- Capsule Proxy chỉ có một endpoint, `kube-a.tenantry.site`, cho cả kubectl và Headlamp. Headlamp không gọi thẳng Service của Proxy được: nó dùng cấu hình in-cluster của client-go, vốn luôn nói HTTPS, còn Proxy chạy HTTP phía sau Traefik (mục 7). Để request không đi vòng ra NAT public rồi quay lại, Pod Headlamp có `hostAliases` trỏ `kube-a.tenantry.site` về IP nội bộ của node chạy Traefik. Hệ quả: Headlamp phụ thuộc Traefik, và đổi node ingress thì phải cài lại Headlamp để cập nhật IP đó.
-- Thời hạn token và contract thu hồi quyền: `06-security-and-identity.md` mục 3 và 5.
+- Với Shared mode "không grant Node List" (plan 6.2) nhưng Proxy vẫn lọc theo nodeSelector: MVP không cấp Node List cho Shared, trang Nodes của Headlamp báo thiếu quyền; kiểm trên lab ở M11.
 
 ---
 
 ## 9. Storage
 
-**Mục đích:** theo dõi PVC của tenant từ StorageClass `standard` (NFS qua `csi-driver-nfs`) tới ba lớp giới hạn: allow-list StorageClass của Tenant, `requests.storage` của ResourcePool, và `requests.storage` của ClusterGrant.
+**Mục đích:** theo dõi PVC của tenant từ StorageClass `standard` (NFS qua `csi-driver-nfs`) tới ba lớp giới hạn: allow-list StorageClass của Tenant, `requests.storage` của quota chung, và `requests.storage` của ClusterGrant.
 
 **Vì sao NFS.** Với Tenantry, storage chỉ là một StorageClass trong allow-list; đổi loại storage không đụng tới code. Tiêu chí chọn vì vậy là ít công vận hành nhất mà không phá kịch bản demo:
 
@@ -557,13 +587,13 @@ flowchart LR
 
   subgraph TENANT["Tenant acme-solar (Workspace Controller render)"]
     TSC["storageClasses.allowed [standard]<br/>(Capsule từ chối PVC với class khác)"]
-    RP["ResourcePool acme-solar<br/>quota.hard.requests.storage 100Gi<br/>+ persistentvolumeclaims (object count, tùy chọn)"]
+    RP["Tenant acme-solar resourceQuotas scope Tenant<br/>hard.requests.storage 100Gi chung mọi Namespace<br/>+ persistentvolumeclaims (object count, tùy chọn)"]
     WSA --> TSC
     WSA --> RP
   end
 
   subgraph NSB["Namespace acme-solar-backend"]
-    CLAIM["ResourcePoolClaim → ResourceQuota<br/>requests.storage 40Gi"]
+    CLAIM["ResourceQuota do Capsule quản lý<br/>hard hạ xuống khi tổng Workspace chạm trần"]
     PVC["PVC data<br/>storageClassName standard<br/>20Gi RWX"]
     PV["PV pvc-... (subdir acme-solar-backend-data-pvc-...)"]
     POD["Pod api mount /data<br/>không ghim node"]
@@ -580,16 +610,18 @@ flowchart LR
   subgraph REJ["Bị từ chối"]
     R1["PVC storageClassName local-path<br/>→ Capsule: class không được phép"]
     R2["PVC 80Gi khi quota còn 20Gi<br/>→ ResourceQuota exceeded"]
-    R3["Workspace tăng requests.storage lên 600Gi<br/>→ CLUSTER_GRANT_..._QUOTA_EXCEEDED"]
+    R3["Workspace tăng requests.storage lên 600Gi<br/>→ CLUSTER_GRANT_QUOTA_EXCEEDED (resource storage)"]
   end
   R1 --x TSC
   R2 --x CLAIM
   R3 --x CG
 ```
 
-Lifecycle khi xóa Workspace (plan 17.4): xóa Namespace → PVC bị xóa theo → `reclaimPolicy Delete` → driver xóa subdir (`onDelete: delete`, không archive, để "xóa hết" đúng nghĩa và khớp cảnh báo UI). PVC kẹt finalizer (`kubernetes.io/pvc-protection` khi Pod còn dùng, hoặc NFS server không phản hồi) → Operation `Blocked`, chỉ Platform Admin `:force`.
+Quota storage là quota chung của cả Workspace (`PRODUCT-PLAN.md` mục 5.4): PVC ở Namespace nào cũng dùng phần còn trống của Workspace.
+
+Lifecycle khi xóa Workspace (plan 17.4): xóa Namespace → PVC bị xóa theo → `reclaimPolicy Delete` → driver xóa subdir (`onDelete: delete`, không archive, để "xóa hết" đúng nghĩa và khớp cảnh báo UI). PVC kẹt finalizer (`kubernetes.io/pvc-protection` khi Pod còn dùng, hoặc NFS server không phản hồi) → Operation `Blocked`, retry hoặc Platform Admin `:force`.
 
 **Điểm cần review**
 
-- Capsule Proxy lọc StorageClass theo allow-list, nên Headlamp chỉ hiện `standard`; cần xác nhận với Capsule 0.15.x rằng `storageClasses.allowed` hỗ trợ cả tên và regex.
-- `requests.storage` không có ở LimitRange mặc định; có nên đặt `max` per PVC trong LimitRange (type `PersistentVolumeClaim`) để một PVC không nuốt cả quota Workspace?
+- Capsule Proxy lọc StorageClass theo allow-list, nên Headlamp chỉ hiện `standard`; cần xác nhận với Capsule 0.15.x rằng `storageClasses.allowed` nhận tên chính xác (kiểm ở M7); Tenantry chỉ dùng tên chính xác.
+- Không đặt LimitRange `max` per PVC: ResourceQuota của Namespace đã chặn tổng storage.

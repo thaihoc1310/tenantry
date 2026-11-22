@@ -263,7 +263,7 @@
         </panel>
 
         <panel title="Shared pool" note="nodes shared with other Organizations">
-          <div class="t-row t-between" style="margin-bottom: 16px"><div class="t-row"><code>{{ pool.id }}</code><status-tag :value="pool.status" /></div><span class="muted small">{{ pool.nodes }} nodes · limits may exceed requests up to {{ pool.ratio }}×</span></div>
+          <div class="t-row t-between" style="margin-bottom: 16px"><div class="t-row"><code>{{ pool.id }}</code><status-tag :value="pool.status" /></div><span class="muted small">{{ pool.nodes }} nodes · overcommit ratio {{ pool.ratio }}×</span></div>
           <div class="t-meters two">
             <quota-meter label="CPU reserved, all tenants" :used="pool.cpu.reserved" :total="pool.cpu.reservable" unit="cores" />
             <quota-meter label="Memory reserved, all tenants" :used="pool.mem.reserved" :total="pool.mem.reservable" unit="Gi" />

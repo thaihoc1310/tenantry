@@ -1,5 +1,5 @@
-// Screens a user sees before belonging to an Organization, and the two
-// token links (invitation, ownership transfer).
+// Screens a user sees before belonging to an Organization, the invitation
+// link, and the in-app ownership transfer page (accepted by transfer id, no token).
 (function () {
   T.pages = T.pages || {};
 

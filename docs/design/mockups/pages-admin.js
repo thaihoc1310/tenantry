@@ -207,7 +207,7 @@
             <el-table :data="[pool]" style="width: 100%">
               <el-table-column label="Pool" min-width="160"><template #default="{ row }"><code>{{ row.id }}</code></template></el-table-column>
               <el-table-column label="Nodes" min-width="160"><template #default><code>wk2</code> <code>wk5</code></template></el-table-column>
-              <el-table-column label="Limit ratio" width="120" align="right"><template #default="{ row }"><span class="num">{{ row.ratio }}×</span></template></el-table-column>
+              <el-table-column label="Overcommit ratio" width="120" align="right"><template #default="{ row }"><span class="num">{{ row.ratio }}×</span></template></el-table-column>
               <el-table-column label="CPU reserved" width="150" align="right"><template #default="{ row }"><span class="num">{{ row.cpu.reserved }} of {{ row.cpu.reservable }}</span></template></el-table-column>
               <el-table-column label="Memory reserved" width="170" align="right"><template #default="{ row }"><span class="num">{{ row.mem.reserved }} of {{ row.mem.reservable }} Gi</span></template></el-table-column>
               <el-table-column label="Capacity" width="140"><template #default="{ row }"><status-tag :value="row.status" /></template></el-table-column>

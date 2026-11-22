@@ -31,12 +31,10 @@
       errs() {
         const e = {}; const f = this.f;
         if (this.dedicated) { if (f.rcpu > 3) e.rcpu = 'Node wk3 has only 3 cores left. (DEDICATED_NODE_INSUFFICIENT_CAPACITY)'; if (f.rmem > 6) e.rmem = 'Node wk3 has only 6 Gi left. (DEDICATED_NODE_INSUFFICIENT_CAPACITY)'; return e; }
-        if (f.rcpu > LEFT.rcpu) e.rcpu = 'Only ' + LEFT.rcpu + ' core is left in the shared quota. Lower this, or ask a Platform Admin for more. (CLUSTER_GRANT_CPU_QUOTA_EXCEEDED)';
-        if (f.rmem > LEFT.rmem) e.rmem = 'Only ' + LEFT.rmem + ' Gi is left in the shared quota. (CLUSTER_GRANT_MEMORY_QUOTA_EXCEEDED)';
+        if (f.rcpu > LEFT.rcpu) e.rcpu = 'Only ' + LEFT.rcpu + ' core is left in the shared quota. Lower this, or ask a Platform Admin for more. (CLUSTER_GRANT_QUOTA_EXCEEDED)';
+        if (f.rmem > LEFT.rmem) e.rmem = 'Only ' + LEFT.rmem + ' Gi is left in the shared quota. (CLUSTER_GRANT_QUOTA_EXCEEDED)';
         if (!this.dedicated && f.lcpu < f.rcpu) e.lcpu = 'A limit cannot be lower than its request.';
-        if (!this.dedicated && f.lcpu > f.rcpu * this.pool.ratio) e.lcpu = 'On this pool limits may be at most ' + this.pool.ratio + '× the request (' + f.rcpu * this.pool.ratio + ' cores).';
         if (!this.dedicated && f.lmem < f.rmem) e.lmem = 'A limit cannot be lower than its request.';
-        if (!this.dedicated && f.lmem > f.rmem * this.pool.ratio) e.lmem = 'On this pool limits may be at most ' + this.pool.ratio + '× the request (' + f.rmem * this.pool.ratio + ' Gi).';
         if (this.limCpu > LEFT.lcpu) e.lcpu = 'Only ' + LEFT.lcpu + ' cores of CPU limit are left in the shared quota.';
         if (this.limMem > LEFT.lmem) e.lmem = 'Only ' + LEFT.lmem + ' Gi of memory limit is left in the shared quota.';
         return e;
