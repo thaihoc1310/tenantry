@@ -130,46 +130,57 @@ func (s *Service) Approve(ctx context.Context, adminID, orgID string, a Approval
 		if err != nil {
 			return err
 		}
-		grant, err := reservation.CreateGrant(ctx, q, o.ID, true, a.Grant)
-		if err != nil {
-			return err
-		}
 		if o, err = q.ApproveOrganization(ctx, o.ID); err != nil {
 			return err
 		}
-		e := a.Entitlement
-		if err := q.CreateEntitlement(ctx, store.CreateEntitlementParams{
-			OrgID: o.ID, MaxMembers: e.MaxMembers, MaxGroups: e.MaxGroups, MaxWorkspacesTotal: e.MaxWorkspacesTotal,
-		}); err != nil {
-			return err
-		}
-		groups := map[string]string{}
-		for _, name := range DefaultGroups {
-			gid := id.New(id.Group)
-			groups[name] = gid
-			if _, err := q.CreateGroup(ctx, store.CreateGroupParams{
-				ID: gid, OrgID: o.ID, DisplayName: name, MachineName: MachineName(o.ID, gid),
-			}); err != nil {
-				return err
-			}
-		}
-		if err := q.AddGroupMember(ctx, store.AddGroupMemberParams{GroupID: groups[DefaultGroups[0]], UserID: o.OwnerUserID}); err != nil {
-			return err
-		}
-		owner, err := q.GetUser(ctx, o.OwnerUserID)
+		out, err = activate(ctx, q, o, a)
 		if err != nil {
 			return err
 		}
-		out = Approved{
-			Reviewed:    Reviewed{Organization: o, OwnerEmail: owner.Email, OwnerDisplayName: owner.DisplayName},
-			Entitlement: e, Grant: grant,
-		}
 		return audit.Record(ctx, q, audit.Event{
 			Actor: adminID, OrgID: o.ID, Action: audit.OrganizationApprove, TargetType: "Organization", TargetID: o.ID,
-			Detail: map[string]any{"entitlement": e, "clusterGrant": grant},
+			Detail: map[string]any{"entitlement": out.Entitlement, "clusterGrant": out.Grant},
 		})
 	})
 	return out, err
+}
+
+// activate gives an organization that just became Active what every Active
+// organization has: its entitlement, its default cluster grant and the default
+// groups with the owner in admins. The groups start Pending for the group
+// sync worker. It runs in the caller's transaction.
+func activate(ctx context.Context, q *store.Queries, o store.Organization, a Approval) (Approved, error) {
+	grant, err := reservation.CreateGrant(ctx, q, o.ID, true, a.Grant)
+	if err != nil {
+		return Approved{}, err
+	}
+	e := a.Entitlement
+	if err := q.CreateEntitlement(ctx, store.CreateEntitlementParams{
+		OrgID: o.ID, MaxMembers: e.MaxMembers, MaxGroups: e.MaxGroups, MaxWorkspacesTotal: e.MaxWorkspacesTotal,
+	}); err != nil {
+		return Approved{}, err
+	}
+	groups := map[string]string{}
+	for _, name := range DefaultGroups {
+		gid := id.New(id.Group)
+		groups[name] = gid
+		if _, err := q.CreateGroup(ctx, store.CreateGroupParams{
+			ID: gid, OrgID: o.ID, DisplayName: name, MachineName: MachineName(o.ID, gid),
+		}); err != nil {
+			return Approved{}, err
+		}
+	}
+	if err := q.AddGroupMember(ctx, store.AddGroupMemberParams{GroupID: groups[DefaultGroups[0]], UserID: o.OwnerUserID}); err != nil {
+		return Approved{}, err
+	}
+	owner, err := q.GetUser(ctx, o.OwnerUserID)
+	if err != nil {
+		return Approved{}, err
+	}
+	return Approved{
+		Reviewed:    Reviewed{Organization: o, OwnerEmail: owner.Email, OwnerDisplayName: owner.DisplayName},
+		Entitlement: e, Grant: grant,
+	}, nil
 }
 
 // Reject closes a Pending request with a reason the requester sees. Its

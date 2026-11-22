@@ -65,15 +65,49 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-// RunOnce syncs one batch of groups, then one of memberships, and returns
-// the larger batch size. Only database errors are returned.
+// RunOnce syncs one batch of groups, then one of memberships, then one of
+// accounts, and returns the largest batch size. Only database errors are returned.
 func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 	groups, err := w.syncGroups(ctx)
 	if err != nil {
 		return groups, err
 	}
 	members, err := w.syncMembers(ctx)
-	return max(groups, members), err
+	if err != nil {
+		return max(groups, members), err
+	}
+	users, err := w.syncUsers(ctx)
+	return max(groups, members, users), err
+}
+
+// syncUsers sets the enabled flag of accounts a Platform Admin disabled or
+// enabled (02-data-model §2). The Keycloak user id is the subject.
+func (w *Worker) syncUsers(ctx context.Context) (int, error) {
+	n := 0
+	err := pgx.BeginFunc(ctx, w.db, func(tx pgx.Tx) error {
+		q := w.q.WithTx(tx)
+		rows, err := q.ClaimDueUsers(ctx, BatchSize)
+		if err != nil {
+			return err
+		}
+		n = len(rows)
+		for _, u := range rows {
+			if kerr := w.kc.SetUserEnabled(ctx, u.Subject, u.Status == "Active"); kerr != nil {
+				w.log.Warn("user sync failed", "user_id", u.ID, "attempts", u.SyncAttempts+1, "err", kerr)
+				err = q.MarkUserFailed(ctx, store.MarkUserFailedParams{
+					ID: u.ID, LastError: truncate(kerr.Error()), RetryInSeconds: backoff.After(u.SyncAttempts + 1).Seconds(),
+				})
+			} else {
+				err = q.MarkUserSynced(ctx, u.ID)
+				w.log.Info("user synced", "user_id", u.ID, "status", u.Status)
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return n, err
 }
 
 // syncGroups claims due groups and holds their row locks until it has

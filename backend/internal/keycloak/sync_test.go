@@ -53,11 +53,7 @@ func setup(t *testing.T) (*pgxpool.Pool, *fakeKeycloak, *Worker) {
 		INSERT INTO group_members (group_id, user_id) VALUES ('grp-a', 'usr-ann');`); err != nil {
 		t.Fatal(err)
 	}
-	pool, err := pgxpool.New(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
+	pool := testdb.Pool(t, url)
 	kc := newFakeKeycloak(t, "kc-ann", "kc-bob")
 	return pool, kc, NewWorker(pool, kc.client(), quiet)
 }
@@ -358,5 +354,62 @@ func TestClientToken(t *testing.T) {
 	bad.cfg.ClientSecret = "wrong"
 	if _, _, err := bad.FindGroup(ctx, "g"); err == nil || !strings.Contains(err.Error(), "401") {
 		t.Fatalf("wrong secret: %v", err)
+	}
+}
+
+// A Platform Admin disables an account, then enables it again; Keycloak
+// follows, and a failure is retried with backoff.
+func TestSyncUserEnabled(t *testing.T) {
+	db, kc, w := setup(t)
+	runOnce(t, w) // the groups and Ann's membership
+	userState := func(id string) string {
+		t.Helper()
+		var s string
+		if err := db.QueryRow(context.Background(), `SELECT status || ':' || sync_status FROM users WHERE id = $1`, id).Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+
+	exec(t, db, `UPDATE users SET status = 'Disabled', sync_status = 'Pending' WHERE id = 'usr-bob'`)
+	runOnce(t, w)
+	if !kc.isDisabled("kc-bob") || userState("usr-bob") != "Disabled:Synced" || kc.isDisabled("kc-ann") {
+		t.Fatalf("disable: keycloak %v, row %s", kc.isDisabled("kc-bob"), userState("usr-bob"))
+	}
+
+	kc.set(func(f *fakeKeycloak) {
+		f.before = func(r *http.Request) int {
+			if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/users/kc-bob") {
+				return http.StatusServiceUnavailable
+			}
+			return 0
+		}
+	})
+	exec(t, db, `UPDATE users SET status = 'Active', sync_status = 'Pending' WHERE id = 'usr-bob'`)
+	runOnce(t, w)
+	var attempts int
+	if err := db.QueryRow(context.Background(), `SELECT sync_attempts FROM users WHERE id = 'usr-bob'`).Scan(&attempts); err != nil {
+		t.Fatal(err)
+	}
+	if userState("usr-bob") != "Active:Error" || attempts != 1 || !kc.isDisabled("kc-bob") {
+		t.Fatalf("failed enable: row %s attempts %d", userState("usr-bob"), attempts)
+	}
+	kc.set(func(f *fakeKeycloak) { f.before = nil })
+	exec(t, db, `UPDATE users SET next_sync_at = now() WHERE id = 'usr-bob'`)
+	runOnce(t, w)
+	if kc.isDisabled("kc-bob") || userState("usr-bob") != "Active:Synced" {
+		t.Fatalf("enable after recovery: keycloak %v, row %s", kc.isDisabled("kc-bob"), userState("usr-bob"))
+	}
+
+	// Disabling an account Keycloak no longer has succeeds; enabling it does not.
+	exec(t, db, `INSERT INTO users (id, issuer, subject, status, sync_status) VALUES ('usr-gone', 'iss', 'kc-gone', 'Disabled', 'Pending')`)
+	runOnce(t, w)
+	if userState("usr-gone") != "Disabled:Synced" {
+		t.Fatalf("disable a user Keycloak lost: %s", userState("usr-gone"))
+	}
+	exec(t, db, `UPDATE users SET status = 'Active', sync_status = 'Pending' WHERE id = 'usr-gone'`)
+	runOnce(t, w)
+	if userState("usr-gone") != "Active:Error" {
+		t.Fatalf("enable a user Keycloak lost: %s", userState("usr-gone"))
 	}
 }

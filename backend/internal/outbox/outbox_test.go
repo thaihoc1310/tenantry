@@ -59,11 +59,7 @@ func newDB(t *testing.T) *pgxpool.Pool {
 		VALUES ('cluster-a', 'Cluster A', 'Ready', 'https://kube-a.test', 'https://console-a.test', 'apps.test');`); err != nil {
 		t.Fatal(err)
 	}
-	pool, err := pgxpool.New(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
+	pool := testdb.Pool(t, url)
 	return pool
 }
 

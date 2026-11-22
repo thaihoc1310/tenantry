@@ -7,8 +7,6 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/thaihoc1310/tenantry/backend/internal/housekeeping"
 	"github.com/thaihoc1310/tenantry/backend/internal/testdb"
 	"github.com/thaihoc1310/tenantry/backend/migrations"
@@ -40,10 +38,7 @@ func TestHousekeeping(t *testing.T) {
 		  ('usr-a', 'new', 'POST', '/x', decode(repeat('00', 32), 'hex'), 201, now() - interval '23 hours');`); err != nil {
 		t.Fatal(err)
 	}
-	pool, err := pgxpool.New(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
+	pool := testdb.Pool(t, url)
 	defer pool.Close()
 
 	if err := housekeeping.RunOnce(ctx, pool, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {

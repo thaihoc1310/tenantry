@@ -1,0 +1,24 @@
+{
+  "request": {
+    "maxMembers": 30,
+    "maxGroups": 10,
+    "maxWorkspacesTotal": 8
+  },
+  "responses": {
+    "200": {
+      "maxMembers": 30,
+      "maxGroups": 10,
+      "maxWorkspacesTotal": 8
+    },
+    "409": {
+      "code": "ENTITLEMENT_BELOW_USAGE",
+      "message": "maxMembers cannot go below 3, what the organization uses (at least 3 for groups: the default ones)",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K",
+      "details": {
+        "limit": "maxMembers",
+        "used": 3,
+        "requested": 2
+      }
+    }
+  }
+}

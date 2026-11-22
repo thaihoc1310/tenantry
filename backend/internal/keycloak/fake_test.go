@@ -16,14 +16,15 @@ import (
 type fakeKeycloak struct {
 	srv *httptest.Server
 
-	mu      sync.Mutex
-	token   string                     // the access token currently valid
-	groups  map[string]string          // id -> name
-	users   map[string]bool            // Keycloak user ids
-	members map[string]map[string]bool // group id -> user ids
-	calls   map[string]int             // "METHOD /path pattern" -> count
-	tokens  int                        // token requests
-	nextID  int
+	mu       sync.Mutex
+	token    string                     // the access token currently valid
+	groups   map[string]string          // id -> name
+	users    map[string]bool            // Keycloak user ids
+	disabled map[string]bool            // users whose account is off
+	members  map[string]map[string]bool // group id -> user ids
+	calls    map[string]int             // "METHOD /path pattern" -> count
+	tokens   int                        // token requests
+	nextID   int
 
 	// before may answer a request instead of the fake (non-zero status);
 	// after runs once the fake handled it. Both run outside the lock.
@@ -40,7 +41,7 @@ const (
 func newFakeKeycloak(t *testing.T, users ...string) *fakeKeycloak {
 	f := &fakeKeycloak{
 		token: "token-1", groups: map[string]string{}, users: map[string]bool{},
-		members: map[string]map[string]bool{}, calls: map[string]int{},
+		members: map[string]map[string]bool{}, calls: map[string]int{}, disabled: map[string]bool{},
 	}
 	for _, u := range users {
 		f.users[u] = true
@@ -53,6 +54,7 @@ func newFakeKeycloak(t *testing.T, users ...string) *fakeKeycloak {
 		"DELETE /admin/realms/tenantry/groups/{id}":                 f.deleteGroup,
 		"PUT /admin/realms/tenantry/users/{user}/groups/{group}":    f.addMember,
 		"DELETE /admin/realms/tenantry/users/{user}/groups/{group}": f.removeMember,
+		"PUT /admin/realms/tenantry/users/{user}":                   f.setEnabled,
 	}
 	for pattern, h := range admin {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
@@ -207,4 +209,25 @@ func (f *fakeKeycloak) tokenCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.tokens
+}
+
+func (f *fakeKeycloak) setEnabled(w http.ResponseWriter, r *http.Request) {
+	user := r.PathValue("user")
+	var body struct{ Enabled *bool }
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Enabled == nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if !f.users[user] {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	f.disabled[user] = !*body.Enabled
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (f *fakeKeycloak) isDisabled(user string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.disabled[user]
 }

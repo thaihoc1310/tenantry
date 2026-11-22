@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/store"
 	"github.com/thaihoc1310/tenantry/backend/internal/testdb"
@@ -36,10 +35,7 @@ func TestIdempotentChangeAndResponseCommitTogether(t *testing.T) {
 	if _, err := sqlDB.Exec(`INSERT INTO users (id, issuer, subject) VALUES ('usr-a', 'iss', 'a')`); err != nil {
 		t.Fatal(err)
 	}
-	db, err := pgxpool.New(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := testdb.Pool(t, url)
 	defer db.Close()
 
 	// The handler creates a user through store.InTx, as services do, then

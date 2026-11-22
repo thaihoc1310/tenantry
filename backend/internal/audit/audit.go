@@ -19,6 +19,9 @@ const (
 	OrganizationUpdate  = "organization.update"
 	OrganizationApprove = "organization.approve"
 	OrganizationReject  = "organization.reject"
+	EntitlementUpdate   = "organization_entitlement.update"
+	UserDisable         = "user.disable"
+	UserEnable          = "user.enable"
 	OperationRetry      = "operation.retry"
 
 	InvitationCreate = "invitation.create"

@@ -51,3 +51,20 @@ WHERE group_id = @group_id AND user_id = @user_id;
 -- name: DeleteMemberRow :exec
 -- A membership tombstone Keycloak has caught up with.
 DELETE FROM group_members WHERE group_id = $1 AND user_id = $2;
+
+-- name: ClaimDueUsers :many
+-- Accounts an Admin disabled or enabled, for Keycloak's enabled flag.
+SELECT * FROM users
+WHERE sync_status <> 'Synced' AND next_sync_at <= now()
+ORDER BY next_sync_at
+LIMIT $1
+FOR UPDATE SKIP LOCKED;
+
+-- name: MarkUserSynced :exec
+UPDATE users SET sync_status = 'Synced', sync_attempts = 0, last_error = '', updated_at = now() WHERE id = $1;
+
+-- name: MarkUserFailed :exec
+UPDATE users
+SET sync_status = 'Error', sync_attempts = sync_attempts + 1, last_error = @last_error,
+    next_sync_at = now() + make_interval(secs => @retry_in_seconds::float8), updated_at = now()
+WHERE id = @id;

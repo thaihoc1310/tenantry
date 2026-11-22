@@ -128,11 +128,7 @@ func newAPIWithIssuer(t *testing.T, issuer string) (http.Handler, *pgxpool.Pool)
 		t.Fatal(err)
 	}
 
-	pool, err := pgxpool.New(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
+	pool := testdb.Pool(t, url)
 	a, err := auth.New(pool, config.Auth{
 		Issuer: issuer, ClientID: "portal", ClientSecret: "portal-secret", PublicURL: publicURL, SessionKey: testKey,
 	})

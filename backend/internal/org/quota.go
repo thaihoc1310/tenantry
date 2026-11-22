@@ -67,13 +67,9 @@ func (s *Service) Quota(ctx context.Context, userID, idOrSlug string) (Quota, er
 }
 
 func (s *Service) Usage(ctx context.Context, userID, idOrSlug string) (Usage, error) {
-	q, err := s.Quota(ctx, userID, idOrSlug)
+	o, err := s.manage(ctx, userID, idOrSlug)
 	if err != nil {
 		return Usage{}, err
 	}
-	c, err := s.q.CountOrganizationUsage(ctx, q.Org.ID)
-	if err != nil {
-		return Usage{}, err
-	}
-	return Usage{Quota: q, Members: c.Members, Groups: c.Groups, Allocations: reservation.Allocations(q.Grants)}, nil
+	return s.usageOf(ctx, s.q, o)
 }

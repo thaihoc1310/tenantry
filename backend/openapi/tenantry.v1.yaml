@@ -726,6 +726,180 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createAdminOrganization
+      security: [{ session: [], csrf: [] }]
+      summary: Create an Active organization for a customer, with its owner, entitlement and default cluster grant (Platform Admin)
+      description: |
+        One transaction, like an approval (architecture/03-flows.md §2a): the
+        organization is Active at once, the owner is its OrgOwner and joins
+        `admins`, and the default groups reach Keycloak asynchronously. The
+        owner must have logged in to the portal at least once (422
+        `OWNER_USER_NOT_FOUND`): there is no invitation to become owner, since
+        an organization is never without its one OrgOwner.
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKeyRequired"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminOrganizationCreate" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovedOrganization" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409":
+          description: |
+            `SLUG_TAKEN`: another organization has the slug.
+            `CLUSTER_NOT_READY`: the grant's cluster is not Ready.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "422":
+          description: |
+            `OWNER_USER_NOT_FOUND`: nobody with this email has logged in.
+            `IDEMPOTENCY_KEY_REUSED`: the key came with another request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /admin/organizations/{orgId}:
+    parameters:
+      - $ref: "#/components/parameters/adminOrgId"
+    get:
+      operationId: getAdminOrganization
+      summary: One organization with its entitlement, cluster grants and usage (Platform Admin)
+      description: |
+        `usage` gives the same numbers as `GET /organizations/{orgId}/usage`.
+        A Pending or Rejected request has no entitlement, grants or usage yet.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminOrganizationDetail" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /admin/organizations/{orgId}/entitlement:
+    parameters:
+      - $ref: "#/components/parameters/adminOrgId"
+    put:
+      operationId: putAdminEntitlement
+      security: [{ session: [], csrf: [] }]
+      summary: Change an organization's entitlement (Platform Admin)
+      description: |
+        Every limit must stay at or above what the organization uses, and
+        `maxGroups` at 3 or more (the default groups count): otherwise 409
+        `ENTITLEMENT_BELOW_USAGE` with `details.limit` (the first limit too
+        low), `details.used` and `details.requested`. The audit event keeps
+        the values before and after.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Entitlement" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Entitlement" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: |
+            `ENTITLEMENT_BELOW_USAGE`: a limit below what is used.
+            `ORG_NOT_ACTIVE`: a request still under review, or rejected.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /admin/users:
+    get:
+      operationId: listAdminUsers
+      summary: Users who have logged in, by email (Platform Admin)
+      description: |
+        Ordered by email. `q` keeps those whose email or display name
+        contains it, case-insensitively.
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string, maxLength: 254 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          description: Opaque; pass `nextCursor` from the previous page.
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminUserList" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /admin/users/{userId}:disable:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema: { type: string, maxLength: 64 }
+    post:
+      operationId: disableUser
+      security: [{ session: [], csrf: [] }]
+      summary: Disable a user's account (Platform Admin)
+      description: |
+        One transaction: `status=Disabled`, every portal session of the user
+        ends, and the group sync worker disables the account in Keycloak
+        (`syncStatus` Pending until it has). A Platform Admin cannot disable
+        themselves. Disabling a disabled user changes nothing.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminUser" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /admin/users/{userId}:enable:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema: { type: string, maxLength: 64 }
+    post:
+      operationId: enableUser
+      security: [{ session: [], csrf: [] }]
+      summary: Enable a disabled user's account again (Platform Admin)
+      description: The group sync worker enables the account in Keycloak. Enabling an active user changes nothing.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminUser" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
 
   /admin/organizations/{orgId}:approve:
     parameters:
@@ -1078,9 +1252,12 @@ components:
         maxMembers: { type: integer, minimum: 1, maximum: 10000 }
         maxGroups:
           type: integer
-          minimum: 3
+          minimum: 0
           maximum: 1000
-          description: Includes the three default groups.
+          description: |
+            Includes the three default groups, so at least 3: fewer is
+            `VALIDATION_FAILED` when approving or creating an organization,
+            and `ENTITLEMENT_BELOW_USAGE` when changing an entitlement.
         maxWorkspacesTotal: { type: integer, minimum: 0, maximum: 1000 }
 
     Quantity:
@@ -1162,6 +1339,49 @@ components:
       properties:
         entitlement: { $ref: "#/components/schemas/Entitlement" }
         clusterGrant: { $ref: "#/components/schemas/ClusterGrantInput" }
+
+    AdminOrganizationCreate:
+      type: object
+      required: [slug, displayName, ownerEmail, entitlement, clusterGrant]
+      additionalProperties: false
+      properties:
+        slug: { type: string, minLength: 3, maxLength: 20 }
+        displayName: { type: string, minLength: 1, maxLength: 80 }
+        description: { type: string, maxLength: 500 }
+        ownerEmail: { type: string, minLength: 3, maxLength: 254, description: Compared lowercase }
+        entitlement: { $ref: "#/components/schemas/Entitlement" }
+        clusterGrant: { $ref: "#/components/schemas/ClusterGrantInput" }
+
+    AdminOrganizationDetail:
+      type: object
+      required: [organization, clusterGrants]
+      properties:
+        organization: { $ref: "#/components/schemas/AdminOrganization" }
+        entitlement: { $ref: "#/components/schemas/Entitlement" }
+        clusterGrants:
+          type: array
+          items: { $ref: "#/components/schemas/ClusterGrant" }
+        usage: { $ref: "#/components/schemas/OrganizationUsage" }
+
+    AdminUser:
+      type: object
+      required: [id, displayName, status, syncStatus, createdAt]
+      properties:
+        id: { type: string }
+        email: { type: string }
+        displayName: { type: string }
+        status: { type: string, enum: [Active, Disabled] }
+        syncStatus: { $ref: "#/components/schemas/SyncStatus" }
+        createdAt: { type: string, format: date-time }
+
+    AdminUserList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AdminUser" }
+        nextCursor: { type: string }
 
     ApprovedOrganization:
       type: object

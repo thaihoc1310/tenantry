@@ -5,6 +5,9 @@
 // secret is as strong as a Platform Admin (architecture/06 §7): only the
 // group sync Deployment holds it.
 //
+// It also turns accounts on and off when a Platform Admin disables or
+// enables a user (M5).
+//
 // Every call is idempotent: creating a group that exists, adding a member
 // who is in, removing one who is not, deleting a deleted group all succeed,
 // so a worker that dies half-way just runs again.
@@ -195,6 +198,23 @@ func (c *Client) AddMember(ctx context.Context, userID, groupID string) error {
 func (c *Client) RemoveMember(ctx context.Context, userID, groupID string) error {
 	return c.expect(ctx, http.MethodDelete, "/users/"+url.PathEscape(userID)+"/groups/"+url.PathEscape(groupID),
 		"remove "+userID+" from group "+groupID, http.StatusNotFound)
+}
+
+// SetUserEnabled turns the user's account on or off. Disabling a user who is
+// gone succeeds; enabling one is ErrUserNotFound.
+func (c *Client) SetUserEnabled(ctx context.Context, userID string, enabled bool) error {
+	resp, err := c.admin(ctx, http.MethodPut, "/users/"+url.PathEscape(userID), map[string]bool{"enabled": enabled})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300, resp.StatusCode == http.StatusNotFound && !enabled:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return fmt.Errorf("keycloak enable %s: %w", userID, ErrUserNotFound)
+	}
+	return fmt.Errorf("keycloak set enabled=%t on %s: %s", enabled, userID, status(resp))
 }
 
 // expect makes a call whose success is 2xx or one of alsoOK.

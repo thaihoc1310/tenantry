@@ -107,6 +107,48 @@ func (q *Queries) ClaimDueMembers(ctx context.Context, limit int32) ([]ClaimDueM
 	return items, nil
 }
 
+const claimDueUsers = `-- name: ClaimDueUsers :many
+SELECT id, issuer, subject, email, display_name, status, created_at, updated_at, sync_status, sync_attempts, next_sync_at, last_error FROM users
+WHERE sync_status <> 'Synced' AND next_sync_at <= now()
+ORDER BY next_sync_at
+LIMIT $1
+FOR UPDATE SKIP LOCKED
+`
+
+// Accounts an Admin disabled or enabled, for Keycloak's enabled flag.
+func (q *Queries) ClaimDueUsers(ctx context.Context, limit int32) ([]User, error) {
+	rows, err := q.db.Query(ctx, claimDueUsers, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []User
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.Issuer,
+			&i.Subject,
+			&i.Email,
+			&i.DisplayName,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SyncStatus,
+			&i.SyncAttempts,
+			&i.NextSyncAt,
+			&i.LastError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteGroupRow = `-- name: DeleteGroupRow :exec
 DELETE FROM groups WHERE id = $1
 `
@@ -201,5 +243,32 @@ type MarkMemberSyncedParams struct {
 
 func (q *Queries) MarkMemberSynced(ctx context.Context, arg MarkMemberSyncedParams) error {
 	_, err := q.db.Exec(ctx, markMemberSynced, arg.GroupID, arg.UserID)
+	return err
+}
+
+const markUserFailed = `-- name: MarkUserFailed :exec
+UPDATE users
+SET sync_status = 'Error', sync_attempts = sync_attempts + 1, last_error = $1,
+    next_sync_at = now() + make_interval(secs => $2::float8), updated_at = now()
+WHERE id = $3
+`
+
+type MarkUserFailedParams struct {
+	LastError      string
+	RetryInSeconds float64
+	ID             string
+}
+
+func (q *Queries) MarkUserFailed(ctx context.Context, arg MarkUserFailedParams) error {
+	_, err := q.db.Exec(ctx, markUserFailed, arg.LastError, arg.RetryInSeconds, arg.ID)
+	return err
+}
+
+const markUserSynced = `-- name: MarkUserSynced :exec
+UPDATE users SET sync_status = 'Synced', sync_attempts = 0, last_error = '', updated_at = now() WHERE id = $1
+`
+
+func (q *Queries) MarkUserSynced(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, markUserSynced, id)
 	return err
 }

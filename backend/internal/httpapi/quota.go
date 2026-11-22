@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi/oapi"
+	"github.com/thaihoc1310/tenantry/backend/internal/org"
 	"github.com/thaihoc1310/tenantry/backend/internal/reservation"
 )
 
@@ -24,6 +25,10 @@ func (s server) GetUsage(ctx context.Context, req oapi.GetUsageRequestObject) (o
 	if err != nil {
 		return nil, err
 	}
+	return oapi.GetUsage200JSONResponse(toUsage(u)), nil
+}
+
+func toUsage(u org.Usage) oapi.OrganizationUsage {
 	e := u.Entitlement
 	var resp oapi.OrganizationUsage
 	resp.Organization.Members = oapi.UsageCount{Used: int(u.Members), Limit: int(e.MaxMembers)}
@@ -33,7 +38,7 @@ func (s server) GetUsage(ctx context.Context, req oapi.GetUsageRequestObject) (o
 	for i, g := range u.Grants {
 		resp.ClusterGrants = append(resp.ClusterGrants, grantUsage(g, u.Allocations[i]))
 	}
-	return oapi.GetUsage200JSONResponse(resp), nil
+	return resp
 }
 
 func grantUsage(g reservation.Grant, a reservation.Allocation) oapi.GrantUsage {
