@@ -1,0 +1,88 @@
+# A light Prometheus for the lab (IMPLEMENTATION-PLAN M12 item 1): the server
+# alone, on the system pool, 24h in memory-backed emptyDir, scraping only
+# Tenantry's own components. No Alertmanager, node exporter, kube-state-metrics
+# or Pushgateway: the lab has 3 CPU per node.
+alertmanager: {enabled: false}
+kube-state-metrics: {enabled: false}
+prometheus-node-exporter: {enabled: false}
+prometheus-pushgateway: {enabled: false}
+
+restricted: &restricted
+  allowPrivilegeEscalation: false
+  capabilities: {drop: [ALL]}
+  seccompProfile: {type: RuntimeDefault}
+
+configmapReload:
+  prometheus:
+    containerSecurityContext: *restricted
+    resources:
+      requests: {cpu: 5m, memory: 16Mi}
+      limits: {memory: 32Mi}
+
+server:
+  retention: 24h
+  persistentVolume: {enabled: false}
+  emptyDir: {sizeLimit: 2Gi}
+  global:
+    scrape_interval: 60s
+    evaluation_interval: 60s
+  containerSecurityContext: *restricted
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 512Mi}
+  nodeSelector: &system
+    tenantry.io/compute-pool: system
+  tolerations: &tolerate-system
+    - key: tenantry.io/compute-pool
+      operator: Equal
+      value: system
+      effect: NoSchedule
+
+# The chart's own scrape jobs (the whole cluster's Pods, nodes, cAdvisor...)
+# are off: only the jobs below, plus Prometheus itself.
+scrapeConfigs:
+  kubernetes-api-servers: {enabled: false}
+  kubernetes-nodes: {enabled: false}
+  kubernetes-nodes-cadvisor: {enabled: false}
+  kubernetes-service-endpoints: {enabled: false}
+  kubernetes-service-endpoints-slow: {enabled: false}
+  prometheus-pushgateway: {enabled: false}
+  kubernetes-services: {enabled: false}
+  kubernetes-pods: {enabled: false}
+  kubernetes-pods-slow: {enabled: false}
+
+# The chart's ClusterRole already allows nonResourceURLs /metrics (get), which
+# scraping kube-apiserver needs. The operator's metrics need more: the
+# ServiceAccount prometheus-server is bound to tenantry-operator-metrics-reader
+# by 90-observability.sh.
+serverFiles:
+  prometheus.yml:
+    scrape_configs:
+      - job_name: tenantry-operator
+        scheme: https
+        tls_config: {insecure_skip_verify: true}   # the operator's self-signed serving certificate
+        authorization:
+          credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        static_configs:
+          - targets: [tenantry-operator-metrics.tenantry-operator.svc:8443]
+      - job_name: capsule
+        static_configs:
+          - targets: [capsule-controller-manager-metrics-service.capsule-system.svc:8080]
+      - job_name: capsule-proxy
+        static_configs:
+          - targets: [capsule-proxy-metrics-service.capsule-system.svc:8080]
+      # Only the request counters and latency of kube-apiserver: its full
+      # /metrics has tens of thousands of series.
+      - job_name: kube-apiserver
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        authorization:
+          credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        static_configs:
+          - targets: [kubernetes.default.svc:443]
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: apiserver_request_total|apiserver_request_duration_seconds_(bucket|sum|count)
+            action: keep
+      # The backend's API and worker join here once they serve /metrics.
