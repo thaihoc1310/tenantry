@@ -7,10 +7,15 @@ manager:
     # Who Capsule treats as a tenant user. Group Sync keeps every user with a
     # Workspace binding in tenantry:tenant-users (M4), and kube-apiserver
     # prefixes token groups with oidc: (70-apiserver.sh). This replaces the
-    # chart's placeholder group projectcapsule.dev.
+    # chart's placeholder group projectcapsule.dev. The Workspace Operator
+    # counts too: an owner of every Tenant, it creates the Namespaces asked
+    # for on the portal, and Capsule only lets its users do that. Its
+    # namespace holds nothing else (architecture/06 §7).
     users:
       - kind: Group
         name: oidc:tenantry:tenant-users
+      - kind: Group
+        name: system:serviceaccounts:tenantry-operator
   resources:
     requests: {cpu: 50m, memory: 128Mi}
     limits: {memory: 512Mi}

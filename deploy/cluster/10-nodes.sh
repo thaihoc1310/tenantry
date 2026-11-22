@@ -12,8 +12,8 @@ for node in ${SYSTEM_NODES}; do
   kubectl taint node "${node}" tenantry.io/compute-pool=system:NoSchedule --overwrite
 done
 
-# A node granted to one Organization as a Dedicated node (M8) must leave
-# SHARED_NODES, or the next run puts it back into the shared pool.
-for node in ${SHARED_NODES}; do
-  kubectl label node "${node}" tenantry.io/compute-pool=shared-general --overwrite
-done
+# The shared pool's label (tenantry.io/compute-pool=<pool id>) is not set
+# here: the Workspace Operator puts it on the nodes PlatformSharedPool lists,
+# and takes it off the others (IMPLEMENTATION-PLAN §4.5). The provisioning
+# worker writes those CRs from the database (cluster_nodes.shared_pool_id,
+# set by the seed and by a Platform Admin on the portal).

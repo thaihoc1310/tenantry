@@ -27,6 +27,7 @@ for node in ${SYSTEM_NODES}; do
   check "${node} keeps other Pods off" \
     field_is "node/${node}" '{.spec.taints[?(@.key=="tenantry.io/compute-pool")].effect}' NoSchedule
 done
+# The operator labels the shared pool's nodes from PlatformSharedPool (M6).
 for node in ${SHARED_NODES}; do
   check "${node} is in the shared pool" \
     field_is "node/${node}" '{.metadata.labels.tenantry\.io/compute-pool}' shared-general
@@ -191,7 +192,8 @@ check "PodTolerationRestriction accepts a toleration its namespace allows" \
 capsule_users() {
   local got
   got="$(kubectl get capsuleconfiguration default -o jsonpath='{range .spec.users[*]}{.kind}:{.name}{" "}{end}')" || return 1
-  [[ "${got}" == "Group:oidc:tenantry:tenant-users " ]] || { echo "users are '${got}'"; return 1; }
+  [[ "${got}" == "Group:oidc:tenantry:tenant-users Group:system:serviceaccounts:tenantry-operator " ]] ||
+    { echo "users are '${got}'"; return 1; }
 }
 no_rights() { # subject: must not read Pods or Secrets anywhere
   if kubectl auth can-i list secrets --all-namespaces --as="$1" >/dev/null 2>&1 ||
@@ -201,12 +203,54 @@ no_rights() { # subject: must not read Pods or Secrets anywhere
 }
 
 check "Capsule is ready" field_is deployment/capsule-controller-manager '{.status.availableReplicas}' 1 capsule-system
-check "Capsule's tenant users are the group oidc:tenantry:tenant-users" capsule_users
+check "Capsule's users are oidc:tenantry:tenant-users and the operator's ServiceAccounts" capsule_users
 check "Capsule Proxy is ready" field_is deployment/capsule-proxy '{.status.availableReplicas}' 1 capsule-system
 check "https://${KUBE_HOST} (Capsule Proxy) accepts the token as oidc:<sub>" \
   accepts_keycloak_token "https://${KUBE_HOST}" "${le_roots}"
 check "Headlamp is ready" field_is deployment/headlamp '{.status.availableReplicas}' 1 headlamp-system
 check "https://${CONSOLE_HOST} (Headlamp) answers with a valid certificate" https_ok "https://${CONSOLE_HOST}/" "Headlamp"
 check "Headlamp's ServiceAccount has no Kubernetes rights" no_rights system:serviceaccount:headlamp-system:headlamp
+
+# ---- Workspace Operator (make deploy-operator, IMPLEMENTATION-PLAN M6) ------
+inventory_complete() {
+  local nodes reported
+  nodes="$(kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{" "}{end}')" || return 1
+  reported="$(kubectl get platformnodeinventory cluster -o jsonpath='{range .status.nodes[*]}{.name}{" "}{end}')" || return 1
+  [[ "${reported}" == "${nodes}" ]] || { echo "reports '${reported}', nodes are '${nodes}'"; return 1; }
+}
+# can_i SUBJECT_ARGS VERB RESOURCE WANT: kubectl auth can-i in cluster-verify.
+can_i() {
+  local got
+  # shellcheck disable=SC2086 # $1 holds several flags
+  got="$(kubectl auth can-i $1 "$2" "$3" -n cluster-verify 2>/dev/null)"
+  [[ "${got}" == "$4" ]] || { echo "can-i $2 $3 ($1): got ${got}, want $4"; return 1; }
+}
+# The Developer and Viewer roles, bound in cluster-verify the way Capsule binds
+# them in a Tenant's Namespaces (architecture/06 §8; envtest checks more).
+tenant_roles() {
+  local dev="--as=oidc:verify-dev --as-group=oidc:verify:dev" view="--as=oidc:verify-view --as-group=oidc:verify:view"
+  kubectl -n cluster-verify create rolebinding verify-developer --clusterrole=tenantry:tenant-developer \
+    --group=oidc:verify:dev --dry-run=client -o yaml | kubectl apply -f - >/dev/null || return 1
+  kubectl -n cluster-verify create rolebinding verify-viewer --clusterrole=tenantry:tenant-viewer \
+    --group=oidc:verify:view --dry-run=client -o yaml | kubectl apply -f - >/dev/null || return 1
+  local ok=0
+  can_i "${dev}" create deployments.apps yes && can_i "${dev}" create pods/exec yes &&
+    can_i "${dev}" get secrets no && can_i "${dev}" create rolebindings no && can_i "${dev}" create ingresses no &&
+    can_i "${view}" list pods yes && can_i "${view}" get pods/log yes &&
+    can_i "${view}" get secrets no && can_i "${view}" create pods/exec no && can_i "${view}" delete pods no || ok=1
+  kubectl -n cluster-verify delete rolebinding verify-developer verify-viewer >/dev/null || return 1
+  return "${ok}"
+}
+no_operator_rights() { # subject
+  if kubectl auth can-i create certificates.cert-manager.io --all-namespaces --as="$1" >/dev/null 2>&1 ||
+    kubectl auth can-i get secrets --all-namespaces --as="$1" >/dev/null 2>&1; then
+    echo "$1 can write Certificates or read Secrets"; return 1
+  fi
+}
+check "the Workspace Operator is ready" field_is deployment/tenantry-operator '{.status.availableReplicas}' 1 tenantry-operator
+check "PlatformNodeInventory reports every node" inventory_complete
+check "Developer and Viewer have the rights of architecture/06 §8, no more" tenant_roles
+check "the operator may not touch certificates or Secrets" \
+  no_operator_rights system:serviceaccount:tenantry-operator:tenantry-operator
 
 exit "${failed}"

@@ -1,0 +1,32 @@
+apiVersion: capsule.clastix.io/v1beta2
+kind: GlobalTenantResource
+metadata:
+  labels:
+    tenantry.io/cluster-id: cluster-a
+    tenantry.io/compute-mode: shared
+    tenantry.io/compute-pool: shared-general
+    tenantry.io/managed: "true"
+    tenantry.io/organization-id: org-01jabc
+    tenantry.io/workspace-id: ws-01jsol
+  name: acme-solar
+spec:
+  pruningOnDelete: true
+  resources:
+  - rawItems:
+    - apiVersion: v1
+      kind: LimitRange
+      metadata:
+        name: tenantry-defaults
+      spec:
+        limits:
+        - default:
+            cpu: 500m
+            memory: 512Mi
+          defaultRequest:
+            cpu: 100m
+            memory: 128Mi
+          type: Container
+  scope: Namespace
+  tenantSelector:
+    matchLabels:
+      tenantry.io/workspace-id: ws-01jsol

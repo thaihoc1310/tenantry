@@ -44,8 +44,16 @@ rules:
 - apiGroups:
   - capsule.clastix.io
   resources:
+  - globalresourcequotas
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - capsule.clastix.io
+  resources:
+  - globaltenantresources
   - proxysettings
-  - tenantresources
   - tenants
   verbs:
   - create

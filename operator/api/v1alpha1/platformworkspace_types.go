@@ -191,6 +191,9 @@ type RouteStatus struct {
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
 	Ready     bool   `json:"ready"`
+	// Message says why when ready is false.
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
 // +kubebuilder:object:root=true

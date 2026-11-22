@@ -4,6 +4,14 @@ image:
   tag: ""            # defaults to the chart appVersion
   pullPolicy: IfNotPresent
 
+# Registries tenants may pull images from (a Capsule rule on the Tenant).
+# With docker.io, Docker Hub short names (nginx, bitnami/redis) count too.
+allowedRegistries:
+  - docker.io
+  - ghcr.io
+  - quay.io
+  - registry.k8s.io
+
 # Log level of the operator: debug, info or error.
 logLevel: info
 

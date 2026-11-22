@@ -1,0 +1,11 @@
+# tenantry-operator on this cluster (make deploy-operator). The image is
+# loaded into the system nodes' containerd, like the backend's.
+
+# Central plane: the system pool (architecture/05-network-and-scheduling.md §1).
+nodeSelector:
+  tenantry.io/compute-pool: system
+tolerations:
+  - key: tenantry.io/compute-pool
+    operator: Equal
+    value: system
+    effect: NoSchedule

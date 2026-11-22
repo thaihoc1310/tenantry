@@ -161,3 +161,11 @@ operator-chart-lint: ## Lint and render the operator chart, and check its RBAC a
 		assert len(crds) == 4 and all(c["metadata"]["annotations"].get("helm.sh/resource-policy") == "keep" for c in crds), "want 4 CRDs, each kept on uninstall"; \
 		assert all(c["spec"]["scope"] == "Cluster" for c in crds), "every tenantry.io CRD is cluster-scoped"'
 	@diff -r $(OPERATOR)/config/crd/bases $(OPERATOR_CHART)/files/crds && diff $(OPERATOR)/config/rbac/role.yaml $(OPERATOR_CHART)/files/role.yaml || { echo "chart is behind operator/config: run make operator-generate"; exit 1; }
+
+.PHONY: run-operator deploy-operator
+KUBE_CONTEXT ?= hocbt@kubernetes
+run-operator: ## Run the operator locally against KUBE_CONTEXT, with your kubeconfig's rights (stop the in-cluster one first)
+	cd $(OPERATOR) && go run ./cmd/manager --context=$(KUBE_CONTEXT) \
+		--service-account=system:serviceaccount:tenantry-operator:tenantry-operator --zap-devel
+deploy-operator: ## Build and load the operator image, then install or upgrade its chart on the lab (values in deploy/cluster/values)
+	deploy/cluster/deploy-operator.sh

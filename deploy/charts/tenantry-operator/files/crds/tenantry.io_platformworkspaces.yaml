@@ -331,6 +331,9 @@ spec:
               routes:
                 items:
                   properties:
+                    message:
+                      description: Message says why when ready is false.
+                      type: string
                     name:
                       type: string
                     namespace:

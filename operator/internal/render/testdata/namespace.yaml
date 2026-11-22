@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    capsule.clastix.io/tenant: acme-solar
+    tenantry.io/cluster-id: cluster-a
+    tenantry.io/compute-mode: shared
+    tenantry.io/compute-pool: shared-general
+    tenantry.io/managed: "true"
+    tenantry.io/organization-id: org-01jabc
+    tenantry.io/workspace-id: ws-01jsol
+  name: acme-solar-frontend
