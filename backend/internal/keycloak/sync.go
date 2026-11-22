@@ -167,25 +167,18 @@ func (w *Worker) syncMembers(ctx context.Context) (int, error) {
 
 // reconcileMember adds a live membership in Keycloak or removes a
 // tombstone's, then brings the person's TenantUsers membership up to date.
-// The Keycloak user id is the subject of the person's tokens.
+// The Keycloak user id is the subject of the person's tokens. A removal logs
+// nobody out: Keycloak runs the group mapper again on every refresh, so the
+// next token of the portal, Headlamp or kubelogin no longer names the group
+// (architecture/06 §5).
 func (w *Worker) reconcileMember(ctx context.Context, m store.ClaimDueMembersRow) error {
 	user, group := m.Subject, *m.KeycloakGroupID // ClaimDueMembers only returns synced groups
 	if m.DeletedAt == nil {
 		if err := w.kc.AddMember(ctx, user, group); err != nil {
 			return err
 		}
-	} else {
-		if err := w.kc.RemoveMember(ctx, user, group); err != nil {
-			return err
-		}
-		// The group gave Kubernetes access: log the person out, so no refresh
-		// token gets a token that still names the group (architecture/06 §5).
-		// Logout ends every session of the user, the portal's included.
-		if groupHasBindings(m.GroupID) {
-			if err := w.kc.Logout(ctx, user); err != nil {
-				return err
-			}
-		}
+	} else if err := w.kc.RemoveMember(ctx, user, group); err != nil {
+		return err
 	}
 	return w.syncTenantUsers(ctx, m.UserID, user)
 }
@@ -212,15 +205,14 @@ func (w *Worker) syncTenantUsers(ctx context.Context, userID, kcUser string) err
 	return err
 }
 
-// groupHasBindings and userHasBindings will read workspace_group_bindings.
+// userHasBindings will read workspace_group_bindings.
 //
-// ponytail: always false until the bindings table exists (M6). Then they
-// query it, and every transaction that changes the set of bindings (create
+// ponytail: always false until the bindings table exists (M6). Then it
+// queries it, and every transaction that changes the set of bindings (create
 // or delete a Workspace, PUT/DELETE a binding, delete a group) sets the
 // group_members of the affected groups back to Pending, so this worker
 // recomputes TenantUsers for each person (IMPLEMENTATION-PLAN §5.2).
-func groupHasBindings(string) bool { return false }
-func userHasBindings(string) bool  { return false }
+func userHasBindings(string) bool { return false }
 
 // truncate keeps last_error short, without cutting a character in two
 // (PostgreSQL refuses invalid UTF-8).

@@ -50,9 +50,6 @@ func TestLiveKeycloak(t *testing.T) {
 	if err := c.RemoveMember(ctx, nobody, id); err != nil {
 		t.Fatalf("remove an unknown user: %v", err)
 	}
-	if err := c.Logout(ctx, nobody); err != nil {
-		t.Fatalf("log out an unknown user: %v", err)
-	}
 	if user := os.Getenv("KEYCLOAK_TEST_USER_ID"); user != "" {
 		for range 2 {
 			if err := c.AddMember(ctx, user, id); err != nil {

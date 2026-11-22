@@ -16,15 +16,14 @@ import (
 type fakeKeycloak struct {
 	srv *httptest.Server
 
-	mu        sync.Mutex
-	token     string                     // the access token currently valid
-	groups    map[string]string          // id -> name
-	users     map[string]bool            // Keycloak user ids
-	members   map[string]map[string]bool // group id -> user ids
-	loggedOut []string
-	calls     map[string]int // "METHOD /path pattern" -> count
-	tokens    int            // token requests
-	nextID    int
+	mu      sync.Mutex
+	token   string                     // the access token currently valid
+	groups  map[string]string          // id -> name
+	users   map[string]bool            // Keycloak user ids
+	members map[string]map[string]bool // group id -> user ids
+	calls   map[string]int             // "METHOD /path pattern" -> count
+	tokens  int                        // token requests
+	nextID  int
 
 	// before may answer a request instead of the fake (non-zero status);
 	// after runs once the fake handled it. Both run outside the lock.
@@ -54,7 +53,6 @@ func newFakeKeycloak(t *testing.T, users ...string) *fakeKeycloak {
 		"DELETE /admin/realms/tenantry/groups/{id}":                 f.deleteGroup,
 		"PUT /admin/realms/tenantry/users/{user}/groups/{group}":    f.addMember,
 		"DELETE /admin/realms/tenantry/users/{user}/groups/{group}": f.removeMember,
-		"POST /admin/realms/tenantry/users/{user}/logout":           f.logout,
 	}
 	for pattern, h := range admin {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
@@ -168,16 +166,6 @@ func (f *fakeKeycloak) removeMember(w http.ResponseWriter, r *http.Request) {
 		delete(f.members[group], user)
 		w.WriteHeader(http.StatusNoContent)
 	}
-}
-
-func (f *fakeKeycloak) logout(w http.ResponseWriter, r *http.Request) {
-	user := r.PathValue("user")
-	if !f.users[user] {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	f.loggedOut = append(f.loggedOut, user)
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // groupNamed returns the id of the group called name, or "".

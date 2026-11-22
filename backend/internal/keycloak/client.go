@@ -197,12 +197,6 @@ func (c *Client) RemoveMember(ctx context.Context, userID, groupID string) error
 		"remove "+userID+" from group "+groupID, http.StatusNotFound)
 }
 
-// Logout ends every session of the user, so their refresh tokens get no new
-// tokens (architecture/06 §5); a user who is gone has no sessions.
-func (c *Client) Logout(ctx context.Context, userID string) error {
-	return c.expect(ctx, http.MethodPost, "/users/"+url.PathEscape(userID)+"/logout", "logout "+userID, http.StatusNotFound)
-}
-
 // expect makes a call whose success is 2xx or one of alsoOK.
 func (c *Client) expect(ctx context.Context, method, path, what string, alsoOK ...int) error {
 	resp, err := c.admin(ctx, method, path, nil)

@@ -130,9 +130,6 @@ func TestSync(t *testing.T) {
 	if kc.isMember("kc-ann", groupA) || rowState(t, db, "grp-a", "usr-ann") != "absent" {
 		t.Fatalf("removal not synced: %s", rowState(t, db, "grp-a", "usr-ann"))
 	}
-	if len(kc.loggedOut) != 0 {
-		t.Fatal("logged out although the group had no Workspace binding")
-	}
 
 	// So does a deleted group, with its memberships.
 	exec(t, db, `INSERT INTO group_members (group_id, user_id) VALUES ('grp-b', 'usr-bob')`)
