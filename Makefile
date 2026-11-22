@@ -168,6 +168,10 @@ operator-chart-lint: ## Lint and render the operator chart, and check its RBAC a
 		assert [d["rules"] for d in token] == [[{"apiGroups": [""], "resources": ["serviceaccounts/token"], "resourceNames": ["tenantry-proxy-probe"], "verbs": ["create"]}]], "the only Role creates the probe token"'
 	@diff -r $(OPERATOR)/config/crd/bases $(OPERATOR_CHART)/files/crds && diff $(OPERATOR)/config/rbac/role.yaml $(OPERATOR_CHART)/files/role.yaml || { echo "chart is behind operator/config: run make operator-generate"; exit 1; }
 
+.PHONY: operator-isolation
+operator-isolation: ## Cluster side of the isolation suite (PRODUCT-PLAN §24.4) against KUBE_CONTEXT; creates and deletes optest-iso-* Workspaces
+	cd $(OPERATOR) && KUBE_CONTEXT=$(KUBE_CONTEXT) go test -tags lab -count=1 -v -timeout 20m ./test/isolation
+
 .PHONY: run-operator deploy-operator
 KUBE_CONTEXT ?= hocbt@kubernetes
 run-operator: ## Run the operator locally against KUBE_CONTEXT, with your kubeconfig's rights (stop the in-cluster one first)
