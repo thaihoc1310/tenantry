@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	v1 "github.com/thaihoc1310/tenantry/operator/api/v1alpha1"
+	"github.com/thaihoc1310/tenantry/operator/internal/metrics"
 	"github.com/thaihoc1310/tenantry/operator/internal/render"
 )
 
@@ -113,6 +114,7 @@ func (p *ProxyProber) ProxyAccess(ctx context.Context, scheme *runtime.Scheme, w
 		}
 	}
 	res = p.probe(ctx, ws, names)
+	metrics.ProxyProbes.WithLabelValues(res.Condition.Reason).Inc()
 	p.mu.Lock()
 	if p.last == nil {
 		p.last = map[string]probeMemo{}

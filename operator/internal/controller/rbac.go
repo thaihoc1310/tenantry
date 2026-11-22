@@ -32,5 +32,8 @@ package controller
 // only, held by a ValidatingAdmissionPolicy from M8 (architecture/06 §7).
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups="";events.k8s.io,resources=events,verbs=create;patch
+// The metrics endpoint checks a scraper's token and right.
+// +kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
+// +kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
 // The token of the proxyaccess probe is a namespaced Role of the chart,
 // limited to that one ServiceAccount (templates/rbac.yaml).

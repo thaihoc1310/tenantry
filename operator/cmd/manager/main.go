@@ -17,10 +17,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	tenantryv1alpha1 "github.com/thaihoc1310/tenantry/operator/api/v1alpha1"
 	"github.com/thaihoc1310/tenantry/operator/internal/controller"
+	"github.com/thaihoc1310/tenantry/operator/internal/metrics"
 	"github.com/thaihoc1310/tenantry/operator/internal/render"
 	"github.com/thaihoc1310/tenantry/operator/internal/subreconciler"
 )
@@ -33,8 +35,9 @@ func main() {
 	// Every object is reconciled again this often, so drift that no watch
 	// reports is restored too (IMPLEMENTATION-PLAN M7, decision 8).
 	flag.DurationVar(&resync, "resync", 5*time.Minute, "how often every object is reconciled again")
-	// Metrics stay off until M12 scrapes them (plain HTTP, inside the cluster).
-	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "address of the metrics endpoint, 0 to disable")
+	// Metrics over HTTPS; a scraper needs a token allowed to get /metrics
+	// (ClusterRole tenantry-operator-metrics-reader of the chart).
+	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "address of the HTTPS metrics endpoint, 0 to disable")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "address of /healthz and /readyz")
 	flag.StringVar(&serviceAccount, "service-account", "",
 		"the operator's own username, system:serviceaccount:<namespace>:<name>: made an owner of every Tenant")
@@ -69,8 +72,10 @@ func main() {
 		os.Exit(1)
 	}
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
+		Scheme: scheme,
+		Metrics: metricsserver.Options{
+			BindAddress: metricsAddr, SecureServing: true, FilterProvider: filters.WithAuthenticationAndAuthorization,
+		},
 		HealthProbeBindAddress: probeAddr,
 		Cache:                  cache.Options{SyncPeriod: &resync},
 	})
@@ -84,6 +89,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	metrics.Register(mgr.GetClient())
 	must("setting up platformworkspace", (&controller.PlatformWorkspaceReconciler{
 		Client:   mgr.GetClient(),
 		Recorder: mgr.GetEventRecorder("tenantry-operator"),

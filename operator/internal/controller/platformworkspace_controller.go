@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	v1 "github.com/thaihoc1310/tenantry/operator/api/v1alpha1"
+	"github.com/thaihoc1310/tenantry/operator/internal/metrics"
 	"github.com/thaihoc1310/tenantry/operator/internal/observe"
 	"github.com/thaihoc1310/tenantry/operator/internal/render"
 	"github.com/thaihoc1310/tenantry/operator/internal/subreconciler"
@@ -138,6 +139,9 @@ func (r *PlatformWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		wait = wait || res.Wait
 	}
 	ws.Status.Phase = phase(before.Status.Phase, ws.Status.Conditions, applicable(ws, r.Proxy != nil))
+	if ws.Status.Phase == v1.PhaseReady && (before.Status.Phase == "" || before.Status.Phase == v1.PhaseProvisioning) {
+		metrics.ProvisionSeconds.Observe(time.Since(ws.CreationTimestamp.Time).Seconds())
+	}
 	ws.Status.ObservedGeneration = ws.Generation
 	if err := r.patchStatus(ctx, before, ws); err != nil {
 		return ctrl.Result{}, err

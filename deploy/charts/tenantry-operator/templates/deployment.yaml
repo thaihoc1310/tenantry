@@ -44,10 +44,17 @@ spec:
             - --service-account=system:serviceaccount:{{ .Release.Namespace }}:tenantry-operator
             - --allowed-registries={{ join "," .Values.allowedRegistries }}
             - --zap-log-level={{ .Values.logLevel }}
+            {{- if .Values.metrics.enabled }}
+            - --metrics-bind-address=:8443
+            {{- end }}
             - --zap-encoder=json
           ports:
             - name: probes
               containerPort: 8081
+            {{- if .Values.metrics.enabled }}
+            - name: metrics
+              containerPort: 8443
+            {{- end }}
           livenessProbe:
             httpGet: { path: /healthz, port: probes }
           readinessProbe:
