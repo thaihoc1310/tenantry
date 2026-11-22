@@ -1,4 +1,4 @@
-// The two Go modules of the repository: the backend builds the operator's
+// The Go modules of the repository: the backend builds the operator's
 // CRs from its API types (operator/api/v1alpha1). backend/go.mod also
 // replaces the operator module with ../operator, so a build without this
 // file (the image, GOWORK=off) resolves it the same way.
@@ -7,4 +7,5 @@ go 1.26.0
 use (
 	./backend
 	./operator
+	./test/e2e // track B's persona e2e against the lab, standard library only
 )
