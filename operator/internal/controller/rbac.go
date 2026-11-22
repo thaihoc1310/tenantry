@@ -24,6 +24,8 @@ package controller
 
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+// Services: is a Route's target there, with its port.
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 // Pods: is a node clean, what still runs on it.
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // Nodes: labels and taints with keys tenantry.io/* and workspaces.tenantry.io/*

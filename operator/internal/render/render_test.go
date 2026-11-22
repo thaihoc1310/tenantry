@@ -56,6 +56,7 @@ func TestGolden(t *testing.T) {
 	waterNet := water.DeepCopy()
 	waterNet.Spec.Network = &v1.Network{AllocationRef: "netalloc-01jwat", CIDR: "10.240.65.16/28"}
 	cases := map[string]*unstructured.Unstructured{
+		"ingress":               Ingress(solar(), v1.WorkspaceRoute{Name: "web", Namespace: "acme-solar-frontend", Host: "web-acme-solar.mvp.tenantry.site", Service: "web", Port: 80}),
 		"ippool":                IPPool(solarNet),
 		"ippool-dedicated":      IPPool(waterNet),
 		"tenant-network":        Tenant(solarNet, opts, false),

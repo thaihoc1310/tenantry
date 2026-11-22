@@ -6,6 +6,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -100,6 +101,13 @@ func (r *PlatformWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		results = append(results, networkRes)
 	}
 
+	// 6. routes: no condition, each Route reports in status.routes.
+	routes, err := subreconciler.Routes(ctx, r.Client, r.Scheme(), ws)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	ws.Status.Routes = routes
+
 	existing, err := subreconciler.TenantNamespaces(ctx, r.Client, ws)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -177,6 +185,18 @@ func (r *PlatformWorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	replication.SetGroupVersionKind(render.ReplicationGVK)
 	ipPool := &unstructured.Unstructured{}
 	ipPool.SetGroupVersionKind(render.IPPoolGVK)
+	// A Service appearing or changing makes a Route of its Namespace ready
+	// or not: the Workspace is named by the Namespace's tenant label.
+	byServiceNamespace := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
+		ns := &corev1.Namespace{}
+		if err := r.Get(ctx, client.ObjectKey{Name: o.GetNamespace()}, ns); err != nil {
+			return nil
+		}
+		if name := ns.Labels[render.LabelCapsuleTenant]; name != "" {
+			return []reconcile.Request{{NamespacedName: client.ObjectKey{Name: name}}}
+		}
+		return nil
+	})
 	// Capsule's GlobalResourceQuota names its Tenant in a label; its usage
 	// becomes status.usage.
 	quota := &unstructured.Unstructured{}
@@ -209,6 +229,8 @@ func (r *PlatformWorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(tenant).
 		Owns(replication).
 		Owns(ipPool).
+		Owns(&networkingv1.Ingress{}).
+		Watches(&corev1.Service{}, byServiceNamespace).
 		Watches(quota, byQuotaTenant).
 		Watches(&corev1.Node{}, byNode).
 		Watches(&corev1.Namespace{}, byTenantLabel, builder.WithPredicates(hasTenantLabel)).
