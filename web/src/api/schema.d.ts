@@ -1935,6 +1935,12 @@ export interface components {
             compute: components["schemas"]["WorkspaceCompute"];
             /** @description Absent on a Workspace created before network allocations */
             network?: components["schemas"]["WorkspaceNetwork"];
+            /**
+             * @description The caller's roles in the Workspace through their groups, on
+             *     `GET /workspaces/{workspaceId}` only. The OrgOwner and OrgAdmins
+             *     manage it whatever this holds (their `myRole` on the organization).
+             */
+            myRoles?: components["schemas"]["WorkspaceRole"][];
             /** @description As the controller last reported them; empty until it has. */
             conditions: components["schemas"]["WorkspaceCondition"][];
             /** Format: date-time */

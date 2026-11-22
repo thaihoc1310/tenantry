@@ -183,3 +183,90 @@ export function useNetworkAvailability(org: MaybeRefOrGetter<string>, pool: Mayb
     enabled: computed(() => !!toValue(pool)),
   })
 }
+
+// ---- Access roles and Namespaces (M10) ----------------------------------------
+
+export function useWorkspaceBindings(id: MaybeRefOrGetter<string | undefined>) {
+  return useQuery({
+    queryKey: computed(() => ['workspace-bindings', toValue(id)]),
+    queryFn: async () =>
+      (await unwrap(api.GET('/workspaces/{workspaceId}/bindings', { params: { path: { workspaceId: toValue(id)! } } })))
+        .items,
+    enabled: computed(() => !!toValue(id)),
+  })
+}
+
+// Namespaces refresh every 2 s while one is being created or deleted.
+export function useWorkspaceNamespaces(id: MaybeRefOrGetter<string | undefined>) {
+  return useQuery({
+    queryKey: computed(() => ['workspace-namespaces', toValue(id)]),
+    queryFn: async () =>
+      (
+        await unwrap(
+          api.GET('/workspaces/{workspaceId}/namespaces', { params: { path: { workspaceId: toValue(id)! } } }),
+        )
+      ).items,
+    enabled: computed(() => !!toValue(id)),
+    refetchInterval: (q) => (q.state.data?.some((n) => n.state !== 'Active') ? 2000 : false),
+  })
+}
+
+// Every binding or Namespace change also refreshes those lists.
+function useAccessChange<V, R>(call: (v: V) => Promise<R>) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: call,
+    onSettled: () =>
+      Promise.all(
+        ['workspace', 'workspace-operations', 'workspace-usage', 'workspace-bindings', 'workspace-namespaces'].map(
+          (k) => qc.invalidateQueries({ queryKey: [k] }),
+        ),
+      ),
+  })
+}
+
+export function usePutBinding() {
+  return useAccessChange((v: { id: string; groupId: string; role: Schemas['WorkspaceRole'] }) =>
+    unwrap(
+      api.PUT('/workspaces/{workspaceId}/bindings/{groupId}', {
+        params: { path: { workspaceId: v.id, groupId: v.groupId } },
+        body: { role: v.role },
+      }),
+    ),
+  )
+}
+
+export function useDeleteBinding() {
+  return useAccessChange((v: { id: string; groupId: string }) =>
+    unwrap(
+      api.DELETE('/workspaces/{workspaceId}/bindings/{groupId}', {
+        params: { path: { workspaceId: v.id, groupId: v.groupId } },
+      }),
+    ),
+  )
+}
+
+// A new Idempotency-Key after each Namespace created; a refusal is not kept.
+export function useCreateNamespace() {
+  let key = idempotencyKey()
+  return useAccessChange(async (v: { id: string; name: string }) => {
+    const r = await unwrap(
+      api.POST('/workspaces/{workspaceId}/namespaces', {
+        params: { path: { workspaceId: v.id }, header: { 'Idempotency-Key': key } },
+        body: { name: v.name },
+      }),
+    )
+    key = idempotencyKey()
+    return r
+  })
+}
+
+export function useDeleteNamespace() {
+  return useAccessChange((v: { id: string; name: string }) =>
+    unwrap(
+      api.DELETE('/workspaces/{workspaceId}/namespaces/{name}', {
+        params: { path: { workspaceId: v.id, name: v.name } },
+      }),
+    ),
+  )
+}

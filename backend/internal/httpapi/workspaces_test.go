@@ -246,6 +246,22 @@ func TestWorkspaceVisibility(t *testing.T) {
 		asAdmin(h, owner, http.MethodGet, "/api/v1/workspaces/ws-nope", "", "").Code != 404 {
 		t.Fatal("detail visibility")
 	}
+	// The detail says the caller's own roles: bob's developers group on
+	// solar; erin, an OrgAdmin in no group, none.
+	roles := func(token, slug string) []oapi.WorkspaceRole {
+		var w oapi.Workspace
+		_ = json.Unmarshal(asAdmin(h, token, http.MethodGet, "/api/v1/workspaces/"+ids[slug], "", "").Body.Bytes(), &w)
+		if w.MyRoles == nil {
+			return nil
+		}
+		return *w.MyRoles
+	}
+	if r := roles(sessionOf("usr-bob"), "solar"); !slices.Equal(r, []oapi.WorkspaceRole{oapi.Developer}) {
+		t.Errorf("bob's roles %v", r)
+	}
+	if r := roles(sessionOf("usr-erin"), "wind"); r == nil || len(r) != 0 {
+		t.Errorf("erin's roles %v", r)
+	}
 }
 
 // settle plays the worker: the Workspace's operations succeeded and it is Ready.

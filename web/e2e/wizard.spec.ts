@@ -153,6 +153,49 @@ test('the wizard creates a Shared Workspace that reaches Ready', async ({ browse
     })
     expect(ws.network.networkPoolId).toBe('onboarding-pod-network')
     kubectl('get', 'namespace', `${slug}-solar-web`)
+
+    // Namespaces tab: one more from the portal, then deleted (no volumes, so no name to type).
+    await page.getByRole('link', { name: 'Namespaces' }).click()
+    await expect(page.getByText('1 of 3')).toBeVisible()
+    await page.getByRole('button', { name: 'Create namespace' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Create namespace' })
+    await dialog.locator('#ns-name').fill('api')
+    await dialog.getByRole('button', { name: 'Create namespace' }).click()
+    const apiRow = page.getByRole('row', { name: new RegExp(`${slug}-solar-api`) })
+    await expect(apiRow).toContainText('Active', { timeout: 3 * 60_000 })
+    kubectl('get', 'namespace', `${slug}-solar-api`)
+    await shot(page, info, '10-namespaces')
+    await expect(page.getByRole('button', { name: 'Create namespace' })).toBeEnabled({ timeout: 60_000 })
+    await page.getByRole('button', { name: `Delete ${slug}-solar-api` }).click()
+    await page
+      .getByRole('dialog', { name: `Delete ${slug}-solar-api` })
+      .getByRole('button', { name: 'Delete namespace' })
+      .click()
+    await expect(apiRow).toHaveCount(0, { timeout: 3 * 60_000 })
+    await until('the namespace gone from the cluster', async () =>
+      kubectl('get', 'namespace', `${slug}-solar-api`, '--ignore-not-found') === '' ? true : undefined,
+    )
+
+    // Access roles tab: developers become Viewers; the last owner group cannot be removed.
+    await page.getByRole('link', { name: 'Access roles' }).click()
+    await expect(page.getByRole('row', { name: /admins/ }).getByRole('button', { name: 'Remove' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Add group' })).toBeEnabled({ timeout: 60_000 })
+    await page.getByRole('combobox', { name: 'Role of group developers' }).click()
+    await page.getByRole('option', { name: 'Viewer', exact: true }).click()
+    await expect(page.getByText('developers is Viewer now.')).toBeVisible()
+    await until('the binding changed', async () => {
+      const r = await api(page, 'GET', `/workspaces/${ws.id}/bindings`)
+      return r.body.items?.find(
+        (b: { groupName: string; role: string }) => b.groupName === 'developers' && b.role === 'Viewer',
+      )
+    })
+    await shot(page, info, '11-access-roles')
+
+    // The Organization's audit trail has the create and the changes.
+    await page.getByRole('link', { name: 'Audit' }).click()
+    for (const a of ['workspace.create', 'namespace.create', 'namespace.delete', 'workspace_binding.update'])
+      await expect(page.getByText(a, { exact: true }).first()).toBeVisible()
+    await shot(page, info, '12-audit')
   } finally {
     for (const w of made) await deleteWorkspace(page, w.id, w.slug, `${slug}-${w.slug}`)
   }

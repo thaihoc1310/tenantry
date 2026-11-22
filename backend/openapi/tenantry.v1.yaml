@@ -2746,6 +2746,13 @@ components:
         network:
           description: Absent on a Workspace created before network allocations
           allOf: [{ $ref: "#/components/schemas/WorkspaceNetwork" }]
+        myRoles:
+          type: array
+          description: |
+            The caller's roles in the Workspace through their groups, on
+            `GET /workspaces/{workspaceId}` only. The OrgOwner and OrgAdmins
+            manage it whatever this holds (their `myRole` on the organization).
+          items: { $ref: "#/components/schemas/WorkspaceRole" }
         conditions:
           type: array
           description: As the controller last reported them; empty until it has.

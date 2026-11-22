@@ -89,7 +89,7 @@ func (s server) CreateWorkspace(ctx context.Context, req oapi.CreateWorkspaceReq
 }
 
 func (s server) GetWorkspace(ctx context.Context, req oapi.GetWorkspaceRequestObject) (oapi.GetWorkspaceResponseObject, error) {
-	ws, err := s.workspaces.Get(ctx, userID(ctx), req.WorkspaceId)
+	ws, a, err := s.workspaces.Get(ctx, userID(ctx), req.WorkspaceId)
 	if err != nil {
 		return nil, err
 	}
@@ -97,6 +97,11 @@ func (s server) GetWorkspace(ctx context.Context, req oapi.GetWorkspaceRequestOb
 	if err != nil {
 		return nil, err
 	}
+	roles := make([]oapi.WorkspaceRole, 0, len(a.Roles))
+	for _, r := range a.Roles {
+		roles = append(roles, oapi.WorkspaceRole(r))
+	}
+	w.MyRoles = &roles
 	return oapi.GetWorkspace200JSONResponse(w), nil
 }
 

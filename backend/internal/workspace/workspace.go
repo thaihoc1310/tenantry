@@ -112,10 +112,9 @@ func (s *Service) access(ctx context.Context, userID, wsID string) (store.Worksp
 	return ws, a, nil
 }
 
-// Get returns a Workspace to someone who may see it.
-func (s *Service) Get(ctx context.Context, userID, wsID string) (store.Workspace, error) {
-	ws, _, err := s.access(ctx, userID, wsID)
-	return ws, err
+// Get returns a Workspace to someone who may see it, with what they may do.
+func (s *Service) Get(ctx context.Context, userID, wsID string) (store.Workspace, Access, error) {
+	return s.access(ctx, userID, wsID)
 }
 
 // List returns the organization's Workspaces the caller may see: all of them

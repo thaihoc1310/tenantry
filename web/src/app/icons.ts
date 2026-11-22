@@ -17,6 +17,7 @@ import {
   Plus,
   Refresh,
   Setting,
+  Tickets,
   User,
   UserFilled,
 } from '@element-plus/icons-vue'
@@ -39,6 +40,7 @@ export const icons = {
   Plus,
   Refresh,
   Setting,
+  Tickets,
   User,
   UserFilled,
 }

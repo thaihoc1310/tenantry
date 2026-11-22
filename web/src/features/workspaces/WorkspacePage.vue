@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // One Workspace (docs/design/mockups: Workspace): Overview with its
 // conditions and recent changes followed live, Resources with what its Pods
-// use and a resize, Danger zone with cordon and delete (IMPLEMENTATION-PLAN
-// M7 step 10). The other tabs come with their milestones.
+// use and a resize, Compute, Network, Namespaces, Access roles, Danger zone
+// with cordon and delete (IMPLEMENTATION-PLAN M7 step 10, M10). Routes and
+// Connect come with M11.
 import { ElMessage } from 'element-plus'
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -12,7 +13,9 @@ import AppShell from '@/app/AppShell.vue'
 import { showFailure } from '@/app/failure'
 import { when } from '@/app/format'
 import ConditionTimeline from '@/components/ConditionTimeline.vue'
+import AccessRolesTab from './AccessRolesTab.vue'
 import ComputeDetail from './ComputeDetail.vue'
+import NamespacesTab from './NamespacesTab.vue'
 import NetworkDetail from './NetworkDetail.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
@@ -57,10 +60,24 @@ const tabs = [
   ['resources', 'Resources'],
   ['compute', 'Compute'],
   ['network', 'Network'],
+  ['namespaces', 'Namespaces'],
+  ['members', 'Access roles'],
   ['danger', 'Danger zone'],
 ] as const
 const tab = computed(() => (route.query.tab as string) || 'overview')
 const tabTo = (t: string) => ({ query: { tab: t } })
+
+// Owners create Namespaces; the OrgOwner and OrgAdmins also change roles.
+const ownsTenant = computed(() => manages.value || !!ws.value?.myRoles?.includes('TenantOwner'))
+// Why a Namespace or role cannot change now; '' when it can (409 WORKSPACE_NOT_READY otherwise).
+const busy = computed(() => {
+  if (!ws.value) return ''
+  if (!['Ready', 'Degraded'].includes(ws.value.state))
+    return ws.value.state === 'Cordoned' ? 'The Workspace is cordoned.' : 'Available when the Workspace is Ready.'
+  return current.value && ['Pending', 'Running'].includes(current.value.state)
+    ? 'Another change is under way; try again when it is done.'
+    : ''
+})
 
 // ---- overview ---------------------------------------------------------------
 const conditions = computed(() =>
@@ -367,6 +384,16 @@ const usable = computed(() => ['Ready', 'Degraded'].includes(ws.value?.state ?? 
           The address block cannot be changed while Pods are running. After the Workspace is deleted, the block stays
           unused for a while before it is given out again.
         </p>
+      </template>
+
+      <!-- Namespaces -->
+      <template v-else-if="tab === 'namespaces'">
+        <NamespacesTab :ws="ws" :owns="ownsTenant" :busy="busy" />
+      </template>
+
+      <!-- Access roles -->
+      <template v-else-if="tab === 'members'">
+        <AccessRolesTab :org-slug="orgSlug" :ws="ws" :manages="manages" :busy="busy" />
       </template>
 
       <!-- Danger zone -->

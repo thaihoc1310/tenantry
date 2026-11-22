@@ -32,6 +32,7 @@ export const router = createRouter({
       component: () => import('@/features/organizations/ClustersPage.vue'),
       props: true,
     },
+    { path: '/orgs/:orgSlug/audit', component: () => import('@/features/organizations/AuditPage.vue'), props: true },
     { path: '/orgs/:orgSlug/settings', component: () => import('@/features/people/SettingsPage.vue'), props: true },
     { path: '/invitations/:token', component: () => import('@/features/people/InvitationPage.vue'), props: true },
     {

@@ -1,5 +1,5 @@
 // Every call the organization screens make (IMPLEMENTATION-PLAN §6.2).
-import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { computed, type MaybeRefOrGetter, toValue } from 'vue'
 import { api, csrfToken, idempotencyKey, unwrap, type Schemas } from '@/api/client'
 
@@ -109,3 +109,21 @@ export const useOrgComputeOptions = (org: MaybeRefOrGetter<string>, cluster: May
       }),
     ),
   )
+
+// The organization's audit trail, newest first, a page at a time (OrgOwner/OrgAdmin).
+export function useAuditEvents(org: MaybeRefOrGetter<string>, enabled: MaybeRefOrGetter<boolean>) {
+  const q = useInfiniteQuery({
+    enabled: computed(() => toValue(enabled)),
+    queryKey: computed(() => ['org', toValue(org), 'audit']),
+    initialPageParam: '',
+    queryFn: ({ pageParam }) =>
+      unwrap(
+        api.GET('/organizations/{orgId}/audit-events', {
+          params: { path: { orgId: toValue(org) }, query: { limit: 100, cursor: pageParam || undefined } },
+        }),
+      ),
+    getNextPageParam: (last) => last.nextCursor,
+  })
+  const items = computed(() => q.data.value?.pages.flatMap((p) => p.items) ?? [])
+  return { ...q, items }
+}

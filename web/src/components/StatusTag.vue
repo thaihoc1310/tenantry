@@ -19,6 +19,7 @@ const TONE: Record<string, string> = {
   Pending: 'warn',
   Running: 'busy',
   Succeeded: 'ok',
+  Refused: 'bad',
   Blocked: 'bad',
   Active: 'ok',
   Rejected: 'bad',

@@ -36,6 +36,7 @@ const orgNav = computed(() => {
     ['members', 'Members', '/members', 'User'],
     ['groups', 'Groups', '/groups', 'Collection'],
     ['clusters', 'Clusters', '/clusters', 'Cpu'],
+    ['audit', 'Audit', '/audit', 'Tickets'],
     ['settings', 'Settings', '/settings', 'Setting'],
   ]
   const role = current.value?.myRole
