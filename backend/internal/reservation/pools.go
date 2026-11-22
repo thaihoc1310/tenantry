@@ -119,9 +119,12 @@ func poolView(ctx context.Context, q *store.Queries, p store.SharedComputePool, 
 	}
 	ratio := hundredths(p.AllocationOvercommitRatio)
 	r := PoolReservable(per, poolReserve(p))
-	// ponytail: nothing is allocated before Shared Workspaces exist (M6–M8);
-	// then the sum of their requests on the pool goes here.
-	return PoolView{SharedComputePool: p, RatioHundredths: ratio, Nodes: nonNil(nodes), Reservable: r, Ceiling: PoolCeiling(r, ratio)}, nil
+	a, err := q.PoolAllocation(ctx, &p.ID)
+	if err != nil {
+		return PoolView{}, err
+	}
+	return PoolView{SharedComputePool: p, RatioHundredths: ratio, Nodes: nonNil(nodes), Reservable: r, Ceiling: PoolCeiling(r, ratio),
+		Allocated: Capacity{CPUMilli: a.CpuMilli, MemoryBytes: a.MemoryBytes, Pods: a.Pods}}, nil
 }
 
 func poolReserve(p store.SharedComputePool) Capacity {
@@ -177,11 +180,9 @@ func (s *Service) CreateSharedPool(ctx context.Context, adminID, correlationID, 
 	return out, err
 }
 
-// UpdateSharedPool changes a pool's name, ratio, system reserve and nodes.
-//
-// ponytail: refusing a change that brings the ceiling below what Shared
-// Workspaces hold (fewer nodes, a lower ratio, a larger reserve:
-// COMPUTE_POOL_CAPACITY_EXCEEDED) comes with those Workspaces (M8).
+// UpdateSharedPool changes a pool's name, ratio, system reserve and nodes,
+// never bringing its ceiling below what Shared Workspaces hold
+// (COMPUTE_POOL_CAPACITY_EXCEEDED).
 func (s *Service) UpdateSharedPool(ctx context.Context, adminID, correlationID, clusterID, poolID string, p SharedPool) (PoolView, error) {
 	if err := p.check(); err != nil {
 		return PoolView{}, err
@@ -217,6 +218,11 @@ func (s *Service) UpdateSharedPool(ctx context.Context, adminID, correlationID, 
 			return err
 		}
 		if out, err = poolView(ctx, q, row, p.Nodes); err != nil {
+			return err
+		}
+		// Fewer nodes, a lower ratio or a larger reserve: never below what
+		// Shared Workspaces hold (PRODUCT-PLAN §6.2).
+		if err := PoolFits(out, Capacity{}); err != nil {
 			return err
 		}
 		detail := map[string]any{"before": poolDetail(before), "after": poolDetail(out)}
@@ -720,4 +726,35 @@ func sameSet(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// PoolFits checks that more fits under the pool's ceiling next to what its
+// Shared Workspaces hold: a soft limit, ratio × reservable (PRODUCT-PLAN
+// §6.2). It reports the first dimension short as COMPUTE_POOL_CAPACITY_EXCEEDED.
+func PoolFits(v PoolView, more Capacity) error {
+	have, want, ceil := v.Allocated.dims(), more.dims(), v.Ceiling.dims()
+	names := [3]string{"requestsCpu", "requestsMemory", "pods"}
+	formats := [3]func(int64) string{cpuQ, bytesQ, count}
+	for i := range have {
+		if have[i]+want[i] > ceil[i] && (want[i] > 0 || have[i] > ceil[i]) {
+			return &apperr.Error{
+				Code: apperr.ComputePoolCapacityExceeded,
+				Message: fmt.Sprintf("shared pool %s can take %s %s; its Workspaces hold %s and this asks %s more",
+					v.ID, formats[i](ceil[i]), names[i], formats[i](have[i]), formats[i](want[i])),
+				Details: map[string]any{"resource": names[i], "limit": formats[i](ceil[i]), "allocated": formats[i](have[i]),
+					"requested": formats[i](want[i]), "sharedPoolId": v.ID},
+			}
+		}
+	}
+	return nil
+}
+
+// LockedPool locks a shared pool and reads its capacity, for a Workspace
+// taking a share of it (lock order: 02-data-model §4).
+func LockedPool(ctx context.Context, q *store.Queries, poolID string) (PoolView, error) {
+	p, err := q.LockSharedPool(ctx, poolID)
+	if err != nil {
+		return PoolView{}, err
+	}
+	return poolNodes(ctx, q, p)
 }

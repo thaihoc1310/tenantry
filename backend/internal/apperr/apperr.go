@@ -59,6 +59,9 @@ const (
 	WorkspaceQuotaBelowUsage    Code = "WORKSPACE_QUOTA_BELOW_USAGE"    // a resize below what the Workspace uses
 
 	OrganizationNotEmpty Code = "ORGANIZATION_NOT_EMPTY" // Workspaces or dedicated nodes left (04-state-machines §11)
+
+	// Compute (PRODUCT-PLAN §6).
+	ComputePoolCapacityExceeded Code = "COMPUTE_POOL_CAPACITY_EXCEEDED" // over a shared pool's ratio × reservable
 )
 
 type Error struct {

@@ -114,3 +114,12 @@ UPDATE dedicated_node_grants SET revoked_at = now(), updated_at = now() WHERE id
 
 -- name: ListLiveNodeGrantsOfCluster :many
 SELECT * FROM dedicated_node_grants WHERE cluster_id = $1 AND revoked_at IS NULL ORDER BY id;
+
+-- name: PoolAllocation :one
+-- What the Shared Workspaces not Deleted on a pool hold of it (02-data-model
+-- §4): their requests and Pods, against ratio × reservable.
+SELECT coalesce(sum(requests_cpu_milli), 0)::bigint AS cpu_milli,
+       coalesce(sum(requests_memory_bytes), 0)::bigint AS memory_bytes,
+       coalesce(sum(pods), 0)::bigint AS pods
+FROM workspaces
+WHERE shared_pool_id = $1 AND compute_mode = 'Shared' AND state <> 'Deleted';

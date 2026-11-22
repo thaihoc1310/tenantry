@@ -134,6 +134,16 @@ func checkResize(ctx context.Context, q *store.Queries, grant store.Organization
 	if err := reservation.GrantFits(reservation.FromRow(grant, nil, nil).GrantSpec, holds, positive(more)); err != nil {
 		return err
 	}
+	if shared && ws.SharedPoolID != nil {
+		pool, err := reservation.LockedPool(ctx, q, *ws.SharedPoolID)
+		if err != nil {
+			return err
+		}
+		grow := positive(more).Resources
+		if err := reservation.PoolFits(pool, reservation.Capacity{CPUMilli: grow.RequestsCPUMilli, MemoryBytes: grow.RequestsMemoryBytes, Pods: int64(grow.Pods)}); err != nil {
+			return err
+		}
+	}
 
 	used := map[string]string{}
 	if err := json.Unmarshal(ws.UsageSnapshot, &used); err != nil {

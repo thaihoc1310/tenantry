@@ -47,6 +47,7 @@ var statusOf = map[apperr.Code]int{
 	apperr.ClusterGrantBelowAllocation: http.StatusConflict,
 	apperr.WorkspaceQuotaBelowUsage:    http.StatusConflict,
 	apperr.OrganizationNotEmpty:        http.StatusConflict,
+	apperr.ComputePoolCapacityExceeded: http.StatusConflict,
 }
 
 // writeError answers with an ErrorResponse.

@@ -20,12 +20,16 @@ import (
 	v1 "github.com/thaihoc1310/tenantry/operator/api/v1alpha1"
 )
 
-// workspaceOrg is staffedOrg with its three groups already in Keycloak. It
-// returns the ids of the groups admins and developers.
+// workspaceOrg is staffedOrg with its three groups already in Keycloak and
+// the nodes of nodesSeed (shared-general: 5 CPU reservable, ×3). It returns
+// the ids of the groups admins and developers.
 func workspaceOrg(t *testing.T) (h http.Handler, db *pgxpool.Pool, orgID, owner, admins, devs string) {
 	t.Helper()
 	h, db, orgID, owner = staffedOrg(t)
 	if _, err := db.Exec(context.Background(), `UPDATE groups SET sync_status = 'Synced' WHERE org_id = $1`, orgID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(context.Background(), nodesSeed); err != nil {
 		t.Fatal(err)
 	}
 	return h, db, orgID, owner, groupID(t, db, orgID, "admins"), groupID(t, db, orgID, "developers")
@@ -929,5 +933,46 @@ func TestWorkspaceUsageOperationsEvents(t *testing.T) {
 	}
 	if rec := asAdmin(h, sessionOf("usr-dave"), http.MethodGet, "/api/v1/operations/"+opID+"/events", "", ""); rec.Code != 404 {
 		t.Fatalf("non-member follows: %d", rec.Code)
+	}
+}
+
+// A shared pool is shared between organizations: a create past its ceiling
+// (ratio × reservable) is refused, and an Admin cannot take nodes away from
+// under what its Workspaces hold (PRODUCT-PLAN §6.2).
+func TestSharedPoolCeiling(t *testing.T) {
+	h, db, orgID, owner, admins, devs := workspaceOrg(t)
+	ctx := context.Background()
+	// Room in the grant, but a pool of ratio 1 with one node: 2.5 CPU.
+	for _, q := range []string{
+		`UPDATE organization_cluster_grants SET requests_cpu_milli = 10000, limits_cpu_milli = 10000 WHERE org_id = '` + orgID + `'`,
+		`UPDATE shared_compute_pools SET allocation_overcommit_ratio = 1 WHERE id = 'shared-general'`,
+		`UPDATE cluster_nodes SET shared_pool_id = NULL WHERE node_name = 'wk3'`,
+	} {
+		if _, err := db.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := func(slug, cpu string) string {
+		return workspaceBody(slug, admins, devs, `"resources":{"requestsCpu":"`+cpu+`","requestsMemory":"1Gi","limitsCpu":"`+cpu+`","limitsMemory":"1Gi","pods":5,"requestsStorage":"1Gi","namespaceQuota":1},"namespaces":[]`)
+	}
+	if rec := createWorkspace(h, owner, "zeta", body("solar", "2")); rec.Code != 202 {
+		t.Fatalf("2 of 2.5: %d %s", rec.Code, rec.Body)
+	}
+	rec := createWorkspace(h, owner, "zeta", body("wind", "1"))
+	if e := errorBody(t, rec); rec.Code != 409 || e.Code != oapi.COMPUTEPOOLCAPACITYEXCEEDED || (*e.Details)["resource"] != "requestsCpu" ||
+		(*e.Details)["limit"] != "2500m" || (*e.Details)["allocated"] != "2" {
+		t.Fatalf("past the ceiling: %d %s", rec.Code, rec.Body)
+	}
+	// The pool's own numbers show what is held.
+	admin := newSession(t, db, "usr-alice", "platform-admin")
+	rec = asAdmin(h, admin, http.MethodGet, "/api/v1/admin/clusters/cluster-a/shared-pools", "", "")
+	if !strings.Contains(rec.Body.String(), `"allocated":{"cpu":"2","memory":"1Gi","pods":5}`) {
+		t.Fatalf("pool allocation: %s", rec.Body)
+	}
+	// Taking wk2 out would leave 0 under 2 CPU held.
+	rec = asAdmin(h, admin, http.MethodPut, "/api/v1/admin/clusters/cluster-a/shared-pools/shared-general", "",
+		`{"name":"Shared general","allocationOvercommitRatio":1,"systemReserve":`+reserve+`,"nodes":[]}`)
+	if rec.Code != 409 || errorBody(t, rec).Code != oapi.COMPUTEPOOLCAPACITYEXCEEDED {
+		t.Fatalf("empty a pool in use: %d %s", rec.Code, rec.Body)
 	}
 }

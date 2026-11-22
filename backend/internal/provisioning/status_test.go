@@ -82,9 +82,20 @@ func newEnv(t *testing.T) *env {
 	}
 }
 
+// poolNode gives shared-general a node, so Workspaces fit under its ceiling.
+func (e *env) poolNode() {
+	e.t.Helper()
+	if _, err := e.db.Exec(context.Background(), `INSERT INTO cluster_nodes (cluster_id, node_name, kind, ready, schedulable,
+		allocatable_cpu_milli, allocatable_memory_bytes, allocatable_pods, shared_pool_id)
+		VALUES ('cluster-a', 'wk-pool', 'Worker', true, true, 8000, 17179869184, 110, 'shared-general') ON CONFLICT DO NOTHING`); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
 // create makes Workspace slug with Namespace frontend and delivers its CR.
 func (e *env) create(slug string) workspace.Created {
 	e.t.Helper()
+	e.poolNode()
 	c, err := e.ws.Create(context.Background(), "usr-ann", "acme", workspace.New{
 		Slug: slug, DisplayName: slug, ClusterID: "cluster-a", ComputeMode: workspace.ComputeShared, SharedPoolID: "shared-general",
 		Resources: workspace.Resources{RequestsCPUMilli: 500, RequestsMemoryBytes: 1 << 30, LimitsCPUMilli: 1000,
@@ -279,6 +290,7 @@ func TestRedeliveryCreatesNoDuplicate(t *testing.T) {
 		}
 		panic("worker killed after apply")
 	}), quiet)
+	e.poolNode()
 	c, err := e.ws.Create(context.Background(), "usr-ann", "acme", workspace.New{
 		Slug: "solar", DisplayName: "Solar", ClusterID: "cluster-a", ComputeMode: workspace.ComputeShared, SharedPoolID: "shared-general",
 		Resources: workspace.Resources{RequestsCPUMilli: 500, RequestsMemoryBytes: 1 << 30, LimitsCPUMilli: 500,

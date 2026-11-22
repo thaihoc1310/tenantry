@@ -498,6 +498,29 @@ func (q *Queries) LockSharedPool(ctx context.Context, id string) (SharedComputeP
 	return i, err
 }
 
+const poolAllocation = `-- name: PoolAllocation :one
+SELECT coalesce(sum(requests_cpu_milli), 0)::bigint AS cpu_milli,
+       coalesce(sum(requests_memory_bytes), 0)::bigint AS memory_bytes,
+       coalesce(sum(pods), 0)::bigint AS pods
+FROM workspaces
+WHERE shared_pool_id = $1 AND compute_mode = 'Shared' AND state <> 'Deleted'
+`
+
+type PoolAllocationRow struct {
+	CpuMilli    int64
+	MemoryBytes int64
+	Pods        int64
+}
+
+// What the Shared Workspaces not Deleted on a pool hold of it (02-data-model
+// §4): their requests and Pods, against ratio × reservable.
+func (q *Queries) PoolAllocation(ctx context.Context, sharedPoolID *string) (PoolAllocationRow, error) {
+	row := q.db.QueryRow(ctx, poolAllocation, sharedPoolID)
+	var i PoolAllocationRow
+	err := row.Scan(&i.CpuMilli, &i.MemoryBytes, &i.Pods)
+	return i, err
+}
+
 const poolNodeCapacities = `-- name: PoolNodeCapacities :many
 SELECT node_name, allocatable_cpu_milli, allocatable_memory_bytes, allocatable_pods
 FROM cluster_nodes WHERE shared_pool_id = $1 ORDER BY node_name

@@ -112,6 +112,10 @@ export const errorText: Record<ErrorCode | 'NETWORK', Text> = {
     en: 'Delete its Workspaces first, and ask a Platform Admin to take back its dedicated nodes.',
     vi: 'Hãy xóa các Workspace trước và nhờ Platform Admin thu hồi node dedicated.',
   },
+  COMPUTE_POOL_CAPACITY_EXCEEDED: {
+    en: 'The shared pool has no room for this. Ask less, or ask a Platform Admin for more nodes.',
+    vi: 'Shared pool không còn đủ chỗ. Hãy xin ít hơn, hoặc nhờ Platform Admin thêm node.',
+  },
   INTERNAL: {
     en: 'Something went wrong on our side. Your data is safe; try again in a moment.',
     vi: 'Hệ thống gặp lỗi. Dữ liệu của bạn vẫn an toàn; thử lại sau ít phút.',

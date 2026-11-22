@@ -18,7 +18,9 @@ const workspaceSeed = `
 	INSERT INTO organization_cluster_grants (id, org_id, cluster_id, is_default, max_workspaces, max_namespaces_total,
 		requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes)
 		VALUES ('grant-1', 'org-01', 'cluster-a', true, 5, 10, 4000, 8589934592, 8000, 17179869184, 50, 21474836480);
-	INSERT INTO cluster_grant_shared_pools (grant_id, pool_id) VALUES ('grant-1', 'shared-general');`
+	INSERT INTO cluster_grant_shared_pools (grant_id, pool_id) VALUES ('grant-1', 'shared-general');
+	INSERT INTO cluster_nodes (cluster_id, node_name, kind, ready, schedulable, allocatable_cpu_milli, allocatable_memory_bytes, allocatable_pods, shared_pool_id)
+		VALUES ('cluster-a', 'wk1', 'Worker', true, true, 4000, 8589934592, 110, 'shared-general');`
 
 // Members of a group bound to a Workspace join TenantUsers once the
 // Workspace is created; members of other groups do not (PRODUCT-PLAN §9.3).

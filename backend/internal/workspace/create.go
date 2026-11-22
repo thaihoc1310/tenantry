@@ -151,6 +151,15 @@ func (s *Service) Create(ctx context.Context, userID, orgIDOrSlug string, n New)
 		} else if !ok {
 			return apperr.Invalid("compute.sharedPoolId", "is not a shared pool of the organization's grant on this cluster")
 		}
+		// The pool is shared between organizations: always locked, so two
+		// creates on it cannot both pass its ceiling (02-data-model §4).
+		pv, err := reservation.LockedPool(ctx, q, n.SharedPoolID)
+		if err != nil {
+			return err
+		}
+		if err := reservation.PoolFits(pv, n.Resources.onNodes()); err != nil {
+			return err
+		}
 
 		groupIDs, err := s.lockBoundGroups(ctx, q, o.ID, n.Bindings)
 		if err != nil {
@@ -300,6 +309,11 @@ func (n *New) check(orgSlug string) error {
 		return ErrNoOwnerBinding
 	}
 	return nil
+}
+
+// onNodes is what the quota takes of nodes: requests and Pods.
+func (r Resources) onNodes() reservation.Capacity {
+	return reservation.Capacity{CPUMilli: r.RequestsCPUMilli, MemoryBytes: r.RequestsMemoryBytes, Pods: int64(r.Pods)}
 }
 
 // grant is the quota in a grant's terms.
