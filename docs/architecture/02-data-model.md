@@ -163,7 +163,7 @@ erDiagram
 | Invariant | Enforce bằng |
 |---|---|
 | Một account ↔ một identity Keycloak | `UNIQUE (issuer, subject)` |
-| Slug Organization unique, yêu cầu bị từ chối nhả slug | `UNIQUE (slug) WHERE status <> 'Rejected'` |
+| Slug Organization unique; yêu cầu bị từ chối và Organization đã xóa nhả slug (xóa chỉ được khi không còn row Workspace nào, kể cả Workspace chờ quarantine, nên `<org>-<ws>` cũ không còn chỗ dùng; group và mọi id dùng ULID, audit giữ `org_id`) | `UNIQUE (slug) WHERE status NOT IN ('Rejected', 'Deleted')` (migration 0015) |
 | Slug Organization không có `-` (`^[a-z][a-z0-9]*$`, 3–20 ký tự), nên `<org>-<ws>` là duy nhất theo cấu tạo và tiền tố `<org>-` của hai Organization không bao giờ lồng nhau | `CHECK` trên cột; từ cấm kiểm trong Go |
 | Mỗi user tối đa một yêu cầu `Pending` | `UNIQUE (owner_user_id) WHERE status = 'Pending'` |
 | Đúng một OrgOwner mỗi Organization | `organizations.owner_user_id NOT NULL` (ít nhất một) + `UNIQUE (org_id) ON organization_members WHERE role = 'OrgOwner'` (nhiều nhất một) |
