@@ -3,6 +3,7 @@ package subreconciler
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -73,6 +74,15 @@ const capsuleReconciling = "Reconciling"
 // real and the Workspace must say so.
 const replicationRaceGrace = 2 * time.Minute
 
+// raceMessages are the item errors of those races, all seen on the lab:
+// both controllers create an object, both update it, or one writes into a
+// Namespace being deleted (Capsule reads its state from a cache).
+var raceMessages = []string{
+	"already exists",
+	"the object has been modified",
+	"because it is being terminated",
+}
+
 // now is time.Now, replaced in tests.
 var now = time.Now
 
@@ -96,7 +106,7 @@ func replicationRace(obj *unstructured.Unstructured, cond map[string]any) (retry
 		}
 		msg, _ := st["message"].(string)
 		messages = append(messages, msg)
-		raced = raced && (strings.Contains(msg, "already exists") || strings.Contains(msg, "the object has been modified"))
+		raced = raced && slices.ContainsFunc(raceMessages, func(m string) bool { return strings.Contains(msg, m) })
 	}
 	detail = strings.Join(messages, "; ")
 	if len(messages) == 0 {
