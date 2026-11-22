@@ -93,7 +93,12 @@ func TestWorkspaceProxyAccess(t *testing.T) {
 	if err := testClient.Create(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
-	fake.set(http.StatusOK, map[string]string{"acme-px-api": "acme-px", "acme-px-web": "acme-px"})
+	// The probe sees other Workspaces too: it is in their ProxySettings.
+	other := newWorkspace("acme-pxo")
+	if err := testClient.Create(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	fake.set(http.StatusOK, map[string]string{"acme-px-api": "acme-px", "acme-px-web": "acme-px", "acme-pxo-frontend": "acme-pxo"})
 	reconcileOnce(t, r, "acme-px")
 	capsuleReconciles(t, "acme-px")
 	res := reconcileOnce(t, r, "acme-px")

@@ -30,8 +30,8 @@ const (
 	ReasonNoNamespace = "NoNamespace"
 	// ReasonProxyUnreachable: Capsule Proxy did not answer the probe.
 	ReasonProxyUnreachable = "ProxyUnreachable"
-	// ReasonProxyNotFiltering: the probe saw a Namespace of another Tenant,
-	// or a non-tenant one.
+	// ReasonProxyNotFiltering: the probe saw a Namespace that belongs to no
+	// Workspace: a system one, or another Tenant's.
 	ReasonProxyNotFiltering = "ProxyNotFiltering"
 )
 
@@ -161,7 +161,10 @@ func (p *ProxyProber) applySetting(ctx context.Context, scheme *runtime.Scheme, 
 }
 
 // probe lists Namespaces through the proxy: every Namespace of the
-// Workspace must be there, and nothing else.
+// Workspace must be there, and nothing outside the Workspaces. The probe
+// is a subject of every Workspace's ProxySetting, so it rightly sees them
+// all; that a Developer of one does not see another's follows from the
+// ProxySetting naming only that Workspace's groups.
 func (p *ProxyProber) probe(ctx context.Context, ws *v1.PlatformWorkspace, want []string) Result {
 	const t = v1.ConditionProxyAccessReady
 	token, err := p.probeToken(ctx)
@@ -188,17 +191,25 @@ func (p *ProxyProber) probe(ctx context.Context, ws *v1.PlatformWorkspace, want 
 	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
 		return failed(t, ReasonProxyUnreachable, "Capsule Proxy: "+err.Error())
 	}
+	var all v1.PlatformWorkspaceList
+	if err := p.Client.List(ctx, &all); err != nil {
+		return failure(t, err)
+	}
+	workspaces := map[string]bool{}
+	for _, w := range all.Items {
+		workspaces[w.Name] = true
+	}
 	seen := map[string]bool{}
 	var foreign []string
 	for _, ns := range list.Items {
 		seen[ns.Name] = true
-		if ns.Labels[render.LabelCapsuleTenant] != ws.Name {
+		if !workspaces[ns.Labels[render.LabelCapsuleTenant]] {
 			foreign = append(foreign, ns.Name)
 		}
 	}
 	if len(foreign) > 0 {
 		slices.Sort(foreign)
-		return failed(t, ReasonProxyNotFiltering, "the probe sees Namespaces outside the Workspace: "+strings.Join(foreign, ", "))
+		return failed(t, ReasonProxyNotFiltering, "the probe sees Namespaces outside the Workspaces: "+strings.Join(foreign, ", "))
 	}
 	var missing []string
 	for _, name := range want {
