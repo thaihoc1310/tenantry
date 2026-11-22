@@ -180,10 +180,16 @@ func (s *Service) AllGrants(ctx context.Context, clusterID, cursor string, pageS
 		return GrantPage{}, err
 	}
 	p := GrantPage{Items: make([]GrantRow, 0, len(rows))}
-	for _, r := range rows {
-		g := reservation.FromRow(r.OrganizationClusterGrant, r.SharedPoolIds, r.NetworkPoolIds)
-		p.Items = append(p.Items, GrantRow{Grant: g, OrgSlug: r.OrgSlug, OrgDisplayName: r.OrgDisplayName,
-			Allocation: reservation.Allocations([]reservation.Grant{g})[0]})
+	grants := make([]reservation.Grant, len(rows))
+	for i, r := range rows {
+		grants[i] = reservation.FromRow(r.OrganizationClusterGrant, r.SharedPoolIds, r.NetworkPoolIds)
+	}
+	allocs, err := reservation.Allocations(ctx, s.q, grants)
+	if err != nil {
+		return GrantPage{}, err
+	}
+	for i, r := range rows {
+		p.Items = append(p.Items, GrantRow{Grant: grants[i], OrgSlug: r.OrgSlug, OrgDisplayName: r.OrgDisplayName, Allocation: allocs[i]})
 	}
 	if len(p.Items) > pageSize {
 		p.Items = p.Items[:pageSize]

@@ -50,19 +50,21 @@ func (q *Queries) ApproveOrganization(ctx context.Context, id string) (Organizat
 const countOrganizationUsage = `-- name: CountOrganizationUsage :one
 SELECT
   (SELECT count(*) FROM organization_members m WHERE m.org_id = $1)::int AS members,
-  (SELECT count(*) FROM groups g WHERE g.org_id = $1 AND g.deleted_at IS NULL)::int AS groups
+  (SELECT count(*) FROM groups g WHERE g.org_id = $1 AND g.deleted_at IS NULL)::int AS groups,
+  (SELECT count(*) FROM workspaces w WHERE w.org_id = $1 AND w.state <> 'Deleted')::int AS workspaces
 `
 
 type CountOrganizationUsageRow struct {
-	Members int32
-	Groups  int32
+	Members    int32
+	Groups     int32
+	Workspaces int32
 }
 
 // Groups waiting to be removed from Keycloak (tombstones) no longer count.
 func (q *Queries) CountOrganizationUsage(ctx context.Context, orgID string) (CountOrganizationUsageRow, error) {
 	row := q.db.QueryRow(ctx, countOrganizationUsage, orgID)
 	var i CountOrganizationUsageRow
-	err := row.Scan(&i.Members, &i.Groups)
+	err := row.Scan(&i.Members, &i.Groups, &i.Workspaces)
 	return i, err
 }
 

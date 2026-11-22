@@ -74,6 +74,17 @@ func (q *Queries) CountWorkspaceNamespaces(ctx context.Context, workspaceID stri
 	return column_1, err
 }
 
+const countWorkspaces = `-- name: CountWorkspaces :one
+SELECT count(*)::int FROM workspaces WHERE org_id = $1 AND state <> 'Deleted'
+`
+
+func (q *Queries) CountWorkspaces(ctx context.Context, orgID string) (int32, error) {
+	row := q.db.QueryRow(ctx, countWorkspaces, orgID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createWorkspace = `-- name: CreateWorkspace :one
 INSERT INTO workspaces (
     id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name,
@@ -298,6 +309,66 @@ func (q *Queries) GetWorkspaceNamespace(ctx context.Context, arg GetWorkspaceNam
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const grantAllocations = `-- name: GrantAllocations :many
+SELECT cluster_grant_id,
+       count(*)::int AS workspaces,
+       coalesce(sum(namespace_quota), 0)::int AS namespaces,
+       coalesce(sum(requests_cpu_milli) FILTER (WHERE compute_mode = 'Shared'), 0)::bigint AS requests_cpu_milli,
+       coalesce(sum(requests_memory_bytes) FILTER (WHERE compute_mode = 'Shared'), 0)::bigint AS requests_memory_bytes,
+       coalesce(sum(limits_cpu_milli) FILTER (WHERE compute_mode = 'Shared'), 0)::bigint AS limits_cpu_milli,
+       coalesce(sum(limits_memory_bytes) FILTER (WHERE compute_mode = 'Shared'), 0)::bigint AS limits_memory_bytes,
+       coalesce(sum(pods) FILTER (WHERE compute_mode = 'Shared'), 0)::int AS pods,
+       coalesce(sum(requests_storage_bytes), 0)::bigint AS requests_storage_bytes
+FROM workspaces
+WHERE cluster_grant_id = ANY($1::text[]) AND state <> 'Deleted'
+GROUP BY cluster_grant_id
+`
+
+type GrantAllocationsRow struct {
+	ClusterGrantID       string
+	Workspaces           int32
+	Namespaces           int32
+	RequestsCpuMilli     int64
+	RequestsMemoryBytes  int64
+	LimitsCpuMilli       int64
+	LimitsMemoryBytes    int64
+	Pods                 int32
+	RequestsStorageBytes int64
+}
+
+// What the Workspaces not Deleted hold of each grant (02-data-model §4):
+// CPU, memory and pods of Shared Workspaces only; Workspaces, Namespaces
+// (their namespace_quota) and storage of every Workspace.
+func (q *Queries) GrantAllocations(ctx context.Context, grantIds []string) ([]GrantAllocationsRow, error) {
+	rows, err := q.db.Query(ctx, grantAllocations, grantIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GrantAllocationsRow
+	for rows.Next() {
+		var i GrantAllocationsRow
+		if err := rows.Scan(
+			&i.ClusterGrantID,
+			&i.Workspaces,
+			&i.Namespaces,
+			&i.RequestsCpuMilli,
+			&i.RequestsMemoryBytes,
+			&i.LimitsCpuMilli,
+			&i.LimitsMemoryBytes,
+			&i.Pods,
+			&i.RequestsStorageBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const grantHasSharedPool = `-- name: GrantHasSharedPool :one

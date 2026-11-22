@@ -141,3 +141,23 @@ SELECT * FROM workspace_namespaces WHERE workspace_id = $1 AND name = $2 AND sta
 
 -- name: SetNamespaceState :one
 UPDATE workspace_namespaces SET state = $2, updated_at = now() WHERE id = $1 RETURNING *;
+
+-- name: GrantAllocations :many
+-- What the Workspaces not Deleted hold of each grant (02-data-model §4):
+-- CPU, memory and pods of Shared Workspaces only; Workspaces, Namespaces
+-- (their namespace_quota) and storage of every Workspace.
+SELECT cluster_grant_id,
+       count(*)::int AS workspaces,
+       coalesce(sum(namespace_quota), 0)::int AS namespaces,
+       coalesce(sum(requests_cpu_milli) FILTER (WHERE compute_mode = 'Shared'), 0)::bigint AS requests_cpu_milli,
+       coalesce(sum(requests_memory_bytes) FILTER (WHERE compute_mode = 'Shared'), 0)::bigint AS requests_memory_bytes,
+       coalesce(sum(limits_cpu_milli) FILTER (WHERE compute_mode = 'Shared'), 0)::bigint AS limits_cpu_milli,
+       coalesce(sum(limits_memory_bytes) FILTER (WHERE compute_mode = 'Shared'), 0)::bigint AS limits_memory_bytes,
+       coalesce(sum(pods) FILTER (WHERE compute_mode = 'Shared'), 0)::int AS pods,
+       coalesce(sum(requests_storage_bytes), 0)::bigint AS requests_storage_bytes
+FROM workspaces
+WHERE cluster_grant_id = ANY(@grant_ids::text[]) AND state <> 'Deleted'
+GROUP BY cluster_grant_id;
+
+-- name: CountWorkspaces :one
+SELECT count(*)::int FROM workspaces WHERE org_id = $1 AND state <> 'Deleted';

@@ -446,3 +446,34 @@ func TestWorkspaceNamespaces(t *testing.T) {
 		t.Fatalf("audit %+v", trail)
 	}
 }
+
+// /usage counts the Workspaces not Deleted and what they hold of their grant;
+// the entitlement cannot go below them (PRODUCT-PLAN §5.6).
+func TestUsageCountsWorkspaces(t *testing.T) {
+	h, db, orgID, owner, admins, devs := workspaceOrg(t)
+	for _, slug := range []string{"solar", "wind"} {
+		if rec := createWorkspace(h, owner, "zeta", workspaceBody(slug, admins, devs, "")); rec.Code != 202 {
+			t.Fatalf("create %s: %d %s", slug, rec.Code, rec.Body)
+		}
+	}
+	if _, err := db.Exec(context.Background(), `UPDATE workspaces SET state = 'Deleted' WHERE slug = 'wind'`); err != nil {
+		t.Fatal(err)
+	}
+	rec := asAdmin(h, owner, http.MethodGet, "/api/v1/organizations/zeta/usage", "", "")
+	var u oapi.OrganizationUsage
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &u) != nil || len(u.ClusterGrants) != 1 {
+		t.Fatalf("usage: %d %s", rec.Code, rec.Body)
+	}
+	g := u.ClusterGrants[0]
+	if u.Organization.Workspaces.Used != 1 || g.Workspaces.Allocated != 1 || g.Namespaces.Allocated != 2 ||
+		g.RequestsCpu.Allocated != "1" || g.RequestsCpu.Remaining != "1" || g.LimitsMemory.Allocated != "4Gi" ||
+		g.Pods.Allocated != 10 || g.RequestsStorage.Allocated != "5Gi" {
+		t.Fatalf("usage %s", rec.Body)
+	}
+	admin := newSession(t, db, "usr-alice", "platform-admin")
+	rec = asAdmin(h, admin, http.MethodPut, "/api/v1/admin/organizations/"+orgID+"/entitlement", "",
+		`{"maxMembers":20,"maxGroups":10,"maxWorkspacesTotal":0}`)
+	if e := errorBody(t, rec); rec.Code != 409 || e.Code != oapi.ENTITLEMENTBELOWUSAGE || (*e.Details)["limit"] != "maxWorkspacesTotal" {
+		t.Fatalf("entitlement below one Workspace: %d %s", rec.Code, rec.Body)
+	}
+}

@@ -84,4 +84,5 @@ SELECT * FROM organization_entitlements WHERE org_id = $1;
 -- Groups waiting to be removed from Keycloak (tombstones) no longer count.
 SELECT
   (SELECT count(*) FROM organization_members m WHERE m.org_id = $1)::int AS members,
-  (SELECT count(*) FROM groups g WHERE g.org_id = $1 AND g.deleted_at IS NULL)::int AS groups;
+  (SELECT count(*) FROM groups g WHERE g.org_id = $1 AND g.deleted_at IS NULL)::int AS groups,
+  (SELECT count(*) FROM workspaces w WHERE w.org_id = $1 AND w.state <> 'Deleted')::int AS workspaces;

@@ -292,12 +292,27 @@ type Allocation struct {
 }
 
 // Allocations returns, for each grant, what its Workspaces hold.
-//
-// ponytail: zero until the workspaces table exists (M6); then the sums go here.
-func Allocations(grants []Grant) []Allocation {
+func Allocations(ctx context.Context, q *store.Queries, grants []Grant) ([]Allocation, error) {
+	ids := make([]string, len(grants))
+	for i, g := range grants {
+		ids[i] = g.ID
+	}
+	rows, err := q.GrantAllocations(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	byGrant := map[string]store.GrantAllocationsRow{}
+	for _, r := range rows {
+		byGrant[r.ClusterGrantID] = r
+	}
 	out := make([]Allocation, len(grants))
 	for i, g := range grants {
-		out[i] = Allocation{GrantID: g.ID}
+		r := byGrant[g.ID]
+		out[i] = Allocation{GrantID: g.ID, Workspaces: r.Workspaces, Namespaces: r.Namespaces, Resources: Resources{
+			RequestsCPUMilli: r.RequestsCpuMilli, RequestsMemoryBytes: r.RequestsMemoryBytes,
+			LimitsCPUMilli: r.LimitsCpuMilli, LimitsMemoryBytes: r.LimitsMemoryBytes,
+			Pods: r.Pods, RequestsStorageBytes: r.RequestsStorageBytes,
+		}}
 	}
-	return out
+	return out, nil
 }

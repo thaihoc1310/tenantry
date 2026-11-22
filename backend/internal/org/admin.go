@@ -143,13 +143,17 @@ func (s *Service) usageOf(ctx context.Context, q *store.Queries, o Org) (Usage, 
 	if err != nil {
 		return Usage{}, err
 	}
+	allocs, err := reservation.Allocations(ctx, q, grants)
+	if err != nil {
+		return Usage{}, err
+	}
 	return Usage{
 		Quota: Quota{
 			Org:         o,
 			Entitlement: Entitlement{MaxMembers: e.MaxMembers, MaxGroups: e.MaxGroups, MaxWorkspacesTotal: e.MaxWorkspacesTotal},
 			Grants:      grants,
 		},
-		Members: c.Members, Groups: c.Groups, Allocations: reservation.Allocations(grants),
+		Members: c.Members, Groups: c.Groups, Workspaces: c.Workspaces, Allocations: allocs,
 	}, nil
 }
 
@@ -181,8 +185,10 @@ func (s *Service) SetEntitlement(ctx context.Context, adminID, orgID string, e E
 		if err != nil {
 			return err
 		}
-		// ponytail: no Workspace exists before M6; then count them here.
-		workspaces := int32(0)
+		workspaces, err := q.CountWorkspaces(ctx, o.ID)
+		if err != nil {
+			return err
+		}
 		for _, c := range []struct {
 			limit           string
 			used, requested int32
