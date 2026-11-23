@@ -297,6 +297,14 @@ export function usePutGrant() {
   )
 }
 
+// useDeleteOrganization deletes an empty Active organization as the Platform
+// Admin (DELETE /admin/organizations/{orgId}).
+export function useDeleteOrganization() {
+  return useAdminChange((orgId: string) =>
+    unwrap(api.DELETE('/admin/organizations/{orgId}', { params: { path: { orgId } } })),
+  )
+}
+
 export function useDeleteGrant() {
   return useAdminChange((v: { orgId: string; clusterId: string }) =>
     unwrap(

@@ -882,6 +882,64 @@ func TestDeleteOrganization(t *testing.T) {
 	}
 }
 
+// A Platform Admin deletes an empty organization the owner cannot delete:
+// the owner's checks and effects, the admin as the audit actor, a second
+// call changes nothing, and a request is not deleted this way.
+func TestAdminDeleteOrganization(t *testing.T) {
+	h, db, orgID, owner, admins, devs := workspaceOrg(t)
+	ctx := context.Background()
+	admin := newSession(t, db, "usr-alice", "platform-admin")
+	rec := createWorkspace(h, owner, "zeta", workspaceBody("solar", admins, devs, ""))
+	var created oapi.WorkspaceAccepted
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &created) != nil {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	del := func(token, id string) *httptest.ResponseRecorder {
+		return asAdmin(h, token, http.MethodDelete, "/api/v1/admin/organizations/"+id, "", "")
+	}
+	if rec := del(owner, orgID); rec.Code != 403 {
+		t.Fatalf("the owner, not a Platform Admin: %d", rec.Code)
+	}
+	if rec := del(admin, orgID); rec.Code != 409 || errorBody(t, rec).Code != oapi.ORGANIZATIONNOTEMPTY || (*errorBody(t, rec).Details)["workspaces"] != 1.0 {
+		t.Fatalf("with a Workspace: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := db.Exec(ctx, `UPDATE workspaces SET state = 'Deleted' WHERE id = $1`, created.Workspace.Id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE network_allocations SET state = 'Quarantined', quarantine_until = '2026-11-23T10:15:00Z' WHERE workspace_id = $1`, created.Workspace.Id); err != nil {
+		t.Fatal(err)
+	}
+	if rec := del(admin, orgID); rec.Code != 409 || (*errorBody(t, rec).Details)["deletableAfter"] != "2026-11-23T10:15:00Z" {
+		t.Fatalf("with a Workspace in quarantine: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := db.Exec(ctx, `DELETE FROM workspaces WHERE id = $1`, created.Workspace.Id); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 2 {
+		if rec := del(admin, orgID); rec.Code != 204 {
+			t.Fatalf("delete %d: %d %s", i+1, rec.Code, rec.Body)
+		}
+	}
+	for q, want := range map[string]int{
+		`SELECT count(*) FROM organizations WHERE id = $1 AND status = 'Deleted'`: 1,
+		`SELECT count(*) FROM organization_cluster_grants WHERE org_id = $1`:      0,
+		`SELECT count(*) FROM groups WHERE org_id = $1 AND deleted_at IS NULL`:    0,
+	} {
+		if n := count(t, db, q, orgID); n != want {
+			t.Errorf("%s: %d, want %d", q, n, want)
+		}
+	}
+	if trail := auditTrail(t, db, "organization.delete"); len(trail) != 1 || trail[0].Actor != "usr-alice" || trail[0].Org != orgID {
+		t.Fatalf("one audit event, by the admin: %+v", trail)
+	}
+	if rec := del(admin, "org-beta2"); rec.Code != 409 || errorBody(t, rec).Code != oapi.ORGNOTACTIVE {
+		t.Fatalf("a Pending request: %d %s", rec.Code, rec.Body)
+	}
+	if rec := del(admin, "org-nope"); rec.Code != 404 {
+		t.Fatalf("an unknown organization: %d", rec.Code)
+	}
+}
+
 // Changing a grant's storage classes renders every Workspace of it again:
 // an idle one gets a workspace.update; a busy one the new CR under its
 // operation under way (PRODUCT-PLAN §5.5).

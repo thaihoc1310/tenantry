@@ -23,6 +23,7 @@ import (
 const (
 	StatusPending = "Pending"
 	StatusActive  = "Active"
+	StatusDeleted = "Deleted"
 	maxReason     = 500
 )
 

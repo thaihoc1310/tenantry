@@ -1,0 +1,16 @@
+{
+  "responses": {
+    "204": null,
+    "409": {
+      "code": "ORGANIZATION_NOT_EMPTY",
+      "message": "the organization is not empty yet: wait until 2026-11-23T10:15:00Z, when the quarantine of 1 deleted Workspace(s) ends",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K",
+      "details": {
+        "workspaces": 0,
+        "quarantinedWorkspaces": 1,
+        "dedicatedNodes": 0,
+        "deletableAfter": "2026-11-23T10:15:00Z"
+      }
+    }
+  }
+}

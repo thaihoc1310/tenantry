@@ -1639,6 +1639,32 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteAdminOrganization
+      security: [{ session: [], csrf: [] }]
+      summary: Delete an empty organization (Platform Admin)
+      description: |
+        The owner's delete (`DELETE /organizations/{orgId}`), done by a
+        Platform Admin for an organization whose owner cannot: the same
+        checks (no Workspace left, none in address quarantine, no dedicated
+        node) and the same effects (grants go, invitations and transfers
+        end, groups leave Keycloak), with the admin as the actor of the audit
+        event. A Deleted organization answers 204 again; a request (Pending
+        or Rejected) is rejected, not deleted.
+      responses:
+        "204": { description: "Deleted, or deleted already" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: |
+            `ORG_NOT_ACTIVE`: a request, Pending or Rejected.
+            `ORGANIZATION_NOT_EMPTY`: as for the owner's delete: `details.workspaces`,
+            `details.dedicatedNodes`, `details.quarantinedWorkspaces` and `details.deletableAfter`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
 
   /admin/organizations/{orgId}/entitlement:
     parameters:

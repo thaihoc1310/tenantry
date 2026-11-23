@@ -18,7 +18,7 @@ import NumField from '@/components/NumField.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import TPanel from '@/components/TPanel.vue'
-import { useAdminOrganization, useClusters, useSetEntitlement } from './queries'
+import { useAdminOrganization, useClusters, useDeleteOrganization, useSetEntitlement } from './queries'
 
 const props = defineProps<{ orgId: string }>()
 const router = useRouter()
@@ -70,6 +70,21 @@ const otherClusters = computed(() =>
   (clusters.data.value ?? []).filter((c) => !(d.value?.clusterGrants ?? []).some((g) => g.clusterId === c.id)),
 )
 const newCluster = ref('')
+
+// Deleting an empty organization whose owner cannot (gone, or a test
+// fixture): the owner's checks, ORGANIZATION_NOT_EMPTY says what is left.
+const del = useDeleteOrganization()
+const confirmSlug = ref('')
+async function remove() {
+  if (!o.value) return
+  try {
+    await del.mutateAsync(props.orgId)
+    ElMessage.success(`${o.value.displayName} is deleted. Its groups leave the login system within a minute.`)
+    router.push('/admin/organizations')
+  } catch (err) {
+    showFailure(err)
+  }
+}
 </script>
 
 <template>
@@ -229,6 +244,22 @@ const newCluster = ref('')
             title="No dedicated node"
             description="Give this Organization a node on the Clusters page."
           />
+        </TPanel>
+
+        <TPanel title="Delete this Organization" note="cannot be undone">
+          <p class="muted">
+            For an Organization its owner cannot delete. It must be empty: no Workspace, none whose address block is
+            still in quarantine, and no dedicated node. Its grants go, open invitations end and its groups leave the
+            login system; the slug can be requested again.
+          </p>
+          <el-form label-position="top" @submit.prevent="remove">
+            <el-form-item :label="`Type ${o.slug} to confirm`" for="org-del-confirm">
+              <el-input id="org-del-confirm" v-model="confirmSlug" style="max-width: 320px" />
+            </el-form-item>
+            <el-button type="danger" :disabled="confirmSlug !== o.slug" :loading="del.isPending.value" @click="remove"
+              >Delete Organization</el-button
+            >
+          </el-form>
         </TPanel>
       </template>
     </template>

@@ -1252,7 +1252,17 @@ export interface paths {
         get: operations["getAdminOrganization"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete an empty organization (Platform Admin)
+         * @description The owner's delete (`DELETE /organizations/{orgId}`), done by a
+         *     Platform Admin for an organization whose owner cannot: the same
+         *     checks (no Workspace left, none in address quarantine, no dedicated
+         *     node) and the same effects (grants go, invitations and transfers
+         *     end, groups leave Keycloak), with the admin as the actor of the audit
+         *     event. A Deleted organization answers 204 again; a request (Pending
+         *     or Rejected) is rejected, not deleted.
+         */
+        delete: operations["deleteAdminOrganization"];
         options?: never;
         head?: never;
         patch?: never;
@@ -5019,6 +5029,44 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    deleteAdminOrganization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id (`org-<ulid>`). Not a slug, which a Rejected and a Pending request may share. */
+                orgId: components["parameters"]["adminOrgId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted, or deleted already */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /**
+             * @description `ORG_NOT_ACTIVE`: a request, Pending or Rejected.
+             *     `ORGANIZATION_NOT_EMPTY`: as for the owner's delete: `details.workspaces`,
+             *     `details.dedicatedNodes`, `details.quarantinedWorkspaces` and `details.deletableAfter`.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
         };
     };
     putAdminEntitlement: {

@@ -35,15 +35,38 @@ func (s *Service) Delete(ctx context.Context, userID, idOrSlug string) error {
 	if o.Status != StatusActive {
 		return ErrNotActive
 	}
+	return s.deleteActive(ctx, userID, o.ID, false)
+}
+
+// AdminDelete is Delete by a Platform Admin (PRODUCT-PLAN §16.5), for an
+// organization whose owner cannot do it (gone, or a test fixture): the same
+// checks and effects, the admin as the actor of the audit event. Deleting a
+// Deleted organization again changes nothing; a request (Pending or
+// Rejected) is not deleted this way (reject it).
+func (s *Service) AdminDelete(ctx context.Context, adminID, orgID string) error {
+	return s.deleteActive(ctx, adminID, orgID, true)
+}
+
+// deleteActive deletes an Active organization in one transaction, under
+// the organization's and then the entitlement's lock. A Deleted one is
+// done already when idempotent (the admin's call), not Active otherwise.
+func (s *Service) deleteActive(ctx context.Context, actorID, orgID string, idempotent bool) error {
 	return store.InTx(ctx, s.db, func(tx pgx.Tx) error {
 		q := s.q.WithTx(tx)
-		cur, err := q.LockOrganization(ctx, o.ID)
+		cur, err := q.LockOrganization(ctx, orgID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNoSuchOrg
+		}
 		if err != nil {
 			return err
+		}
+		if cur.Status == StatusDeleted && idempotent {
+			return nil
 		}
 		if cur.Status != StatusActive {
 			return ErrNotActive
 		}
+		o := cur
 		if _, err := q.LockEntitlement(ctx, o.ID); err != nil {
 			return err
 		}
@@ -83,7 +106,7 @@ func (s *Service) Delete(ctx context.Context, userID, idOrSlug string) error {
 			return err
 		}
 		return audit.Record(ctx, q, audit.Event{
-			Actor: userID, OrgID: o.ID, Action: audit.OrganizationDelete, TargetType: "Organization", TargetID: o.ID,
+			Actor: actorID, OrgID: o.ID, Action: audit.OrganizationDelete, TargetType: "Organization", TargetID: o.ID,
 			Detail: map[string]any{
 				"slug": o.Slug, "grants": grants, "invitationsRevoked": invitations, "transfersCancelled": transfers, "groups": groups,
 			},

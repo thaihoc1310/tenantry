@@ -62,6 +62,13 @@ func (s server) GetAdminOrganization(ctx context.Context, req oapi.GetAdminOrgan
 	return oapi.GetAdminOrganization200JSONResponse(resp), nil
 }
 
+func (s server) DeleteAdminOrganization(ctx context.Context, req oapi.DeleteAdminOrganizationRequestObject) (oapi.DeleteAdminOrganizationResponseObject, error) {
+	if err := s.orgs.AdminDelete(ctx, userID(ctx), req.OrgId); err != nil {
+		return nil, err
+	}
+	return oapi.DeleteAdminOrganization204Response{}, nil
+}
+
 func grantsOf(gs []reservation.Grant) []oapi.ClusterGrant {
 	out := make([]oapi.ClusterGrant, 0, len(gs))
 	for _, g := range gs {
