@@ -130,6 +130,14 @@ Two side notes from that afternoon:
   field. We have no theme of our own (`deploy/keycloak` holds only the realm). The error is harmless,
   since the registration works in every passing test, and upstream.
 
+## Platform Admin password rotated
+
+On 2026-11-23, after the evening run, the Platform Admin password (`PLATFORM_ADMIN_PASSWORD` in the
+Secret `keycloak-realm`) was rotated: it had reached a working transcript through the action titles
+of a kept Playwright trace. The traces were deleted. Since then the suite types passwords without
+recording them (`fillSecret`, and traces without DOM snapshots: `web/e2e/trace.ts`, checked by
+`trace-secrets.spec.ts`).
+
 ## How to repeat
 
 ```sh
