@@ -121,11 +121,18 @@ export function useSetEntitlement() {
   )
 }
 
-export function useUsers(query: MaybeRefOrGetter<string>) {
+export type UserStatus = 'Active' | 'Disabled' | ''
+
+// useUsers lists accounts by email; status '' for every account.
+export function useUsers(query: MaybeRefOrGetter<string>, status: MaybeRefOrGetter<UserStatus> = '') {
   return useQuery({
-    queryKey: computed(() => ['admin', 'users', toValue(query)]),
+    queryKey: computed(() => ['admin', 'users', toValue(query), toValue(status)]),
     queryFn: () =>
-      unwrap(api.GET('/admin/users', { params: { query: { q: toValue(query) || undefined, limit: 50 } } })),
+      unwrap(
+        api.GET('/admin/users', {
+          params: { query: { q: toValue(query) || undefined, status: toValue(status) || undefined, limit: 50 } },
+        }),
+      ),
   })
 }
 

@@ -108,22 +108,26 @@ func (q *Queries) GetOrganizationForAdmin(ctx context.Context, id string) (GetOr
 const listUsersForAdmin = `-- name: ListUsersForAdmin :many
 SELECT id, issuer, subject, email, display_name, status, created_at, updated_at, sync_status, sync_attempts, next_sync_at, last_error FROM users
 WHERE ($1::text IS NULL OR email ILIKE '%' || $1 || '%' OR display_name ILIKE '%' || $1 || '%')
-  AND ($2::text IS NULL OR (coalesce(email, ''), id) > ($3::text, $2::text))
+  AND ($2::text IS NULL OR status = $2)
+  AND ($3::text IS NULL OR (coalesce(email, ''), id) > ($4::text, $3::text))
 ORDER BY coalesce(email, ''), id
-LIMIT $4
+LIMIT $5
 `
 
 type ListUsersForAdminParams struct {
 	Q           *string
+	Status      *string
 	Cursor      *string
 	CursorEmail *string
 	PageSize    int32
 }
 
-// By email, then id (users without an email first). q matches email or display name.
+// By email, then id (users without an email first). q matches email or
+// display name; status, when given, keeps Active or Disabled accounts.
 func (q *Queries) ListUsersForAdmin(ctx context.Context, arg ListUsersForAdminParams) ([]User, error) {
 	rows, err := q.db.Query(ctx, listUsersForAdmin,
 		arg.Q,
+		arg.Status,
 		arg.Cursor,
 		arg.CursorEmail,
 		arg.PageSize,

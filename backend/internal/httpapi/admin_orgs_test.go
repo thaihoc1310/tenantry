@@ -242,6 +242,16 @@ func TestListAdminUsers(t *testing.T) {
 	if l := list("?q=%25"); len(l.Items) != 0 {
 		t.Fatal("% matched as a wildcard")
 	}
+	// status keeps one kind of account; carol is the seed's Disabled one.
+	if l := list("?status=Disabled"); len(l.Items) != 1 || l.Items[0].Id != "usr-carol" {
+		t.Fatalf("status=Disabled %+v", l.Items)
+	}
+	if l := list("?status=Active&q=usr"); len(l.Items) != 4 {
+		t.Fatalf("status=Active %+v", l.Items)
+	}
+	if rec := asAdmin(h, admin, http.MethodGet, "/api/v1/admin/users?status=Gone", "", ""); rec.Code != 400 {
+		t.Fatalf("unknown status: %d", rec.Code)
+	}
 	// Pages follow each other without gaps or repeats.
 	var seen []string
 	cursor := ""

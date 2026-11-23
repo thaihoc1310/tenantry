@@ -26,9 +26,11 @@ WHERE org_id = $1;
 SELECT count(*)::int FROM groups WHERE org_id = $1 AND deleted_at IS NULL;
 
 -- name: ListUsersForAdmin :many
--- By email, then id (users without an email first). q matches email or display name.
+-- By email, then id (users without an email first). q matches email or
+-- display name; status, when given, keeps Active or Disabled accounts.
 SELECT * FROM users
 WHERE (sqlc.narg(q)::text IS NULL OR email ILIKE '%' || sqlc.narg(q) || '%' OR display_name ILIKE '%' || sqlc.narg(q) || '%')
+  AND (sqlc.narg(status)::text IS NULL OR status = sqlc.narg(status))
   AND (sqlc.narg(cursor)::text IS NULL OR (coalesce(email, ''), id) > (sqlc.narg(cursor_email)::text, sqlc.narg(cursor)::text))
 ORDER BY coalesce(email, ''), id
 LIMIT @page_size;

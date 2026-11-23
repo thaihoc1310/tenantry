@@ -97,7 +97,11 @@ func (s server) ListAdminUsers(ctx context.Context, req oapi.ListAdminUsersReque
 	if req.Params.Limit != nil {
 		limit = *req.Params.Limit
 	}
-	p, err := s.users.List(ctx, q, cursor, limit)
+	var status string
+	if req.Params.Status != nil {
+		status = string(*req.Params.Status)
+	}
+	p, err := s.users.List(ctx, q, status, cursor, limit)
 	if err != nil {
 		return nil, err
 	}

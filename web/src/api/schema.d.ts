@@ -1305,7 +1305,8 @@ export interface paths {
         /**
          * Users who have logged in, by email (Platform Admin)
          * @description Ordered by email. `q` keeps those whose email or display name
-         *     contains it, case-insensitively.
+         *     contains it, case-insensitively; `status` keeps Active or Disabled
+         *     accounts (every account without it).
          */
         get: operations["listAdminUsers"];
         put?: never;
@@ -5117,6 +5118,7 @@ export interface operations {
         parameters: {
             query?: {
                 q?: string;
+                status?: "Active" | "Disabled";
                 limit?: number;
                 /** @description Opaque; pass `nextCursor` from the previous page. */
                 cursor?: string;

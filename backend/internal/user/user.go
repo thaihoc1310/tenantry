@@ -60,8 +60,9 @@ type Page struct {
 }
 
 // List returns the users who have logged in, by email; query keeps those
-// whose email or display name contains it.
-func (s *Service) List(ctx context.Context, query, cursor string, pageSize int) (Page, error) {
+// whose email or display name contains it, status ("" for any) those Active
+// or Disabled.
+func (s *Service) List(ctx context.Context, query, status, cursor string, pageSize int) (Page, error) {
 	if pageSize == 0 {
 		pageSize = DefaultPageSize
 	}
@@ -73,6 +74,9 @@ func (s *Service) List(ctx context.Context, query, cursor string, pageSize int) 
 		// LIKE wildcards in the query are matched literally.
 		q = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q)
 		arg.Q = &q
+	}
+	if status != "" {
+		arg.Status = &status
 	}
 	if cursor != "" {
 		email, id, err := decodeCursor(cursor)

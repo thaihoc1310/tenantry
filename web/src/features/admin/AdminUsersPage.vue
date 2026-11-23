@@ -14,7 +14,7 @@ import StatusTag from '@/components/StatusTag.vue'
 import TPanel from '@/components/TPanel.vue'
 import { useMe } from '@/features/organizations/queries'
 import { syncWords } from '@/features/people/sync'
-import { type AdminUser, useSetUserEnabled, useUsers } from './queries'
+import { type AdminUser, type UserStatus, useSetUserEnabled, useUsers } from './queries'
 
 const route = useRoute()
 const me = useMe()
@@ -25,7 +25,11 @@ watch(typed, (v) => {
   clearTimeout(timer)
   timer = setTimeout(() => (query.value = v.trim()), 300)
 })
-const users = useUsers(query)
+// Active by default: disabled accounts (test runs leave many) are one click away.
+const status = ref<UserStatus>(
+  route.query.status === 'Disabled' || route.query.status === '' ? (route.query.status as UserStatus) : 'Active',
+)
+const users = useUsers(query, status)
 const set = useSetUserEnabled()
 
 async function toggle(u: AdminUser) {
@@ -63,6 +67,11 @@ async function toggle(u: AdminUser) {
           style="width: 300px"
           aria-label="Find a user"
         />
+        <el-radio-group v-model="status" aria-label="Accounts to show">
+          <el-radio-button value="Active">Active</el-radio-button>
+          <el-radio-button value="Disabled">Disabled</el-radio-button>
+          <el-radio-button value="">All</el-radio-button>
+        </el-radio-group>
       </div>
       <ErrorState v-if="users.isError.value" :error="users.error.value" @retry="users.refetch()" />
       <div v-else class="t-tablewrap">
