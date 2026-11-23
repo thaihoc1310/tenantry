@@ -42,11 +42,53 @@ Diễn biến khi một Namespace mới xuất hiện:
 
 Metric khớp với giải thích này: trong lúc đo, `tenantry_proxy_probes_total` tăng khoảng 23 ở `Progressing` và 23 ở `Reconciled`. Tức là khoảng một lần chờ cho mỗi Namespace mới (20) và mỗi Workspace mới (2).
 
-## Đã sửa, chưa deploy và chưa đo lại
+## Sau khi sửa: đo lại
 
-Commit e35daa1:
-- Khi probe chỉ đang chờ Proxy bắt kịp (`Progressing`), nó thử lại sau 2 s, trong tối đa 1 phút; quá 1 phút thì về nhịp 30 s.
-- Lỗi thật (`ProxyUnreachable`, `ProxyNotFiltering`) vẫn thử lại sau 30 s.
-- Envtest `TestWorkspaceProxyAccess` có thêm ca này: Namespace mới mà Proxy chưa thấy thì requeue ≤ 2 s, Proxy thấy rồi thì `Ready`.
+Bản sửa (commit e35daa1): khi probe chỉ đang chờ Proxy bắt kịp (`Progressing`), nó thử lại sau 2 s, trong tối đa 1 phút; quá 1 phút thì về nhịp 30 s. Lỗi thật (`ProxyUnreachable`, `ProxyNotFiltering`) vẫn thử lại sau 30 s. Envtest `TestWorkspaceProxyAccess` có ca này.
 
-Kỳ vọng sau khi deploy: t_user khoảng t_cluster cộng vài giây của outbox và worker, dưới 15 s. Điều này **chưa kiểm**: cần deploy operator rồi chạy lại phép đo này.
+Đo lại ngày 2026-11-23 lúc 14:31–14:35 (+07):
+- operator e35daa1 (release revision 14, image `src-856c90f9001c`), backend `src-582a475972a2` vừa deploy;
+- cùng mạng công ty đi thẳng, cùng cách đo, n = 20 (commit 703a26c).
+
+| | trước sửa: p50 / p95 / max | sau sửa: p50 / p95 / max |
+|---|---|---|
+| t_user, giờ server (Operation) | 31,8 / 72,6 / 73,1 s | **7,7 / 13,8 / 16,4 s** |
+| t_user, giờ poll | 31,9 / 73,0 / 73,4 s | 7,9 / 13,8 / 16,5 s |
+| t_cluster, giờ server | 1 / 2 / 5 s | 5 / 10 / 11 s |
+| t_cluster, giờ poll | 0,91 / 2,42 / 5,29 s | 5,67 / 10,11 / 11,50 s |
+
+**NFR "p95 < 15 s" phía người dùng:** đạt sau khi sửa (13,8 s), nhưng sát ngưỡng. Mẫu chậm nhất mất 16,4 s, và chỉ có 20 mẫu.
+
+**Probe trong lúc đo lại:** `tenantry_proxy_probes_total` tăng khoảng 29 ở `Progressing` và 24 ở `Reconciled`. Tức là mỗi Namespace mới vẫn phải chờ Proxy 1–2 lần, nhưng giờ mỗi lần chờ chỉ khoảng 2 s.
+
+**Thời gian tạo Workspace** (`workspace.create`, giờ server, cùng lần chạy, Workspace Shared nhỏ):
+
+| | trước sửa | sau sửa |
+|---|---|---|
+| Từng Workspace | 2 mẫu, chỉ biết theo bucket của histogram (`tenantry_operation_duration_seconds`, `tenantry_workspace_provision_seconds`): một cái 30–60 s, một cái 60–120 s | 5,1 s; 4,7 s; 6,1 s; 65,3 s |
+
+Ba trong bốn Workspace xong trong khoảng 5 s.
+
+**Chưa giải thích được** (đọc thêm từ log Capsule và Prometheus, ngày 2026-11-23 tối, chỉ đọc):
+
+*Workspace `wsx0` mất 65,3 s.*
+- Controller `capsule/replications/namespace-trigger` báo race replication (`applying of N resources failed`) trên Namespace `base` của **cả bốn** Workspace: `nsa` 07:30:51Z, `nsb` 07:30:57Z, `wsx0` 07:31:03Z, `wsx1` 07:32:12Z. Ba Workspace kia vẫn xong trong 4,7–6,1 s, nên race một mình không giải thích được 65 s.
+- Controller GlobalTenantResource của Capsule không có lần reconcile nào lỗi trong lần chạy. Mọi lần chạy của nó kết thúc bằng `requeue_after` (khoảng 46 lần trong 12 phút), tức tự hẹn lần sau theo `resyncPeriod`. CRD mặc định `resyncPeriod` là 60 s, và operator không đặt giá trị này.
+- Operator chỉ coi `PolicyReady` đạt khi điều kiện Ready của GlobalTenantResource là True. Khi Ready=False vì race, nó chờ (tối đa 2 phút, `replicationRaceGrace`).
+- Giả thuyết dẫn đầu: với `wsx0`, status của GlobalTenantResource giữ kết quả lỗi cho tới lần reconcile định kỳ kế tiếp, khoảng 60 s sau. Khoảng 5 s bình thường cộng 60 s ra đúng 65 s. Với ba Workspace kia, status được ghi lại sau khi lần thử lại đã thành công. Giả thuyết này **chưa chứng minh**: CR và GlobalTenantResource đã bị xoá khi dọn.
+- Đã sửa test (f99566b): lần đo tới, ngay khi `workspace.create` xong, test ghi `lastTransitionTime` của từng condition trên Workspace, Ready và thời điểm ghi status của GlobalTenantResource.
+- Mẫu thứ hai cùng kiểu, từ e2e của A (2026-11-23 23:33 +07, mạng nhà qua `wg0`): Workspace `e2ewzthi6fc-solar`, Operation `namespace.create` chạy từ 16:33:11Z tới 16:34:18Z (67 s), dù Namespace đã có trên cụm. Capsule ghi race replication trên Namespace `e2ewzthi6fc-solar-api` lúc 16:33:13,5Z, tức khoảng 65 s trước khi Operation xong. GlobalTenantResource của nó đã bị purge xoá trước khi kịp đọc status. Cùng buổi còn ba Namespace khác bị race (`e2ewsthlrbw-solar-backend` 16:35:42Z, `e2ewsthlrbw-solar-scratch` 16:35:49Z, `e2enwthosgz-water-app` 16:38:06Z). Thời gian Operation của chúng đã mất: các test đó PASS nên Playwright không giữ trace, và purge lúc 23:49–23:54 đã xoá các dòng Operation. Vẫn là tương quan: trong lần đo lại của mình có 7 lần race không kéo theo 60 s.
+
+*t_cluster chậm hơn lần trước* (p50 1 s lên 5 s).
+- Tải không khác: trong 16 phút đo, operator reconcile PlatformWorkspace 406 lần trước sửa và 415 lần sau sửa. Capsule có nhiều hơn một chút (Tenant 102 lên 164, GlobalResourceQuota 116 lên 139, GlobalTenantResource 45 lên 58). Hàng đợi của Capsule tối đa 1.
+- Race replication không phải nguyên nhân. Bốn Namespace bị race (`nsa-n00`, `nsb-n00`, `nsa-n02`, `nsb-n02`) có t_cluster chỉ 2–4 s, còn các mẫu cao nhất (9–11 s: `nsa-n06`, `nsb-n07`, `nsa-n09`, `nsb-n06`, `nsb-n08`) không bị race.
+- t_cluster tăng dần trong lần chạy: các Namespace đầu 2–4 s, các Namespace cuối 8–11 s. Khác biệt chính so với lần trước là nhịp: sau sửa, mỗi Workspace thêm một Namespace khoảng mỗi 8 s (trước là 31 s), hai Workspace song song. Mỗi Tenant cũng có dần tới 11 Namespace.
+- Có 6 mẫu t_cluster lớn hơn t_user, tức Operation đã Succeeded trước khi phần cuối cùng tới. Operator không chờ GlobalResourceQuota đếm Namespace, nên nghi phạm là lần ghi status của GlobalResourceQuota: càng nhiều Namespace và càng nhiều thay đổi dồn dập thì càng trễ. **Chưa tách được.**
+- Đã sửa test (f99566b): lần đo tới ghi riêng mốc của Namespace, NetworkPolicy, LimitRange, status quota và lúc Operation xong, tính từ lúc CR đổi.
+- Hệ quả với người dùng: không có. t_user không chờ phần này, và p95 t_user vẫn 13,8 s.
+
+**Dọn dẹp sau lần đo lại:**
+- Quarantine hết lúc 14:44:33, nhưng ngay sau đó phiên của account owner bị 401, nên test không tự xoá được Organization.
+- Platform Admin đã xoá nó bằng `DELETE /admin/organizations/{id}` (204).
+- Test đã được sửa: lần sau, khi phiên owner hết thì tự dùng đường admin (commit cb9a886).
+- Không còn Namespace, PlatformWorkspace hay account optest nào chưa disable.

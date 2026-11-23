@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestSweepOptestAccounts disables every Active optest-* account a run that
@@ -54,5 +55,45 @@ func TestListOptestOrganizations(t *testing.T) {
 			return
 		}
 		cursor = page.NextCursor
+	}
+}
+
+// TestSweepOptestOrganizations deletes, as the Platform Admin, every optest
+// Organization still Active: what a run left when it was stopped before its
+// cleanup. An Organization whose Workspaces are still in address quarantine
+// is tried again until it can go, for up to 20 minutes.
+func TestSweepOptestOrganizations(t *testing.T) {
+	adm := adminPortal(t)
+	var live []struct{ ID, Slug string }
+	cursor := ""
+	for {
+		var page struct {
+			Items      []struct{ ID, Slug, Status string }
+			NextCursor string `json:"nextCursor"`
+		}
+		adm.api(t, http.MethodGet, "/admin/organizations?limit=50&cursor="+cursor, nil, &page)
+		for _, o := range page.Items {
+			if strings.HasPrefix(o.Slug, "optest") && o.Status == "Active" {
+				live = append(live, struct{ ID, Slug string }{o.ID, o.Slug})
+			}
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	for _, o := range live {
+		deleted := false
+		for end := time.Now().Add(20 * time.Minute); time.Now().Before(end); time.Sleep(15 * time.Second) {
+			if code := adm.api(t, http.MethodDelete, "/admin/organizations/"+o.ID, nil, nil); code == http.StatusNoContent || code == http.StatusNotFound {
+				deleted = true
+				break
+			}
+		}
+		if !deleted {
+			t.Errorf("Organization %s not deleted after 20 minutes", o.Slug)
+			continue
+		}
+		t.Logf("deleted %s", o.Slug)
 	}
 }

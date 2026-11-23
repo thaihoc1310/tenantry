@@ -63,7 +63,12 @@ func optestOrg(t *testing.T, adm *portal, grant map[string]any) (owner *account,
 	orgID = org.Organization.ID
 	t.Cleanup(func() {
 		for end := time.Now().Add(20 * time.Minute); time.Now().Before(end); time.Sleep(15 * time.Second) {
-			if code := owner.api(t, http.MethodDelete, "/organizations/"+orgID, nil, nil); code == http.StatusNoContent || code == http.StatusNotFound {
+			code := owner.api(t, http.MethodDelete, "/organizations/"+orgID, nil, nil)
+			if code == http.StatusUnauthorized || code == http.StatusForbidden {
+				// The owner's session can end during a long run: the Admin deletes it.
+				code = adm.api(t, http.MethodDelete, "/admin/organizations/"+orgID, nil, nil)
+			}
+			if code == http.StatusNoContent || code == http.StatusNotFound {
 				t.Logf("Organization %s deleted", slug)
 				return
 			}
@@ -165,6 +170,7 @@ func TestNamespaceLatency(t *testing.T) {
 		var took time.Duration
 		ids[ws], took = sharedWorkspace(t, owner, slug, ws, adminsID, small, []string{"base"})
 		t.Logf("WSSAMPLE %s workspace.create=%s", ws, took.Round(time.Millisecond))
+		logTimeline(t, slug+"-"+ws)
 	}
 	one := map[string]any{"requestsCpu": "100m", "requestsMemory": "128Mi", "limitsCpu": "200m", "limitsMemory": "256Mi",
 		"pods": 5, "requestsStorage": "1Gi", "namespaceQuota": 1}
@@ -172,6 +178,7 @@ func TestNamespaceLatency(t *testing.T) {
 		ws := fmt.Sprintf("wsx%d", i)
 		_, took := sharedWorkspace(t, owner, slug, ws, adminsID, one, []string{"base"})
 		t.Logf("WSSAMPLE %s workspace.create=%s", ws, took.Round(time.Millisecond))
+		logTimeline(t, slug+"-"+ws)
 	}
 
 	var mu sync.Mutex
@@ -218,6 +225,7 @@ func addNamespace(t *testing.T, owner *account, slug, ws, wsID, suffix string) n
 	}
 	var inSpec, ready, succeeded time.Time
 	var specAt, readyAt time.Time // server-side
+	var parts map[string]time.Time
 	var opCreated, opFinished time.Time
 	deadline := start.Add(5 * time.Minute)
 	for (ready.IsZero() || succeeded.IsZero()) && time.Now().Before(deadline) {
@@ -230,8 +238,8 @@ func addNamespace(t *testing.T, owner *account, slug, ws, wsID, suffix string) n
 			}
 		}
 		if !inSpec.IsZero() && ready.IsZero() {
-			if at, ok := namespaceReady(k8sName, full); ok {
-				ready, readyAt = now, at
+			if at, p, ok := namespaceReadyParts(k8sName, full); ok {
+				ready, readyAt, parts = now, at, p
 			}
 		}
 		if succeeded.IsZero() {
@@ -254,6 +262,10 @@ func addNamespace(t *testing.T, owner *account, slug, ws, wsID, suffix string) n
 		t.Errorf("%s not ready (%v) or its operation not Succeeded (%v) in 5 minutes", full, !ready.IsZero(), !succeeded.IsZero())
 		return nsSample{name: full}
 	}
+	// Which part came last, by the server's clocks, from the spec change.
+	t.Logf("NSPARTS %s ns=%s netpol=%s limitrange=%s quota=%s op_done=%s", full,
+		parts["ns"].Sub(specAt), parts["netpol"].Sub(specAt), parts["limitrange"].Sub(specAt), parts["quota"].Sub(specAt),
+		opFinished.Sub(specAt).Round(time.Second))
 	return nsSample{name: full, cluster: ready.Sub(inSpec), forUser: succeeded.Sub(start),
 		clusterServer: readyAt.Sub(specAt), forUserServer: opFinished.Sub(opCreated)}
 }
@@ -285,34 +297,46 @@ func statusWrittenAt(fields []metav1.ManagedFieldsEntry) time.Time {
 // answers when that was true by the server's clocks: the latest of the three
 // objects' creationTimestamp and the quota's last status write.
 func namespaceReady(tenant, ns string) (time.Time, bool) {
+	at, _, ok := namespaceReadyParts(tenant, ns)
+	return at, ok
+}
+
+// namespaceReadyParts is namespaceReady with each part's server time: the
+// Namespace, its NetworkPolicy and LimitRange created, the quota's status
+// written.
+func namespaceReadyParts(tenant, ns string) (time.Time, map[string]time.Time, bool) {
 	nsObj := &corev1.Namespace{}
 	if admin.Get(ctx, client.ObjectKey{Name: ns}, nsObj) != nil || nsObj.Status.Phase != corev1.NamespaceActive {
-		return time.Time{}, false
+		return time.Time{}, nil, false
 	}
 	np := &networkingv1.NetworkPolicy{}
 	if admin.Get(ctx, client.ObjectKey{Namespace: ns, Name: "tenant-default-deny"}, np) != nil {
-		return time.Time{}, false
+		return time.Time{}, nil, false
 	}
 	lr := &corev1.LimitRange{}
 	if admin.Get(ctx, client.ObjectKey{Namespace: ns, Name: render.LimitRangeName}, lr) != nil {
-		return time.Time{}, false
+		return time.Time{}, nil, false
 	}
 	grq := &unstructured.Unstructured{}
 	grq.SetGroupVersionKind(render.QuotaGVK)
 	if admin.Get(ctx, client.ObjectKey{Name: tenant + "-" + render.QuotaName}, grq) != nil {
-		return time.Time{}, false
+		return time.Time{}, nil, false
 	}
 	status, _ := json.Marshal(grq.Object["status"])
 	if !strings.Contains(string(status), `"`+ns+`"`) {
-		return time.Time{}, false
+		return time.Time{}, nil, false
 	}
-	at := nsObj.CreationTimestamp.Time
-	for _, t := range []time.Time{np.CreationTimestamp.Time, lr.CreationTimestamp.Time, statusWrittenAt(grq.GetManagedFields())} {
+	parts := map[string]time.Time{
+		"ns": nsObj.CreationTimestamp.Time, "netpol": np.CreationTimestamp.Time,
+		"limitrange": lr.CreationTimestamp.Time, "quota": statusWrittenAt(grq.GetManagedFields()),
+	}
+	var at time.Time
+	for _, t := range parts {
 		if t.After(at) {
 			at = t
 		}
 	}
-	return at, true
+	return at, parts, true
 }
 
 func contains(s []string, x string) bool {
@@ -461,4 +485,35 @@ func pauseDeployment(ns string, replicas int32) *appsv1.Deployment {
 			},
 		},
 	}
+}
+
+// logTimeline logs, from the CR's creation, when each condition of a
+// Workspace last changed and when its GlobalTenantResource became Ready: the
+// cluster deletes both with the Workspace, so a slow create can only be
+// explained from what is written down here.
+func logTimeline(t *testing.T, name string) {
+	t.Helper()
+	cr := &v1.PlatformWorkspace{}
+	if err := admin.Get(ctx, client.ObjectKey{Name: name}, cr); err != nil {
+		t.Logf("TIMELINE %s: %v", name, err)
+		return
+	}
+	born := cr.CreationTimestamp.Time
+	var parts []string
+	for _, c := range cr.Status.Conditions {
+		parts = append(parts, fmt.Sprintf("%s=%s/%s@%s", c.Type, c.Status, c.Reason, c.LastTransitionTime.Sub(born)))
+	}
+	gtr := &unstructured.Unstructured{}
+	gtr.SetGroupVersionKind(render.ReplicationGVK)
+	if err := admin.Get(ctx, client.ObjectKey{Name: name}, gtr); err == nil {
+		conds, _, _ := unstructured.NestedSlice(gtr.Object, "status", "conditions")
+		for _, raw := range conds {
+			c, _ := raw.(map[string]any)
+			if at, err := time.Parse(time.RFC3339, fmt.Sprint(c["lastTransitionTime"])); err == nil {
+				parts = append(parts, fmt.Sprintf("GTR.%v=%v/%v@%s", c["type"], c["status"], c["reason"], at.Sub(born)))
+			}
+		}
+		parts = append(parts, fmt.Sprintf("GTR.status_written@%s", statusWrittenAt(gtr.GetManagedFields()).Sub(born)))
+	}
+	t.Logf("TIMELINE %s %s", name, strings.Join(parts, " "))
 }
