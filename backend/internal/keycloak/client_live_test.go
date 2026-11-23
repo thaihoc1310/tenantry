@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/config"
@@ -75,12 +76,18 @@ func TestLiveKeycloak(t *testing.T) {
 
 // TestLiveKeycloakNarrowed checks, as tenantry-sync, what the fine-grained
 // admin permissions of deploy/cluster/keycloak-fgap.py leave it
-// (architecture/06 §7): enabling a person's account still works, and none of
-// what would make it a Platform Admin does. Run by make keycloak-live-test
-// once the permissions are applied (KEYCLOAK_TEST_FGAP=1), with a plain user
-// (KEYCLOAK_TEST_USER_ID), a Platform Admin (KEYCLOAK_TEST_ADMIN_ID), the id
-// of the platform-admin role (KEYCLOAK_TEST_ADMIN_ROLE_ID) and of the group
-// that keeps Platform Admins out of reach (KEYCLOAK_TEST_MARKER_ID).
+// (architecture/06 §7): what the worker does still works, what would make it
+// or anyone a Platform Admin does not (DENIED), and what Users manage brings
+// along on plain users is listed as such (ALLOWED by design). Run by make
+// keycloak-live-test once the permissions are applied (KEYCLOAK_TEST_FGAP=1),
+// with a plain user (KEYCLOAK_TEST_USER_ID), a Platform Admin
+// (KEYCLOAK_TEST_ADMIN_ID), the platform-admin role
+// (KEYCLOAK_TEST_ADMIN_ROLE_ID), the group that keeps Platform Admins out of
+// reach (KEYCLOAK_TEST_MARKER_ID), tenantry-sync's own service account user
+// (KEYCLOAK_TEST_SA_ID), the realm-management client and its role
+// manage-users (KEYCLOAK_TEST_RM_CLIENT_ID, KEYCLOAK_TEST_MANAGE_USERS_ROLE_ID).
+// The ALLOWED cases run on a user the test creates and deletes, never on a
+// person's account.
 func TestLiveKeycloakNarrowed(t *testing.T) {
 	if os.Getenv("KEYCLOAK_TEST_URL") == "" || os.Getenv("KEYCLOAK_TEST_FGAP") == "" {
 		t.Skip("KEYCLOAK_TEST_URL or KEYCLOAK_TEST_FGAP not set")
@@ -92,11 +99,15 @@ func TestLiveKeycloakNarrowed(t *testing.T) {
 		t.Fatal(err)
 	}
 	c, ctx := NewClient(cfg), context.Background()
-	user, admin, role := os.Getenv("KEYCLOAK_TEST_USER_ID"), os.Getenv("KEYCLOAK_TEST_ADMIN_ID"), os.Getenv("KEYCLOAK_TEST_ADMIN_ROLE_ID")
-	marker := os.Getenv("KEYCLOAK_TEST_MARKER_ID")
-	if user == "" || admin == "" || role == "" || marker == "" {
-		t.Fatal("KEYCLOAK_TEST_USER_ID, KEYCLOAK_TEST_ADMIN_ID, KEYCLOAK_TEST_ADMIN_ROLE_ID and KEYCLOAK_TEST_MARKER_ID are required")
+	env := map[string]string{}
+	for _, k := range []string{"KEYCLOAK_TEST_USER_ID", "KEYCLOAK_TEST_ADMIN_ID", "KEYCLOAK_TEST_ADMIN_ROLE_ID", "KEYCLOAK_TEST_MARKER_ID",
+		"KEYCLOAK_TEST_SA_ID", "KEYCLOAK_TEST_RM_CLIENT_ID", "KEYCLOAK_TEST_MANAGE_USERS_ROLE_ID"} {
+		if env[k] = os.Getenv(k); env[k] == "" {
+			t.Fatalf("%s is required", k)
+		}
 	}
+	user, admin, role, marker := env["KEYCLOAK_TEST_USER_ID"], env["KEYCLOAK_TEST_ADMIN_ID"], env["KEYCLOAK_TEST_ADMIN_ROLE_ID"], env["KEYCLOAK_TEST_MARKER_ID"]
+	sa, rm, manageUsers := env["KEYCLOAK_TEST_SA_ID"], env["KEYCLOAK_TEST_RM_CLIENT_ID"], env["KEYCLOAK_TEST_MANAGE_USERS_ROLE_ID"]
 
 	// What the worker does still works on a plain user.
 	if err := c.SetUserEnabled(ctx, user, true); err != nil {
@@ -104,7 +115,8 @@ func TestLiveKeycloakNarrowed(t *testing.T) {
 	}
 	b := make([]byte, 6)
 	_, _ = rand.Read(b)
-	group, err := c.EnsureGroup(ctx, "tenantry-live-test:"+hex.EncodeToString(b))
+	suffix := hex.EncodeToString(b)
+	group, err := c.EnsureGroup(ctx, "tenantry-live-test:"+suffix)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,34 +128,75 @@ func TestLiveKeycloakNarrowed(t *testing.T) {
 		t.Fatalf("remove a plain user: %v", err)
 	}
 
-	// None of this: each must be 403.
-	for _, step := range []struct {
+	type step struct {
 		what, method, path string
 		body               any
-	}{
-		{"reset a plain user's password", "PUT", "/users/" + user + "/reset-password", map[string]any{"type": "password", "value": "Pw-" + hex.EncodeToString(b), "temporary": true}},
+	}
+	expect := func(want int, s step) {
+		t.Helper()
+		resp, err := c.admin(ctx, s.method, s.path, s.body)
+		if err != nil {
+			t.Fatalf("%s: %v", s.what, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Errorf("%s: %d, want %d", s.what, resp.StatusCode, want)
+		} else {
+			t.Logf("%s: %d", s.what, resp.StatusCode)
+		}
+	}
+	password := func() map[string]any {
+		return map[string]any{"type": "password", "value": "Pw-" + suffix, "temporary": true}
+	}
+
+	// DENIED: each must be 403.
+	for _, s := range []step{
 		{"grant platform-admin", "POST", "/users/" + user + "/role-mappings/realm", []map[string]string{{"id": role, "name": "platform-admin"}}},
 		{"impersonate a plain user", "POST", "/users/" + user + "/impersonation", nil},
 		{"change a Platform Admin's email", "PUT", "/users/" + admin, map[string]any{"email": "taken-over@example.com"}},
 		{"disable a Platform Admin", "PUT", "/users/" + admin, map[string]any{"enabled": false}},
 		{"put a Platform Admin in a group", "PUT", "/users/" + admin + "/groups/" + group, nil},
-		{"reset a Platform Admin's password", "PUT", "/users/" + admin + "/reset-password", map[string]any{"type": "password", "value": "Pw-" + hex.EncodeToString(b), "temporary": true}},
+		{"reset a Platform Admin's password", "PUT", "/users/" + admin + "/reset-password", password()},
 		// The group keeping Platform Admins out of reach cannot go away.
 		{"delete the Platform Admins' group", "DELETE", "/groups/" + marker, nil},
 		{"rename the Platform Admins' group", "PUT", "/groups/" + marker, map[string]any{"name": "renamed"}},
 		{"take a Platform Admin out of the group", "DELETE", "/users/" + admin + "/groups/" + marker, nil},
-		{"create a client", "POST", "/clients", map[string]any{"clientId": "tenantry-live-test-" + hex.EncodeToString(b)}},
+		{"create a client", "POST", "/clients", map[string]any{"clientId": "tenantry-live-test-" + suffix}},
 		{"change the realm", "PUT", "", map[string]any{"displayName": "taken over"}},
+		// tenantry-sync cannot give itself a role back.
+		{"grant itself platform-admin", "POST", "/users/" + sa + "/role-mappings/realm", []map[string]string{{"id": role, "name": "platform-admin"}}},
+		{"grant itself manage-users", "POST", "/users/" + sa + "/role-mappings/clients/" + rm, []map[string]string{{"id": manageUsers, "name": "manage-users"}}},
 	} {
-		resp, err := c.admin(ctx, step.method, step.path, step.body)
-		if err != nil {
-			t.Fatalf("%s: %v", step.what, err)
+		expect(403, s)
+	}
+
+	// ALLOWED by design: Users manage, which turning accounts on and off
+	// needs, also lets tenantry-sync take over a plain user's account
+	// (architecture/06 §7, known limitations of M12). Platform Admins stay out
+	// of reach (DENIED above). Run on a user made for the test.
+	resp, err := c.admin(ctx, "POST", "/users", map[string]any{"username": "tenantry-live-test-" + suffix, "enabled": false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	loc := resp.Header.Get("Location")
+	if resp.StatusCode != 201 || !strings.Contains(loc, "/users/") {
+		t.Fatalf("create a test user: %d %q", resp.StatusCode, loc)
+	}
+	plain := loc[strings.LastIndex(loc, "/")+1:]
+	t.Cleanup(func() {
+		if resp, err := c.admin(context.Background(), "DELETE", "/users/"+plain, nil); err == nil {
+			_ = resp.Body.Close()
 		}
-		_ = resp.Body.Close()
-		if resp.StatusCode != 403 {
-			t.Errorf("%s: %d, want 403", step.what, resp.StatusCode)
-		} else {
-			t.Logf("%s: 403", step.what)
-		}
+	})
+	for _, s := range []step{
+		// Known limitation: a plain user's password can be reset ...
+		{"reset a plain user's password", "PUT", "/users/" + plain + "/reset-password", password()},
+		// ... or set through a plain update of the user ...
+		{"set a plain user's password with an update", "PUT", "/users/" + plain, map[string]any{"credentials": []any{password()}}},
+		// ... and the email changed, which opens the forgot-password flow.
+		{"change a plain user's email", "PUT", "/users/" + plain, map[string]any{"email": "tenantry-live-test-" + suffix + "@example.com"}},
+	} {
+		expect(204, s)
 	}
 }

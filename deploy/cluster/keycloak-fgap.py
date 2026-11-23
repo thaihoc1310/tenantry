@@ -9,9 +9,6 @@ that through permissions of the realm's admin-permissions client:
 
   tenantry-sync-groups   Groups, all: view, manage, manage-membership
   tenantry-sync-users    Users, all: view, manage, manage-group-membership
-  tenantry-sync-no-reset-password
-                         Users, all: reset-password, DENIED (without it,
-                         reset-password falls back to manage)
   tenantry-sync-not-platform-admins
                          Group tenantry:platform-admins: view, manage,
                          view-members, manage-members, manage-membership,
@@ -24,26 +21,33 @@ that through permissions of the realm's admin-permissions client:
 No map-roles and no impersonate are granted. Two policies name the service
 account: tenantry-sync-sa (allow) and tenantry-sync-sa-denied (negative).
 
+Users manage, which turning accounts on and off needs, lets tenantry-sync
+take over a plain user's account: reset or set the password, change the
+email (known limitation, architecture/06 §7). It cannot be narrowed: the
+admin-permissions resource server decides UNANIMOUS, and on the all-Users
+resource a permission that does not grant one scope (a reset-password deny,
+tried on Keycloak 26.8.2) refuses every Users scope, manage included.
+Platform Admins stay out of reach through the marker group.
+
 Before anything, it refuses to go on if any group carries a role mapping:
 with manage-membership on every group, putting someone in such a group would
 hand them its roles. The group tenantry:platform-admins itself holds none
 (the role stays mapped to the users directly).
-
-Not in use yet: on the lab (Keycloak 26.8.2) the service account could
-neither enable a user nor add one to a group with these permissions (403),
-so 60-keycloak.sh does not run apply and realm-tenantry.json keeps
-manage-users and query-groups.
 
 Usage (env: none; the Keycloak Pod has the bootstrap admin's credentials):
   keycloak-fgap.py apply    | kubectl -n keycloak exec -i keycloak-0 -- bash -s
   keycloak-fgap.py rollback | kubectl -n keycloak exec -i keycloak-0 -- bash -s
   keycloak-fgap.py check    | ...   (only the role-mapping and platform-admin checks)
 
-rollback gives the service account manage-users back first, so the worker
+rollback gives the service account manage-users back first (and maps it into
+the client's scope if missing, or the token would not carry it), so the worker
 works again at once, takes query-users away (back to manage-users and
 query-groups, what verify.sh expects with admin permissions off), then
 deletes the permissions, policies and the group, and turns admin permissions
 off. realm-sync.py, run later, follows realm-tenantry.json for the roles.
+
+apply ends by taking manage-users away from the service account (query-users
+and query-groups stay), once the permissions are in place.
 
 Run it again and nothing changes. It prints what it does, no secret.
 """
@@ -55,6 +59,7 @@ SA = "service-account-tenantry-sync"
 MARKER = "tenantry:platform-admins"
 # Denied to tenantry-sync on the marker group: the group itself (view,
 # manage: no renaming, deleting or reading it) and its members.
+STALE = "tenantry-sync-no-reset-password"
 DENIED_SCOPES = ["view", "manage", "view-members", "manage-members", "manage-membership",
                  "manage-membership-of-members", "impersonate-members"]
 
@@ -130,7 +135,7 @@ fi
 def upsert(kind, path, name, body):
     """Create or update a policy or permission named name under $base."""
     return f"""id=$(field {json.dumps(name)} "$(k get "$base/{kind}" --fields id,name --format csv --noquotes)")
-if [ -z "$id" ]; then say "create {kind} {name}"; k create "$base/{path}" -f - {doc(body)} >/dev/null
+if [ -z "$id" ]; then say "create {kind} {name}"; k create "$base/{path}" -f - >/dev/null {doc(body)}
 else say "update {kind} {name}"; k update "$base/{path}/$id" -s "id=$id" -f - {doc(body)}
 fi
 """
@@ -159,14 +164,24 @@ done
          "policies": ["tenantry-sync-sa"]},
         {"name": "tenantry-sync-users", "resourceType": "Users", "scopes": ["view", "manage", "manage-group-membership"],
          "policies": ["tenantry-sync-sa"]},
-        {"name": "tenantry-sync-no-reset-password", "resourceType": "Users", "scopes": ["reset-password"],
-         "policies": ["tenantry-sync-sa-denied"]},
         {"name": "tenantry-sync-not-platform-admins", "resourceType": "Groups", "resources": ["__GROUP__"],
          "scopes": DENIED_SCOPES,
          "policies": ["tenantry-sync-sa-denied"]},
     ]
     for p in perms:
         out.append(upsert("permission/scope", "permission/scope", p["name"], p))
+    # An earlier version's reset-password deny refused tenantry-sync every
+    # Users scope: gone.
+    out.append(f"""id=$(field {STALE} "$(k get "$base/permission/scope" --fields id,name --format csv --noquotes)")
+[ -z "$id" ] || {{ say "delete permission {STALE}"; k delete "$base/permission/scope/$id"; }}
+""")
+    # Last, with the permissions in place, so the worker is never without
+    # rights: the service account's roles become what realm-tenantry.json
+    # gives it with the permissions on.
+    out.append(f"""say "{SA}: query-users and query-groups, manage-users away"
+k add-roles --uusername {SA} --cclientid realm-management --rolename query-users --rolename query-groups
+k remove-roles --uusername {SA} --cclientid realm-management --rolename manage-users
+""")
     out.append("say done; unset APPLYING\n" + CHECK)
     # The service account's and the group's ids are known in the Pod only.
     return "\n".join(out).replace("__SA__", "$sa").replace("__GROUP__", "$gid")
@@ -175,6 +190,19 @@ done
 def rollback():
     return PRELUDE + f"""say "manage-users back to {SA} first"
 k add-roles --uusername {SA} --cclientid realm-management --rolename manage-users
+# The token carries a role only if the client's scope maps it too
+# (fullScopeAllowed is off): a realm made from the file with the permissions
+# on has no manage-users there.
+cid=$(k get clients -q clientId=tenantry-sync --fields id --format csv --noquotes)
+rm=$(k get clients -q clientId=realm-management --fields id --format csv --noquotes)
+mapped=0; while IFS= read -r r; do [ "$r" = manage-users ] && mapped=1; done <<< "$(k get "clients/$cid/scope-mappings/clients/$rm" --fields name --format csv --noquotes)"
+if [ "$mapped" = 0 ]; then
+  say "map manage-users into the scope of tenantry-sync"
+  rid=$(k get "clients/$rm/roles/manage-users" --fields id --format csv --noquotes)
+  k create "clients/$cid/scope-mappings/clients/$rm" -f - <<JSON
+[{{"id": "$rid", "name": "manage-users"}}]
+JSON
+fi
 say "query-users away from {SA}: manage-users and query-groups, as before apply"
 k remove-roles --uusername {SA} --cclientid realm-management --rolename query-users
 ap=$(k get clients -q clientId=admin-permissions --fields id --format csv --noquotes)

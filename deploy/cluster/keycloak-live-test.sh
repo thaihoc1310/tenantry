@@ -3,10 +3,11 @@
 # Keycloak, as tenantry-sync with the secret the group sync worker uses: the
 # check that the fake Keycloak of the unit tests answers like the real one,
 # and that tenantry-sync has the rights the worker needs, and no more
-# (TestLiveKeycloakNarrowed: password resets, role mappings, impersonation,
-# Platform Admins, clients and the realm all refused). Creates and deletes
-# groups named tenantry-live-test:<random>; turns the demo user mallory on
-# (she is on already). First checks the realm the way keycloak-fgap.py does:
+# (TestLiveKeycloakNarrowed: role mappings, its own included, impersonation,
+# Platform Admins, clients and the realm all refused; what Users manage allows
+# on plain users listed as allowed by design). Creates and deletes groups
+# named tenantry-live-test:<random> and a user tenantry-live-test-<random>;
+# turns the demo user mallory on (she is on already). First checks the realm the way keycloak-fgap.py does:
 # no group carries a role mapping, every platform-admin is protected.
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
@@ -30,11 +31,15 @@ $kcadm config credentials --config "$cfg" --server http://localhost:8080 --realm
 k() { $kcadm "$@" --config "$cfg" -r tenantry; }
 marker=""
 while IFS=, read -r i n; do [ "$n" = "tenantry:platform-admins" ] && marker=$i; done <<< "$(k get groups -q search=tenantry:platform-admins -q exact=true --fields id,name --format csv --noquotes)"
-echo "$(k get users -q username=mallory -q exact=true --fields id --format csv --noquotes) $(k get users -q username=admin -q exact=true --fields id --format csv --noquotes) $(k get roles/platform-admin --fields id --format csv --noquotes) ${marker}"
+rm=$(k get clients -q clientId=realm-management --fields id --format csv --noquotes)
+echo "$(k get users -q username=mallory -q exact=true --fields id --format csv --noquotes) $(k get users -q username=admin -q exact=true --fields id --format csv --noquotes) $(k get roles/platform-admin --fields id --format csv --noquotes)" \
+  "$(k get users -q username=service-account-tenantry-sync -q exact=true --fields id --format csv --noquotes) ${rm} $(k get "clients/${rm}/roles/manage-users" --fields id --format csv --noquotes) ${marker}"
 SH
 )"
-read -r KEYCLOAK_TEST_USER_ID KEYCLOAK_TEST_ADMIN_ID KEYCLOAK_TEST_ADMIN_ROLE_ID KEYCLOAK_TEST_MARKER_ID <<< "${ids}"
-export KEYCLOAK_TEST_USER_ID KEYCLOAK_TEST_ADMIN_ID KEYCLOAK_TEST_ADMIN_ROLE_ID KEYCLOAK_TEST_MARKER_ID
+read -r KEYCLOAK_TEST_USER_ID KEYCLOAK_TEST_ADMIN_ID KEYCLOAK_TEST_ADMIN_ROLE_ID KEYCLOAK_TEST_SA_ID KEYCLOAK_TEST_RM_CLIENT_ID \
+  KEYCLOAK_TEST_MANAGE_USERS_ROLE_ID KEYCLOAK_TEST_MARKER_ID <<< "${ids}"
+export KEYCLOAK_TEST_USER_ID KEYCLOAK_TEST_ADMIN_ID KEYCLOAK_TEST_ADMIN_ROLE_ID KEYCLOAK_TEST_SA_ID KEYCLOAK_TEST_RM_CLIENT_ID \
+  KEYCLOAK_TEST_MANAGE_USERS_ROLE_ID KEYCLOAK_TEST_MARKER_ID
 # The narrowed checks run once the permissions are on (none in the rollback state).
 [ -z "${KEYCLOAK_TEST_MARKER_ID}" ] || export KEYCLOAK_TEST_FGAP=1
 
