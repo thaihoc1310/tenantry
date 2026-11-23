@@ -42,11 +42,39 @@ Diễn biến khi một Namespace mới xuất hiện:
 
 Metric khớp với giải thích này: trong lúc đo, `tenantry_proxy_probes_total` tăng khoảng 23 ở `Progressing` và 23 ở `Reconciled`. Tức là khoảng một lần chờ cho mỗi Namespace mới (20) và mỗi Workspace mới (2).
 
-## Đã sửa, chưa deploy và chưa đo lại
+## Sau khi sửa: đo lại
 
-Commit e35daa1:
-- Khi probe chỉ đang chờ Proxy bắt kịp (`Progressing`), nó thử lại sau 2 s, trong tối đa 1 phút; quá 1 phút thì về nhịp 30 s.
-- Lỗi thật (`ProxyUnreachable`, `ProxyNotFiltering`) vẫn thử lại sau 30 s.
-- Envtest `TestWorkspaceProxyAccess` có thêm ca này: Namespace mới mà Proxy chưa thấy thì requeue ≤ 2 s, Proxy thấy rồi thì `Ready`.
+Bản sửa (commit e35daa1): khi probe chỉ đang chờ Proxy bắt kịp (`Progressing`), nó thử lại sau 2 s, trong tối đa 1 phút; quá 1 phút thì về nhịp 30 s. Lỗi thật (`ProxyUnreachable`, `ProxyNotFiltering`) vẫn thử lại sau 30 s. Envtest `TestWorkspaceProxyAccess` có ca này.
 
-Kỳ vọng sau khi deploy: t_user khoảng t_cluster cộng vài giây của outbox và worker, dưới 15 s. Điều này **chưa kiểm**: cần deploy operator rồi chạy lại phép đo này.
+Đo lại ngày 2026-11-23 lúc 14:31–14:35 (+07):
+- operator e35daa1 (release revision 14, image `src-856c90f9001c`), backend `src-582a475972a2` vừa deploy;
+- cùng mạng công ty đi thẳng, cùng cách đo, n = 20 (commit 703a26c).
+
+| | trước sửa: p50 / p95 / max | sau sửa: p50 / p95 / max |
+|---|---|---|
+| t_user, giờ server (Operation) | 31,8 / 72,6 / 73,1 s | **7,7 / 13,8 / 16,4 s** |
+| t_user, giờ poll | 31,9 / 73,0 / 73,4 s | 7,9 / 13,8 / 16,5 s |
+| t_cluster, giờ server | 1 / 2 / 5 s | 5 / 10 / 11 s |
+| t_cluster, giờ poll | 0,91 / 2,42 / 5,29 s | 5,67 / 10,11 / 11,50 s |
+
+**NFR "p95 < 15 s" phía người dùng:** đạt sau khi sửa (13,8 s), nhưng sát ngưỡng. Mẫu chậm nhất mất 16,4 s, và chỉ có 20 mẫu.
+
+**Probe trong lúc đo lại:** `tenantry_proxy_probes_total` tăng khoảng 29 ở `Progressing` và 24 ở `Reconciled`. Tức là mỗi Namespace mới vẫn phải chờ Proxy 1–2 lần, nhưng giờ mỗi lần chờ chỉ khoảng 2 s.
+
+**Thời gian tạo Workspace** (`workspace.create`, giờ server, cùng lần chạy, Workspace Shared nhỏ):
+
+| | trước sửa | sau sửa |
+|---|---|---|
+| Từng Workspace | 2 mẫu, chỉ biết theo bucket của histogram (`tenantry_operation_duration_seconds`, `tenantry_workspace_provision_seconds`): một cái 30–60 s, một cái 60–120 s | 5,1 s; 4,7 s; 6,1 s; 65,3 s |
+
+Ba trong bốn Workspace xong trong khoảng 5 s.
+
+**Chưa giải thích được:**
+- **Workspace `wsx0` mất 65,3 s.** Log operator chỉ có một lần conflict khi ghi status (tự thử lại ngay). CR đã bị xoá khi dọn, nên không còn dòng thời gian của các condition để biết bước nào chậm. Ứng viên: cửa sổ 2 phút operator dành cho race replication của Capsule (known-limitations mục 10), hoặc Proxy chậm quá 1 phút nên probe rơi về nhịp 30 s. Muốn biết thì lần đo tới phải ghi lại `lastTransitionTime` của từng condition trước khi xoá.
+- **t_cluster chậm hơn lần trước** (p50 1 s lên 5 s), dù phần cụm không đổi. Có 6 mẫu t_cluster còn lớn hơn t_user, nghĩa là Operation đã Succeeded trước khi GlobalResourceQuota ghi nhận Namespace. Nghi phạm là lần ghi status của GlobalResourceQuota, vốn nằm trong mốc kết thúc của t_cluster. Chưa tách được thành phần nào trễ.
+
+**Dọn dẹp sau lần đo lại:**
+- Quarantine hết lúc 14:44:33, nhưng ngay sau đó phiên của account owner bị 401, nên test không tự xoá được Organization.
+- Platform Admin đã xoá nó bằng `DELETE /admin/organizations/{id}` (204).
+- Test đã được sửa: lần sau, khi phiên owner hết thì tự dùng đường admin (commit cb9a886).
+- Không còn Namespace, PlatformWorkspace hay account optest nào chưa disable.
