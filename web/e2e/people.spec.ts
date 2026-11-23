@@ -8,14 +8,19 @@
 import { expect, test, type Browser, type Page } from '@playwright/test'
 import {
   adminPassword,
+  cleanUpOrganization,
+  cleanupAfterAll,
   groupsOf,
   kubectlTokens,
   logIn,
   openReview,
+  orgIdOf,
   requestOrganization,
   signUp,
   token,
 } from './support'
+
+cleanupAfterAll()
 
 const shots = process.env.E2E_SHOTS // a directory: save screenshots of each screen, for review
 async function shot(page: Page, name: string) {
@@ -26,6 +31,7 @@ async function shot(page: Page, name: string) {
 async function approvedOrganization(browser: Browser, label: string) {
   const owner = await signUp(browser)
   const slug = await requestOrganization(owner.page, `E2E ${label} ${owner.who.username}`)
+  cleanUpOrganization(browser, await orgIdOf(owner.page, slug), slug)
   const admin = await logIn(browser, 'admin', adminPassword(), '/admin/organizations')
   await openReview(admin, slug)
   await admin.getByRole('button', { name: 'Approve with this grant' }).click()

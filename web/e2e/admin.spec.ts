@@ -6,7 +6,7 @@
 // operator carries out on the node's labels. The lab is put back as it was
 // (wk3 in the pool again, dedicated to nobody) even when a step fails.
 import { expect, test, type Page } from '@playwright/test'
-import { adminPassword, api, cleanUp, cleanupAfterAll, logIn, onCleanup, signUp } from './support'
+import { adminPassword, api, cleanUp, cleanUpOrganization, cleanupAfterAll, logIn, onCleanup, signUp } from './support'
 
 const shots = process.env.E2E_SHOTS
 async function shot(page: Page, name: string) {
@@ -41,6 +41,8 @@ test('an Admin creates an Organization and gives it a dedicated node', async ({ 
   const admin = await logIn(browser, 'admin', adminPassword(), '/admin/organizations')
   const org: { id?: string } = {} // known once created; the cleanup reads it then
 
+  // Registered first, so it runs after wk3 is back: an Organization holding a node is not deleted.
+  cleanUpOrganization(browser, () => org.id, slug)
   onCleanup('wk3 back in the shared pool', async () => {
     await restore(admin, org.id)
   })

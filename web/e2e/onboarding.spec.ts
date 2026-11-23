@@ -3,11 +3,23 @@
 // a Platform Admin approves it, and they see its quota; a reload keeps them
 // logged in; logging out ends the Keycloak session too.
 import { expect, test } from '@playwright/test'
-import { adminPassword, logIn, openReview, requestOrganization, signUp } from './support'
+import {
+  adminPassword,
+  cleanUpOrganization,
+  cleanupAfterAll,
+  logIn,
+  openReview,
+  orgIdOf,
+  requestOrganization,
+  signUp,
+} from './support'
+
+cleanupAfterAll()
 
 test('a newcomer gets an approved Organization', async ({ browser }) => {
   const { page, who } = await signUp(browser)
   const slug = await requestOrganization(page, `E2E ${who.username}`)
+  cleanUpOrganization(browser, await orgIdOf(page, slug), slug)
 
   const admin = await logIn(browser, 'admin', adminPassword(), '/admin/organizations')
   await openReview(admin, slug)
@@ -38,6 +50,7 @@ test('a newcomer gets an approved Organization', async ({ browser }) => {
 test('a rejected requester sees why and may ask again', async ({ browser }) => {
   const { page, who } = await signUp(browser)
   const slug = await requestOrganization(page, `E2E reject ${who.username}`)
+  cleanUpOrganization(browser, await orgIdOf(page, slug), slug)
 
   const admin = await logIn(browser, 'admin', adminPassword(), '/admin/organizations')
   await openReview(admin, slug)
@@ -55,6 +68,7 @@ test('a rejected requester sees why and may ask again', async ({ browser }) => {
   await expect(page.locator('#org-slug')).toHaveValue(slug)
   await page.getByRole('button', { name: 'Send request' }).click()
   await expect(page.getByRole('heading', { name: 'Your request is waiting for review' })).toBeVisible()
+  cleanUpOrganization(browser, await orgIdOf(page, slug), `${slug} (asked again)`)
 })
 
 test('a person without the role cannot open the admin area', async ({ browser }) => {

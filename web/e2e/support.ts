@@ -182,6 +182,7 @@ export async function workspaceOrganization(browser: Browser, prefix: string, ma
     crypto.randomUUID(),
   )
   expect(created.status, JSON.stringify(created.body)).toBe(201)
+  cleanUpOrganization(browser, created.body.organization.id, slug)
   await owner.page.reload()
   const admins = await until('group admins in Keycloak', async () => {
     const r = await api(owner.page, 'GET', `/organizations/${slug}/groups`)
@@ -189,6 +190,58 @@ export async function workspaceOrganization(browser: Browser, prefix: string, ma
     return g?.syncStatus === 'Synced' ? (g as { id: string; machineName: string }) : undefined
   })
   return { owner, admin, slug, admins }
+}
+
+// cleanUpOrganization removes a test's Organization at its end, so a run
+// leaves none behind: as the Platform Admin (the owner may have logged out
+// or handed it over), a request still Pending is rejected and an Active
+// Organization deleted. Register it before the test's other cleanups: they
+// run last first, so its Workspaces and dedicated nodes are gone by then.
+// Deleting waits for the Workspaces' address blocks to leave quarantine (10
+// minutes); a test does not wait that long: refused for that alone, the
+// Organization is left, said so, to make demo-purge-test-data.
+export function cleanUpOrganization(browser: Browser, id: string | (() => string | undefined), label = '') {
+  onCleanup(`organization ${label}`, async () => {
+    const orgId = typeof id === 'function' ? id() : id
+    if (!orgId) return
+    const admin = await logIn(browser, 'admin', adminPassword(), '/admin/organizations')
+    try {
+      const got = await api(admin, 'GET', `/admin/organizations/${orgId}`)
+      if (got.status === 404) return // deleted already
+      expect(got.status, JSON.stringify(got.body)).toBe(200)
+      const status = got.body.organization.status as string
+      if (status === 'Pending') {
+        const r = await api(
+          admin,
+          'POST',
+          `/admin/organizations/${orgId}:reject`,
+          { reason: 'end-to-end test cleanup' },
+          crypto.randomUUID(),
+        )
+        expect(r.status, JSON.stringify(r.body)).toBe(200)
+        return
+      }
+      if (status !== 'Active') return // Rejected: nothing to remove through the API
+      const r = await api(admin, 'DELETE', `/admin/organizations/${orgId}`)
+      const d = r.body?.details ?? {}
+      if (r.status === 409 && r.body.code === 'ORGANIZATION_NOT_EMPTY' && !d.workspaces && !d.dedicatedNodes) {
+        console.log(
+          `organization ${label || orgId} left until ${d.deletableAfter}: its address blocks are in quarantine`,
+        )
+        return
+      }
+      expect(r.status, JSON.stringify(r.body)).toBe(204)
+    } finally {
+      await admin.context().close()
+    }
+  })
+}
+
+// orgIdOf reads the id of an Organization its member can see.
+export async function orgIdOf(page: Page, slug: string): Promise<string> {
+  const r = await api(page, 'GET', `/organizations/${slug}`)
+  expect(r.status, JSON.stringify(r.body)).toBe(200)
+  return r.body.id as string
 }
 
 // deleteWorkspace deletes a Workspace through the API and waits until the
