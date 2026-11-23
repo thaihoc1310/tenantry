@@ -1,9 +1,8 @@
 # A light Prometheus for the lab (IMPLEMENTATION-PLAN M12 item 1): the server
-# alone, on the system pool, 24h in memory-backed emptyDir, scraping only
-# Tenantry's own components. No Alertmanager, node exporter, kube-state-metrics
+# on the system pool, 24h in memory-backed emptyDir, scraping Tenantry's own
+# components, plus a narrow kube-state-metrics. No Alertmanager, node exporter
 # or Pushgateway: the lab has 3 CPU per node.
 alertmanager: {enabled: false}
-kube-state-metrics: {enabled: false}
 prometheus-node-exporter: {enabled: false}
 prometheus-pushgateway: {enabled: false}
 
@@ -11,6 +10,40 @@ restricted: &restricted
   allowPrivilegeEscalation: false
   capabilities: {drop: [ALL]}
   seccompProfile: {type: RuntimeDefault}
+
+# kube-state-metrics for what no Tenantry component reports: the CPU the
+# Pods running on a shared pool's nodes request (next to the pool's
+# allocatable, ADR-0017) and Pods the scheduler cannot place. Pods, nodes and
+# Namespaces only, a short list of metrics, and the two labels the dashboard
+# joins on: a node's pool and a Namespace's Tenant (the Workspace).
+kube-state-metrics:
+  enabled: true
+  collectors: [pods, nodes, namespaces]
+  metricAllowlist:
+    - kube_pod_container_resource_requests
+    - kube_pod_status_phase
+    - kube_pod_status_unschedulable
+    - kube_node_labels
+    - kube_node_status_allocatable
+    - kube_namespace_labels
+  metricLabelsAllowlist:
+    - nodes=[tenantry.io/compute-pool]
+    - namespaces=[capsule.clastix.io/tenant]
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 128Mi}
+  containerSecurityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities: {drop: [ALL]}
+    seccompProfile: {type: RuntimeDefault}
+  nodeSelector:
+    tenantry.io/compute-pool: system
+  tolerations:
+    - key: tenantry.io/compute-pool
+      operator: Equal
+      value: system
+      effect: NoSchedule
 
 configmapReload:
   prometheus:
@@ -85,6 +118,9 @@ serverFiles:
           - source_labels: [__name__]
             regex: apiserver_request_total|apiserver_request_duration_seconds_(bucket|sum|count)
             action: keep
+      - job_name: kube-state-metrics
+        static_configs:
+          - targets: [prometheus-kube-state-metrics.observability.svc:8080]
       # The backend's API and workers (plain HTTP on port 9090).
       - job_name: tenantry-backend
         static_configs:
