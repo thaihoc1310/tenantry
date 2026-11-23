@@ -35,6 +35,25 @@ export async function verificationLink(email: string): Promise<string> {
   throw new Error(`no verification mail for ${email} in Mailpit`)
 }
 
+// fillSecret types a secret into a field without it landing in the trace:
+// Playwright records a fill's value as the action's title, so a password
+// typed with fill sits in every kept trace.zip. The value reaches the page
+// through a binding instead: the trace keeps the binding's name and the page
+// script, not what the binding returns. DOM snapshots would still keep the
+// field's value: the suite records none (e2e/trace.ts; trace-secrets.spec
+// checks both together).
+let secrets = 0
+export async function fillSecret(page: Page, selector: string, secret: string) {
+  const fn = `__tenantrySecret${++secrets}`
+  await page.exposeFunction(fn, () => secret)
+  await page.locator(selector).evaluate(async (el, name) => {
+    const input = el as HTMLInputElement
+    input.value = await (window as unknown as Record<string, () => Promise<string>>)[name]!()
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+  }, fn)
+}
+
 // signUp registers a new account through Keycloak's own pages: the form asks
 // no password while the realm verifies email (Keycloak 26), the link in the
 // mail does, so only the owner of the address can set one. It ends on the
@@ -52,8 +71,8 @@ export async function signUp(browser: Browser) {
   // Not logged in to the portal before the address is verified.
   await expect(page.getByText(/verify your email/i).first()).toBeVisible()
   await page.goto(await verificationLink(who.email))
-  await page.fill('#password-new', who.password)
-  await page.fill('#password-confirm', who.password)
+  await fillSecret(page, '#password-new', who.password)
+  await fillSecret(page, '#password-confirm', who.password)
   await page.getByRole('button', { name: /submit/i }).click()
   await page.waitForURL((u) => !u.pathname.startsWith('/realms/'))
   return { page, who }
@@ -64,7 +83,7 @@ export async function logIn(browser: Browser, username: string, password: string
   const page = await (await browser.newContext()).newPage()
   await page.goto(path)
   await page.fill('#username', username)
-  await page.fill('#password', password)
+  await fillSecret(page, '#password', password)
   await page.click('#kc-login')
   await page.waitForURL((u) => !u.pathname.startsWith('/realms/'))
   return page
