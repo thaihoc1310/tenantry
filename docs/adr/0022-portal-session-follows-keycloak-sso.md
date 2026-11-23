@@ -74,5 +74,5 @@ An toàn hơn nếu refresh token lộ. Không chọn: hai request đồng thờ
   - `TestRefreshKeepsSessionMax`: không kéo quá 24 giờ; `TestRefreshWithRotatedKey`: đổi khóa thì phiên kết thúc;
   - `TestLogout`, `TestLogoutNeedsCSRF`, `TestLogoutWithNothingToEnd`: logout gọi Keycloak bằng refresh token hiện tại và kết thúc SSO session.
 - Disable xóa mọi phiên, kể cả phiên trên thiết bị khác: `TestDisableEnableUser` (`backend/internal/httpapi/admin_orgs_test.go`).
-- Trên lab: `web/e2e/onboarding.spec.ts` "the session outlives the access token" chờ 5 phút 20 giây rồi kiểm `GET /api/v1/me` vẫn 200; chỉ chạy khi đặt `E2E_SLOW=1`, chưa thấy report ghi kết quả.
+- Trên lab: `web/e2e/onboarding.spec.ts` "the session outlives the access token" chờ 5 phút 20 giây rồi kiểm `GET /api/v1/me` vẫn 200; chỉ chạy khi đặt `E2E_SLOW=1`. PASS trên lab ngày 2026-11-23 (5,4 phút, [e2e-portal](../report/e2e-portal.md)).
 - Logout portal kéo theo Headlamp và kubelogin phải đăng nhập lại: chỉ kiểm với Keycloak giả (`TestLogout`), trên lab chưa kiểm.
