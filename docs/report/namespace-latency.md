@@ -130,6 +130,7 @@ Mỗi Namespace mới kích một lượt replication. Mỗi lượt đọc và 
 
 **Đã sửa (35e9510, chưa deploy):** `PolicyReady` giờ chỉ đạt khi mọi Namespace đang sống đã có đủ bản sao LimitRange và NetworkPolicy, đọc thẳng từ apiserver. Trong lúc chờ, operator thử lại sau 2 s.
 - Chọn requeue ngắn thay cho watch. Một watch trên NetworkPolicy và LimitRange buộc operator cache mọi object loại đó trong cụm, và cần quyền list/watch toàn cụm, chỉ để đỡ tối đa 2 s; requeue chỉ chạy khi có Workspace đang chờ.
+- Nếu sau này cần watch, có thể lọc được. Đọc trên lab (Namespace `acme-solar-frontend`, 2026-11-24): mỗi bản sao Capsule tạo mang các nhãn `projectcapsule.dev/tenant: <tenant>`, `projectcapsule.dev/created-by: replications`, `capsule.clastix.io/managed-by: <tenant>`, và ownerReference trỏ về GlobalTenantResource cùng tên Workspace. Không có nhãn `tenantry.io/managed` của operator. Cách làm khi đó: cache chỉ các object có `projectcapsule.dev/created-by=replications`, rồi map qua nhãn `projectcapsule.dev/tenant` về PlatformWorkspace cùng tên. Vẫn cần quyền list/watch trên hai loại này.
 - Quyền thêm vào operator chỉ là `get` trên `limitranges` và `networkpolicies`.
 - Namespace nào đã đủ bản sao thì được nhớ và không đọc lại; Capsule tự đặt lại bản sao bị xoá.
 - Envtest `TestWorkspaceWaitsForReplicas` kiểm đúng ca này.
