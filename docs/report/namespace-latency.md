@@ -69,9 +69,22 @@ Bản sửa (commit e35daa1): khi probe chỉ đang chờ Proxy bắt kịp (`Pr
 
 Ba trong bốn Workspace xong trong khoảng 5 s.
 
-**Chưa giải thích được:**
-- **Workspace `wsx0` mất 65,3 s.** Log operator chỉ có một lần conflict khi ghi status (tự thử lại ngay). CR đã bị xoá khi dọn, nên không còn dòng thời gian của các condition để biết bước nào chậm. Ứng viên: cửa sổ 2 phút operator dành cho race replication của Capsule (known-limitations mục 10), hoặc Proxy chậm quá 1 phút nên probe rơi về nhịp 30 s. Muốn biết thì lần đo tới phải ghi lại `lastTransitionTime` của từng condition trước khi xoá.
-- **t_cluster chậm hơn lần trước** (p50 1 s lên 5 s), dù phần cụm không đổi. Có 6 mẫu t_cluster còn lớn hơn t_user, nghĩa là Operation đã Succeeded trước khi GlobalResourceQuota ghi nhận Namespace. Nghi phạm là lần ghi status của GlobalResourceQuota, vốn nằm trong mốc kết thúc của t_cluster. Chưa tách được thành phần nào trễ.
+**Chưa giải thích được** (đọc thêm từ log Capsule và Prometheus, ngày 2026-11-23 tối, chỉ đọc):
+
+*Workspace `wsx0` mất 65,3 s.*
+- Controller `capsule/replications/namespace-trigger` báo race replication (`applying of N resources failed`) trên Namespace `base` của **cả bốn** Workspace: `nsa` 07:30:51Z, `nsb` 07:30:57Z, `wsx0` 07:31:03Z, `wsx1` 07:32:12Z. Ba Workspace kia vẫn xong trong 4,7–6,1 s, nên race một mình không giải thích được 65 s.
+- Controller GlobalTenantResource của Capsule không có lần reconcile nào lỗi trong lần chạy. Mọi lần chạy của nó kết thúc bằng `requeue_after` (khoảng 46 lần trong 12 phút), tức tự hẹn lần sau theo `resyncPeriod`. CRD mặc định `resyncPeriod` là 60 s, và operator không đặt giá trị này.
+- Operator chỉ coi `PolicyReady` đạt khi điều kiện Ready của GlobalTenantResource là True. Khi Ready=False vì race, nó chờ (tối đa 2 phút, `replicationRaceGrace`).
+- Giả thuyết dẫn đầu: với `wsx0`, status của GlobalTenantResource giữ kết quả lỗi cho tới lần reconcile định kỳ kế tiếp, khoảng 60 s sau. Khoảng 5 s bình thường cộng 60 s ra đúng 65 s. Với ba Workspace kia, status được ghi lại sau khi lần thử lại đã thành công. Giả thuyết này **chưa chứng minh**: CR và GlobalTenantResource đã bị xoá khi dọn.
+- Đã sửa test (f99566b): lần đo tới, ngay khi `workspace.create` xong, test ghi `lastTransitionTime` của từng condition trên Workspace, Ready và thời điểm ghi status của GlobalTenantResource.
+
+*t_cluster chậm hơn lần trước* (p50 1 s lên 5 s).
+- Tải không khác: trong 16 phút đo, operator reconcile PlatformWorkspace 406 lần trước sửa và 415 lần sau sửa. Capsule có nhiều hơn một chút (Tenant 102 lên 164, GlobalResourceQuota 116 lên 139, GlobalTenantResource 45 lên 58). Hàng đợi của Capsule tối đa 1.
+- Race replication không phải nguyên nhân. Bốn Namespace bị race (`nsa-n00`, `nsb-n00`, `nsa-n02`, `nsb-n02`) có t_cluster chỉ 2–4 s, còn các mẫu cao nhất (9–11 s: `nsa-n06`, `nsb-n07`, `nsa-n09`, `nsb-n06`, `nsb-n08`) không bị race.
+- t_cluster tăng dần trong lần chạy: các Namespace đầu 2–4 s, các Namespace cuối 8–11 s. Khác biệt chính so với lần trước là nhịp: sau sửa, mỗi Workspace thêm một Namespace khoảng mỗi 8 s (trước là 31 s), hai Workspace song song. Mỗi Tenant cũng có dần tới 11 Namespace.
+- Có 6 mẫu t_cluster lớn hơn t_user, tức Operation đã Succeeded trước khi phần cuối cùng tới. Operator không chờ GlobalResourceQuota đếm Namespace, nên nghi phạm là lần ghi status của GlobalResourceQuota: càng nhiều Namespace và càng nhiều thay đổi dồn dập thì càng trễ. **Chưa tách được.**
+- Đã sửa test (f99566b): lần đo tới ghi riêng mốc của Namespace, NetworkPolicy, LimitRange, status quota và lúc Operation xong, tính từ lúc CR đổi.
+- Hệ quả với người dùng: không có. t_user không chờ phần này, và p95 t_user vẫn 13,8 s.
 
 **Dọn dẹp sau lần đo lại:**
 - Quarantine hết lúc 14:44:33, nhưng ngay sau đó phiên của account owner bị 401, nên test không tự xoá được Organization.
