@@ -1447,7 +1447,14 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a cluster registered by mistake (Platform Admin)
+         * @description Only while it is Registered (never made Ready) and nothing refers
+         *     to it: no grant, shared pool, network pool, node, node grant,
+         *     onboarding policy, Workspace or outbox event. Deleting a deleted
+         *     cluster again answers 204 (its cluster.delete is in the audit trail).
+         */
+        delete: operations["deleteCluster"];
         options?: never;
         head?: never;
         /**
@@ -5372,6 +5379,43 @@ export interface operations {
                 };
             };
             422: components["responses"]["IdempotencyKeyReused"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteCluster: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clusterId: components["parameters"]["clusterId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted, or deleted already */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /**
+             * @description `CONFLICT`: `details.status` when the cluster is not Registered; otherwise one count per
+             *     kind of thing still referring to it (`grants`, `sharedPools`, `networkPools`, `nodes`,
+             *     `nodeGrants`, `policies`, `workspaces`, `outboxEvents`).
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             429: components["responses"]["RateLimited"];
         };
     };

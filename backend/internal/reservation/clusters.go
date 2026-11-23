@@ -109,6 +109,52 @@ func (s *Service) Register(ctx context.Context, adminID string, c Cluster) (stor
 	return out, err
 }
 
+// DeleteCluster removes a cluster registered by mistake or for a test: only
+// while it is Registered (never made Ready, so nothing ran on it) and nothing
+// refers to it (grant, pool, node, node grant, onboarding policy, Workspace,
+// outbox event). Deleting it again is done: a cluster.delete in the audit
+// trail answers like the delete did; an id never known is ErrNoSuchCluster.
+func (s *Service) DeleteCluster(ctx context.Context, adminID, clusterID string) error {
+	return store.InTx(ctx, s.db, func(tx pgx.Tx) error {
+		q := s.q.WithTx(tx)
+		c, err := q.LockCluster(ctx, clusterID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			if gone, err := q.ClusterWasDeleted(ctx, clusterID); err != nil || gone {
+				return err
+			}
+			return ErrNoSuchCluster
+		}
+		if err != nil {
+			return err
+		}
+		if c.Status != ClusterRegistered {
+			return &apperr.Error{Code: apperr.Conflict,
+				Message: fmt.Sprintf("cluster %s is %s: only a Registered cluster, never made Ready, can be deleted", c.ID, c.Status),
+				Details: map[string]any{"status": c.Status}}
+		}
+		r, err := q.ClusterReferences(ctx, clusterID)
+		if err != nil {
+			return err
+		}
+		refs := map[string]any{}
+		for k, n := range map[string]int32{"grants": r.Grants, "sharedPools": r.SharedPools, "networkPools": r.NetworkPools, "nodes": r.Nodes,
+			"nodeGrants": r.NodeGrants, "policies": r.Policies, "workspaces": r.Workspaces, "outboxEvents": r.OutboxEvents} {
+			if n > 0 {
+				refs[k] = n
+			}
+		}
+		if len(refs) > 0 {
+			return &apperr.Error{Code: apperr.Conflict, Message: fmt.Sprintf("cluster %s is still referred to: remove what refers to it first", c.ID), Details: refs}
+		}
+		if err := q.DeleteCluster(ctx, clusterID); err != nil {
+			return err
+		}
+		return audit.Record(ctx, q, audit.Event{
+			Actor: adminID, Action: audit.ClusterDelete, TargetType: "Cluster", TargetID: c.ID, Detail: clusterDetail(c),
+		})
+	})
+}
+
 // ClusterPatch holds the fields to change; nil keeps the current value.
 type ClusterPatch struct {
 	DisplayName, ProxyEndpoint, ConsoleURL, AppsDomain, Status *string

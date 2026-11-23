@@ -312,6 +312,14 @@ export function useDeleteOrganization() {
   )
 }
 
+// useDeleteCluster deletes a cluster that is still Registered and that
+// nothing refers to (DELETE /admin/clusters/{clusterId}).
+export function useDeleteCluster() {
+  return useAdminChange((clusterId: string) =>
+    unwrap(api.DELETE('/admin/clusters/{clusterId}', { params: { path: { clusterId } } })),
+  )
+}
+
 export function useDeleteGrant() {
   return useAdminChange((v: { orgId: string; clusterId: string }) =>
     unwrap(

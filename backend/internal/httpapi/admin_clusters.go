@@ -44,6 +44,13 @@ func (s server) RegisterCluster(ctx context.Context, req oapi.RegisterClusterReq
 	return oapi.RegisterCluster201JSONResponse(toAdminCluster(c)), nil
 }
 
+func (s server) DeleteCluster(ctx context.Context, req oapi.DeleteClusterRequestObject) (oapi.DeleteClusterResponseObject, error) {
+	if err := s.clusters.DeleteCluster(ctx, userID(ctx), req.ClusterId); err != nil {
+		return nil, err
+	}
+	return oapi.DeleteCluster204Response{}, nil
+}
+
 func (s server) PatchCluster(ctx context.Context, req oapi.PatchClusterRequestObject) (oapi.PatchClusterResponseObject, error) {
 	b := req.Body
 	p := reservation.ClusterPatch{DisplayName: b.DisplayName, ProxyEndpoint: b.ProxyEndpoint, ConsoleURL: b.ConsoleUrl, AppsDomain: b.AppsDomain}

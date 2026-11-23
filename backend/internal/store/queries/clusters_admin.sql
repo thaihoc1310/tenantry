@@ -40,6 +40,25 @@ SET default_cluster_id = EXCLUDED.default_cluster_id, entitlement_template = EXC
     grant_template = EXCLUDED.grant_template, active = true, updated_at = now()
 RETURNING *;
 
+-- name: ClusterReferences :one
+-- What still refers to a cluster: a cluster with any of it is not deleted.
+SELECT
+  (SELECT count(*) FROM organization_cluster_grants g WHERE g.cluster_id = sqlc.arg(id)::text)::int AS grants,
+  (SELECT count(*) FROM shared_compute_pools p WHERE p.cluster_id = sqlc.arg(id)::text)::int AS shared_pools,
+  (SELECT count(*) FROM network_pools n WHERE n.cluster_id = sqlc.arg(id)::text)::int AS network_pools,
+  (SELECT count(*) FROM cluster_nodes c WHERE c.cluster_id = sqlc.arg(id)::text)::int AS nodes,
+  (SELECT count(*) FROM dedicated_node_grants d WHERE d.cluster_id = sqlc.arg(id)::text)::int AS node_grants,
+  (SELECT count(*) FROM onboarding_policies o WHERE o.default_cluster_id = sqlc.arg(id)::text)::int AS policies,
+  (SELECT count(*) FROM workspaces w WHERE w.cluster_id = sqlc.arg(id)::text)::int AS workspaces,
+  (SELECT count(*) FROM outbox_events e WHERE e.target_cluster_id = sqlc.arg(id)::text)::int AS outbox_events;
+
+-- name: DeleteCluster :exec
+DELETE FROM clusters WHERE id = $1;
+
+-- name: ClusterWasDeleted :one
+-- Whether a cluster.delete was recorded for id: deleting it again is done.
+SELECT EXISTS (SELECT 1 FROM audit_events WHERE action = 'cluster.delete' AND target_type = 'Cluster' AND target_id = $1);
+
 -- name: LockClusterGrant :one
 -- Held while a grant is edited or deleted (PRODUCT-PLAN §5.5).
 SELECT * FROM organization_cluster_grants WHERE org_id = $1 AND cluster_id = $2 FOR UPDATE;

@@ -27,6 +27,7 @@ import {
   useChangeDedicatedNodes,
   useClusterNodes,
   useClusters,
+  useDeleteCluster,
   useNetworkPools,
   usePatchCluster,
   useSharedPools,
@@ -96,6 +97,23 @@ async function takeBack(n: ClusterNode) {
   try {
     await take.change(org.id, clusterId.value, (list) => list.filter((x) => x.name !== n.name))
     ElMessage.success(`${n.name} is free again.`)
+  } catch (err) {
+    showFailure(err)
+  }
+}
+
+// A cluster registered by mistake goes while it is still Registered and
+// nothing refers to it; the server says what does.
+const removeCluster = useDeleteCluster()
+const confirmId = ref('')
+watch(selected, () => (confirmId.value = ''))
+async function deleteCluster() {
+  const c = selected.value
+  if (!c) return
+  try {
+    await removeCluster.mutateAsync(c.id)
+    ElMessage.success(`${c.displayName} is deleted.`)
+    router.replace({ query: {} })
   } catch (err) {
     showFailure(err)
   }
@@ -194,6 +212,25 @@ function pick(id: string) {
           In Maintenance, existing Workspaces keep running and stay reachable; creating and resizing are paused for
           everyone.
         </p>
+      </TPanel>
+
+      <TPanel v-if="selected.status === 'Registered'" title="Delete this cluster" note="only while Registered">
+        <p class="muted">
+          For a cluster registered by mistake. It must never have been made Ready, and nothing may refer to it: no
+          grant, pool, node or onboarding policy.
+        </p>
+        <el-form label-position="top" @submit.prevent="deleteCluster">
+          <el-form-item :label="`Type ${selected.id} to confirm`" for="cl-del-confirm">
+            <el-input id="cl-del-confirm" v-model="confirmId" style="max-width: 320px" />
+          </el-form-item>
+          <el-button
+            type="danger"
+            :disabled="confirmId !== selected.id"
+            :loading="removeCluster.isPending.value"
+            @click="deleteCluster"
+            >Delete cluster</el-button
+          >
+        </el-form>
       </TPanel>
 
       <TPanel title="Shared pools" flush>

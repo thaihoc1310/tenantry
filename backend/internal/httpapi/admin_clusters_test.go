@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -12,6 +13,50 @@ import (
 
 const clusterC = `{"id":"cluster-c","displayName":"Cluster C","proxyEndpoint":"https://kube-c.test",
 "consoleUrl":"https://console-c.test","appsDomain":"apps-c.test","reservedCidrs":["192.168.0.0/16","10.96.0.0/12"]}`
+
+// A cluster registered by mistake goes again while it is Registered and
+// nothing refers to it; deleting it twice is fine; a used or Ready one stays.
+func TestDeleteCluster(t *testing.T) {
+	h, db, admin := newReviewAPI(t)
+	del := func(id string) *httptest.ResponseRecorder {
+		return asAdmin(h, admin, http.MethodDelete, "/api/v1/admin/clusters/"+id, "", "")
+	}
+	if rec := asAdmin(h, admin, http.MethodPost, "/api/v1/admin/clusters", newKey(), clusterC); rec.Code != 201 {
+		t.Fatalf("register: %d %s", rec.Code, rec.Body)
+	}
+	if rec := asAdmin(h, sessionOf("usr-bob"), http.MethodDelete, "/api/v1/admin/clusters/cluster-c", "", ""); rec.Code != 403 {
+		t.Fatalf("not a Platform Admin: %d", rec.Code)
+	}
+	// A network pool refers to it.
+	if _, err := db.Exec(context.Background(), `INSERT INTO network_pools (id, cluster_id, cidrs, default_prefix_length, allowed_prefix_lengths)
+		VALUES ('net-c', 'cluster-c', '{10.251.0.0/16}', 24, '{24}')`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := del("cluster-c"); rec.Code != 409 || errorBody(t, rec).Code != oapi.CONFLICT || (*errorBody(t, rec).Details)["networkPools"] != 1.0 {
+		t.Fatalf("with a network pool: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := db.Exec(context.Background(), `DELETE FROM network_pools WHERE id = 'net-c'`); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 2 {
+		if rec := del("cluster-c"); rec.Code != 204 {
+			t.Fatalf("delete %d: %d %s", i+1, rec.Code, rec.Body)
+		}
+	}
+	if n := count(t, db, `SELECT count(*) FROM clusters WHERE id = $1`, "cluster-c"); n != 0 {
+		t.Fatal("the cluster is still there")
+	}
+	if trail := auditTrail(t, db, "cluster.delete"); len(trail) != 1 || trail[0].TargetID != "cluster-c" {
+		t.Fatalf("one audit event: %+v", trail)
+	}
+	// cluster-b is in Maintenance: it was Ready once.
+	if rec := del("cluster-b"); rec.Code != 409 || (*errorBody(t, rec).Details)["status"] != "Maintenance" {
+		t.Fatalf("a cluster made Ready once: %d %s", rec.Code, rec.Body)
+	}
+	if rec := del("cluster-zz"); rec.Code != 404 {
+		t.Fatalf("an unknown cluster: %d", rec.Code)
+	}
+}
 
 func TestClusterRegistry(t *testing.T) {
 	h, db, admin := newReviewAPI(t)

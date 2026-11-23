@@ -1,0 +1,14 @@
+{
+  "responses": {
+    "204": null,
+    "409": {
+      "code": "CONFLICT",
+      "message": "cluster cluster-b is still referred to: remove what refers to it first",
+      "requestId": "01JD6T9A7Q2M5X8C3V4B1N0Z6K",
+      "details": {
+        "sharedPools": 1,
+        "networkPools": 1
+      }
+    }
+  }
+}

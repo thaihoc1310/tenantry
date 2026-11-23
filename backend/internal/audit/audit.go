@@ -25,6 +25,7 @@ const (
 	UserEnable           = "user.enable"
 	ClusterRegister      = "cluster.register"
 	ClusterUpdate        = "cluster.update"
+	ClusterDelete        = "cluster.delete"
 	ClusterGrantCreate   = "cluster_grant.create"
 	ClusterGrantUpdate   = "cluster_grant.update"
 	ClusterGrantDelete   = "cluster_grant.delete"

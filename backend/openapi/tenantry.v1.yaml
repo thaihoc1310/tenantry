@@ -1915,6 +1915,29 @@ paths:
   /admin/clusters/{clusterId}:
     parameters:
       - $ref: "#/components/parameters/clusterId"
+    delete:
+      operationId: deleteCluster
+      security: [{ session: [], csrf: [] }]
+      summary: Delete a cluster registered by mistake (Platform Admin)
+      description: |
+        Only while it is Registered (never made Ready) and nothing refers
+        to it: no grant, shared pool, network pool, node, node grant,
+        onboarding policy, Workspace or outbox event. Deleting a deleted
+        cluster again answers 204 (its cluster.delete is in the audit trail).
+      responses:
+        "204": { description: "Deleted, or deleted already" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: |
+            `CONFLICT`: `details.status` when the cluster is not Registered; otherwise one count per
+            kind of thing still referring to it (`grants`, `sharedPools`, `networkPools`, `nodes`,
+            `nodeGrants`, `policies`, `workspaces`, `outboxEvents`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
     patch:
       operationId: patchCluster
       security: [{ session: [], csrf: [] }]

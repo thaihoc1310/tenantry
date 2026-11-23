@@ -20,6 +20,58 @@ func (q *Queries) ClearGrantPools(ctx context.Context, grantID string) error {
 	return err
 }
 
+const clusterReferences = `-- name: ClusterReferences :one
+SELECT
+  (SELECT count(*) FROM organization_cluster_grants g WHERE g.cluster_id = $1::text)::int AS grants,
+  (SELECT count(*) FROM shared_compute_pools p WHERE p.cluster_id = $1::text)::int AS shared_pools,
+  (SELECT count(*) FROM network_pools n WHERE n.cluster_id = $1::text)::int AS network_pools,
+  (SELECT count(*) FROM cluster_nodes c WHERE c.cluster_id = $1::text)::int AS nodes,
+  (SELECT count(*) FROM dedicated_node_grants d WHERE d.cluster_id = $1::text)::int AS node_grants,
+  (SELECT count(*) FROM onboarding_policies o WHERE o.default_cluster_id = $1::text)::int AS policies,
+  (SELECT count(*) FROM workspaces w WHERE w.cluster_id = $1::text)::int AS workspaces,
+  (SELECT count(*) FROM outbox_events e WHERE e.target_cluster_id = $1::text)::int AS outbox_events
+`
+
+type ClusterReferencesRow struct {
+	Grants       int32
+	SharedPools  int32
+	NetworkPools int32
+	Nodes        int32
+	NodeGrants   int32
+	Policies     int32
+	Workspaces   int32
+	OutboxEvents int32
+}
+
+// What still refers to a cluster: a cluster with any of it is not deleted.
+func (q *Queries) ClusterReferences(ctx context.Context, id string) (ClusterReferencesRow, error) {
+	row := q.db.QueryRow(ctx, clusterReferences, id)
+	var i ClusterReferencesRow
+	err := row.Scan(
+		&i.Grants,
+		&i.SharedPools,
+		&i.NetworkPools,
+		&i.Nodes,
+		&i.NodeGrants,
+		&i.Policies,
+		&i.Workspaces,
+		&i.OutboxEvents,
+	)
+	return i, err
+}
+
+const clusterWasDeleted = `-- name: ClusterWasDeleted :one
+SELECT EXISTS (SELECT 1 FROM audit_events WHERE action = 'cluster.delete' AND target_type = 'Cluster' AND target_id = $1)
+`
+
+// Whether a cluster.delete was recorded for id: deleting it again is done.
+func (q *Queries) ClusterWasDeleted(ctx context.Context, targetID string) (bool, error) {
+	row := q.db.QueryRow(ctx, clusterWasDeleted, targetID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const countLiveDedicatedNodes = `-- name: CountLiveDedicatedNodes :one
 SELECT count(*)::int FROM dedicated_node_grants WHERE org_id = $1 AND cluster_id = $2 AND revoked_at IS NULL
 `
@@ -118,6 +170,15 @@ func (q *Queries) CreateOnboardingPolicy(ctx context.Context, arg CreateOnboardi
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const deleteCluster = `-- name: DeleteCluster :exec
+DELETE FROM clusters WHERE id = $1
+`
+
+func (q *Queries) DeleteCluster(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, deleteCluster, id)
+	return err
 }
 
 const deleteClusterGrant = `-- name: DeleteClusterGrant :exec
