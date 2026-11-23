@@ -123,7 +123,9 @@ func TestRefresh(t *testing.T) {
 }
 
 // Concurrent requests of one session with an expired access token call
-// Keycloak once: the others wait for the row lock, then see it renewed.
+// Keycloak once: they share one renewal of the session (singleflight), which
+// holds no row lock; the renewal writes only if the refresh token it read is
+// still the row's.
 func TestRefreshOnce(t *testing.T) {
 	kc := newFakeKeycloak(t)
 	h, db := newAPIWithIssuer(t, kc.srv.URL)
