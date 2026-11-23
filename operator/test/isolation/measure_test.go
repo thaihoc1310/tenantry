@@ -266,19 +266,22 @@ func pct(d []time.Duration, p int) time.Duration {
 }
 
 // TestSharedPending fills shared-general past what its nodes can schedule,
-// within every quota the platform checks: two Shared Workspaces of 4 CPU each
-// (8 CPU, under the pool's ceiling of ratio × reservable), each running
-// PENDING_REPLICAS (default 4) pause Pods of 1 CPU. The pool's nodes hold
-// 6 CPU, so some Pods stay Pending. It records what the user sees, then
-// scales to zero at once.
+// within every quota the platform checks: two Shared Workspaces, each with a
+// quota of PENDING_REPLICAS (default 4) CPU and as many pause Pods of 1 CPU.
+// With wk2 and wk3 in the pool (6 CPU) the default asks 8, so some Pods stay
+// Pending; with wk2 alone (3 CPU) 2 replicas each are enough. The total must
+// stay under the pool's ceiling (ratio × reservable, less what others hold)
+// or the API refuses the Workspaces: read the pool before choosing. It
+// records what the user sees, then scales to zero at once.
 func TestSharedPending(t *testing.T) {
 	replicas := int32(4)
 	if v, err := strconv.Atoi(os.Getenv("PENDING_REPLICAS")); err == nil && v > 0 {
 		replicas = int32(v)
 	}
 	adm := adminPortal(t)
-	owner, slug, _, adminsID, adminsMachine := optestOrg(t, adm, sharedGrant("8", 4))
-	quota := map[string]any{"requestsCpu": "4", "requestsMemory": "2Gi", "limitsCpu": "4", "limitsMemory": "2Gi",
+	cpu := strconv.Itoa(int(replicas))
+	owner, slug, _, adminsID, adminsMachine := optestOrg(t, adm, sharedGrant(strconv.Itoa(2*int(replicas)), 4))
+	quota := map[string]any{"requestsCpu": cpu, "requestsMemory": "2Gi", "limitsCpu": cpu, "limitsMemory": "2Gi",
 		"pods": 10, "requestsStorage": "1Gi", "namespaceQuota": 1}
 	tenant := tenantAs(t, "oidc:optest-pending", "oidc:"+adminsMachine)
 	type ws struct{ name, id, ns string }
