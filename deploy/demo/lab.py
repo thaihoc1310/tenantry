@@ -190,6 +190,16 @@ def retried(what, call, tries=3, backoff=2.0, sleep=time.sleep):
             sleep(wait_s)
 
 
+def verify_failures(out):
+    """What cluster-verify says failed: each FAIL line (the check and the
+    first line of its error), or its last line when it printed none."""
+    fails = [line.strip() for line in out.splitlines() if line.startswith("FAIL")]
+    if fails:
+        return f"{len(fails)} failed: " + " | ".join(fails)
+    lines = out.strip().splitlines()
+    return lines[-1] if lines else "failed"
+
+
 def wait(what, check, timeout=600, every=5):
     """Call check until it returns something other than None; that value."""
     end = time.time() + timeout

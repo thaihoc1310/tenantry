@@ -68,5 +68,14 @@ class PurgeAccounts(unittest.TestCase):
         self.assertFalse(purge.is_test_account("e2e-alice", "alice@tenantry.site"))
 
 
+class VerifyFailures(unittest.TestCase):
+    def test_lists_each_failed_check(self):
+        out = "PASS  a\nFAIL  b: Unable to connect\nPASS  c\nFAIL  d: x\nmake: *** Error 2\n"
+        self.assertEqual(lab.verify_failures(out), "2 failed: FAIL  b: Unable to connect | FAIL  d: x")
+
+    def test_last_line_without_fail_lines(self):
+        self.assertEqual(lab.verify_failures("make: *** Error 6\n"), "make: *** Error 6")
+
+
 if __name__ == "__main__":
     unittest.main()

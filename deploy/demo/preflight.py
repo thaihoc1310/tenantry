@@ -25,7 +25,7 @@ def check(name, fix):
             detail = f()
             results.append(("PASS", name, detail or "", ""))
         except Exception as e:  # a check that cannot even run fails too
-            results.append(("FAIL", name, str(e)[:160], fix))
+            results.append(("FAIL", name, str(e) if name == "cluster-verify" else str(e)[:160], fix))
     return run
 
 
@@ -148,7 +148,7 @@ if "--verify" in sys.argv:
     def _():
         root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
         r = subprocess.run(["make", "-s", "cluster-verify"], cwd=root, capture_output=True, text=True)
-        need(r.returncode == 0, (r.stdout + r.stderr).strip().splitlines()[-1] if (r.stdout + r.stderr).strip() else "failed")
+        need(r.returncode == 0, lab.verify_failures(r.stdout + r.stderr))
 
 width = max(len(n) for _, n, _, _ in results)
 for status, name, detail, fix in results:
