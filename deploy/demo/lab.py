@@ -55,6 +55,16 @@ def sql(query):
     return [line.split("\t") for line in lines if line]
 
 
+def psql_script(script):
+    """Run an SQL script on the platform database as written (it opens and
+    ends its own transaction; this one can write); its -At output lines,
+    tab-separated, as lists."""
+    out = kubectl("-n", "tenantry-system", "exec", "-i", "postgres-0", "--", "sh", "-c",
+                  'psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-tenantry}" -v ON_ERROR_STOP=1 -q -At -F "	" -f -',
+                  input=script)
+    return [line.split("\t") for line in out.splitlines() if line]
+
+
 def kcadm(script):
     """Run kcadm commands as the bootstrap admin inside the Keycloak Pod (read
     with get only, by the callers here); k is kcadm on the tenantry realm."""

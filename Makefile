@@ -65,13 +65,15 @@ run-worker: ## Run the worker loops locally (outbox events are only logged; no c
 	cd $(BACKEND) && go run ./cmd/tenantry-worker --loops=$(WORKER_LOOPS)
 
 .PHONY: e2e
-.PHONY: demo-preflight demo-reset demo-clean-e2e
+.PHONY: demo-preflight demo-reset demo-clean-e2e demo-purge-test-data
 demo-preflight: ## Is the lab ready for the defence demo? Read only; VERIFY=1 also runs cluster-verify (deploy/demo)
 	deploy/demo/preflight.py $(if $(VERIFY),--verify)
 demo-reset: ## Back to before the demo: removes the organization acme only; prints the plan unless CONFIRM=acme (deploy/demo)
 	deploy/demo/reset.py $(if $(CONFIRM),--confirm $(CONFIRM))
 demo-clean-e2e: ## Rejects pending e2e*/optest* requests and removes the grants of e2e*/optest* orgs; prints the plan unless CONFIRM=e2e (deploy/demo)
 	deploy/demo/clean-e2e.py $(if $(CONFIRM),--confirm $(CONFIRM))
+demo-purge-test-data: ## Hard purge of e2e*/optest* orgs and accounts (DB, Keycloak); lists cluster leftovers; a plan unless CONFIRM=e2e (deploy/demo)
+	deploy/demo/purge.py $(if $(CONFIRM),--confirm $(CONFIRM))
 
 e2e: ## End-to-end tests of the portal on the lab (signs up test accounts e2e*; E2E_SLOW=1 adds the 5-minute refresh test)
 	deploy/cluster/e2e.sh

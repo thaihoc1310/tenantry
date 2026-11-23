@@ -12,6 +12,7 @@ import importlib.util  # noqa: E402
 _spec = importlib.util.spec_from_file_location("clean_e2e", os.path.join(os.path.dirname(os.path.abspath(__file__)), "clean-e2e.py"))
 clean_e2e = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(clean_e2e)
+import purge  # noqa: E402
 
 
 class Retried(unittest.TestCase):
@@ -55,6 +56,16 @@ class TestOrganizations(unittest.TestCase):
     def test_pending_needs_a_test_owner(self):
         self.assertFalse(clean_e2e.is_test("e2ereject1", "alice@tenantry.site"))
         self.assertTrue(clean_e2e.is_test("e2ereject1", "e2emwrswx2j16y@tenantry.site"))
+
+
+class PurgeAccounts(unittest.TestCase):
+    def test_test_accounts_only(self):
+        self.assertTrue(purge.is_test_account("e2emwrswx2j16y", "e2emwrswx2j16y@tenantry.site"))
+        self.assertTrue(purge.is_test_account("optest-1", ""))
+        for u in ("admin", "alice", "joe", "bob", "mallory", "service-account-tenantry-sync", "carol"):
+            self.assertFalse(purge.is_test_account(u, f"{u}@tenantry.site"), u)
+        # A protected local part wins over a test-looking username.
+        self.assertFalse(purge.is_test_account("e2e-alice", "alice@tenantry.site"))
 
 
 if __name__ == "__main__":
