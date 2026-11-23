@@ -882,6 +882,45 @@ func TestDeleteOrganization(t *testing.T) {
 	}
 }
 
+// A Platform Admin deletes a Workspace of an organization they are not in,
+// through the owner's flow (confirmName, states), recorded as theirs; others
+// outside the organization still learn nothing (404).
+func TestAdminDeletesWorkspace(t *testing.T) {
+	h, db, _, owner, admins, devs := workspaceOrg(t)
+	admin := newSession(t, db, "usr-alice", "platform-admin")
+	rec := createWorkspace(h, owner, "zeta", workspaceBody("solar", admins, devs, ""))
+	var created oapi.WorkspaceAccepted
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &created) != nil {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	wsID := created.Workspace.Id
+	settle(t, db, wsID)
+	del := func(token, confirm string) *httptest.ResponseRecorder {
+		return asAdmin(h, token, http.MethodDelete, "/api/v1/workspaces/"+wsID+"?confirmName="+confirm, "", "")
+	}
+	if n := count(t, db, `SELECT count(*) FROM organization_members m JOIN workspaces w ON w.org_id = m.org_id WHERE w.id = $1 AND m.user_id = 'usr-alice'`, wsID); n != 0 {
+		t.Fatal("the admin must not be a member for this test")
+	}
+	if rec := del(sessionOf("usr-dave"), "solar"); rec.Code != 404 {
+		t.Fatalf("a non-member: %d", rec.Code)
+	}
+	if rec := del(admin, "wrong"); rec.Code != 400 {
+		t.Fatalf("the admin, wrong confirmName: %d %s", rec.Code, rec.Body)
+	}
+	rec = del(admin, "solar")
+	var change oapi.WorkspaceAccepted
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &change) != nil || change.Workspace.State != "Deleting" ||
+		change.Operation.Type != "workspace.delete" {
+		t.Fatalf("the admin deletes: %d %s", rec.Code, rec.Body)
+	}
+	if trail := auditTrail(t, db, "workspace.delete"); len(trail) != 1 || trail[0].Actor != "usr-alice" || trail[0].TargetID != wsID {
+		t.Fatalf("one audit event, by the admin: %+v", trail)
+	}
+	if rec := del(admin, "solar"); rec.Code != 409 {
+		t.Fatalf("deleting a Deleting Workspace: %d %s", rec.Code, rec.Body)
+	}
+}
+
 // A Platform Admin deletes an empty organization the owner cannot delete:
 // the owner's checks and effects, the admin as the audit actor, a second
 // call changes nothing, and a request is not deleted this way.

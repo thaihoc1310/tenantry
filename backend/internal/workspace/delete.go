@@ -16,17 +16,28 @@ import (
 )
 
 // Delete takes a Workspace away with everything in it: Namespaces,
-// workloads, volumes (PRODUCT-PLAN §17.4). OrgOwner or OrgAdmin, typing the
-// slug again. The Workspace is Deleting and keeps its share of the grant
-// until the worker sees the cluster clean (the CR gone); only then is it
-// Deleted and released.
-func (s *Service) Delete(ctx context.Context, userID, wsID, confirm, correlationID string) (Changed, error) {
-	ws, a, err := s.access(ctx, userID, wsID)
-	if err != nil {
-		return Changed{}, err
-	}
-	if !a.Manages() {
-		return Changed{}, ErrForbidden
+// workloads, volumes (PRODUCT-PLAN §17.4). OrgOwner or OrgAdmin, or a
+// Platform Admin (for an organization whose owner cannot: gone, or a test
+// fixture), typing the slug again. The Workspace is Deleting and keeps its
+// share of the grant until the worker sees the cluster clean (the CR gone);
+// only then is it Deleted and released. The audit actor is whoever asked.
+func (s *Service) Delete(ctx context.Context, userID string, platformAdmin bool, wsID, confirm, correlationID string) (Changed, error) {
+	var ws store.Workspace
+	var err error
+	if platformAdmin {
+		if ws, err = s.q.GetWorkspace(ctx, wsID); errors.Is(err, pgx.ErrNoRows) {
+			return Changed{}, ErrNotFound
+		} else if err != nil {
+			return Changed{}, err
+		}
+	} else {
+		var a Access
+		if ws, a, err = s.access(ctx, userID, wsID); err != nil {
+			return Changed{}, err
+		}
+		if !a.Manages() {
+			return Changed{}, ErrForbidden
+		}
 	}
 	if confirm != ws.Slug {
 		return Changed{}, &apperr.Error{Code: apperr.Validation, Message: "confirmName: type the Workspace's slug to delete it",

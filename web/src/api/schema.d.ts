@@ -792,8 +792,10 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Delete a Workspace with its Namespaces, workloads and volumes (OrgOwner or OrgAdmin)
-         * @description `confirmName` must be the Workspace's slug. From Ready, Cordoned,
+         * Delete a Workspace with its Namespaces, workloads and volumes (OrgOwner, OrgAdmin or Platform Admin)
+         * @description A Platform Admin may delete any Workspace, for an organization whose
+         *     owner cannot (gone, or a test fixture); the audit records the admin.
+         *     `confirmName` must be the Workspace's slug. From Ready, Cordoned,
          *     Degraded or Failed, with no operation under way. The Workspace is
          *     Deleting and keeps its share of the grant until the cluster is
          *     clean, then it is gone (PRODUCT-PLAN §17.4). A delete stuck on a

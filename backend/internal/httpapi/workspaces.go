@@ -332,7 +332,8 @@ func (s server) toChange(ctx context.Context, c workspace.Changed) (oapi.Workspa
 }
 
 func (s server) DeleteWorkspace(ctx context.Context, req oapi.DeleteWorkspaceRequestObject) (oapi.DeleteWorkspaceResponseObject, error) {
-	c, err := s.workspaces.Delete(ctx, userID(ctx), req.WorkspaceId, req.Params.ConfirmName, requestID(ctx))
+	who := caller(ctx)
+	c, err := s.workspaces.Delete(ctx, who.user.ID, who.platformAdmin, req.WorkspaceId, req.Params.ConfirmName, requestID(ctx))
 	if err != nil {
 		return nil, err
 	}

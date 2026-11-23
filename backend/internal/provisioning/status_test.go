@@ -621,7 +621,7 @@ func TestDeleteRelease(t *testing.T) {
 	if _, err := e.db.Exec(ctx, `INSERT INTO group_members (group_id, user_id, sync_status) VALUES ('grp-a', 'usr-ann', 'Synced')`); err != nil {
 		t.Fatal(err)
 	}
-	del, err := e.ws.Delete(ctx, "usr-ann", c.Workspace.ID, "solar", "")
+	del, err := e.ws.Delete(ctx, "usr-ann", false, c.Workspace.ID, "solar", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -747,7 +747,7 @@ func TestDedicatedReservationLifecycle(t *testing.T) {
 	if _, cpu, _ := reservation(); cpu != 500 {
 		t.Fatalf("after the smaller quota is Ready: %d", cpu)
 	}
-	del, err := e.ws.Delete(ctx, "usr-ann", c.Workspace.ID, "water", "")
+	del, err := e.ws.Delete(ctx, "usr-ann", false, c.Workspace.ID, "water", "")
 	if err != nil {
 		t.Fatal(err)
 	}
