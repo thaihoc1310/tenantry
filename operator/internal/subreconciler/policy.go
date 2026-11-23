@@ -23,8 +23,9 @@ import (
 // Pod Security labels are in the Tenant the tenant step applied, so policy
 // is Ready once Capsule has turned the quota into a GlobalResourceQuota with
 // the current hard and has replicated the LimitRange. It returns that
-// GlobalResourceQuota, nil when the Workspace has no quota.
-func Policy(ctx context.Context, c client.Client, scheme *runtime.Scheme, ws *v1.PlatformWorkspace) (Result, *unstructured.Unstructured) {
+// GlobalResourceQuota, nil when the Workspace has no quota. With replicas,
+// it is Ready only once every live Namespace holds the replicated copies.
+func Policy(ctx context.Context, c client.Client, scheme *runtime.Scheme, ws *v1.PlatformWorkspace, replicas *Replicas) (Result, *unstructured.Unstructured) {
 	const t = v1.ConditionPolicyReady
 	rep := render.Replication(ws)
 	if err := controllerutil.SetControllerReference(ws, rep, scheme); err != nil {
@@ -34,11 +35,17 @@ func Policy(ctx context.Context, c client.Client, scheme *runtime.Scheme, ws *v1
 		return failure(t, err), nil
 	}
 	if res, done := capsuleReady(t, rep, "LimitRange replication "+rep.GetName()); !done {
-		return res, nil
+		// Capsule's condition may be behind its copies: Ready=False from
+		// its own race keeps until its next resync, 60 s later (a Workspace
+		// took 65 s to create on the lab; docs/report/namespace-latency.md).
+		// Then the copies actually present decide, checked last below.
+		if replicas == nil || !raceOnly(rep) {
+			return res, nil
+		}
 	}
 
 	if len(ws.Spec.Resources) == 0 {
-		return ok(t), nil
+		return replicated(ctx, c, ws, rep, replicas, nil)
 	}
 	quota := &unstructured.Unstructured{}
 	quota.SetGroupVersionKind(render.QuotaGVK)
@@ -56,6 +63,27 @@ func Policy(ctx context.Context, c client.Client, scheme *runtime.Scheme, ws *v1
 		if got, found := hard[k]; !found || got.Cmp(want) != 0 {
 			return waiting(t, fmt.Sprintf("waiting for Capsule to apply %s=%s to GlobalResourceQuota %s", k, want.String(), quota.GetName())), quota
 		}
+	}
+	return replicated(ctx, c, ws, rep, replicas, quota)
+}
+
+// replicated is PolicyReady's last check: the copies are in every Namespace.
+// While they are not, it looks again every replicaSoon, then replicaRetry
+// (Wait would wait the controller's 5 s recheck).
+func replicated(ctx context.Context, c client.Client, ws *v1.PlatformWorkspace, rep *unstructured.Unstructured,
+	replicas *Replicas, quota *unstructured.Unstructured) (Result, *unstructured.Unstructured) {
+	const t = v1.ConditionPolicyReady
+	if replicas == nil {
+		return ok(t), quota
+	}
+	missing, again, err := replicas.Missing(ctx, c, ws, rep)
+	if err != nil {
+		return failure(t, err), quota
+	}
+	if missing != "" {
+		r := waiting(t, "waiting for Capsule to copy the Namespace defaults into "+missing)
+		r.Wait, r.After = false, again
+		return r, quota
 	}
 	return ok(t), quota
 }
@@ -117,6 +145,33 @@ func replicationRace(obj *unstructured.Unstructured, cond map[string]any) (retry
 		return false, detail
 	}
 	return raced, detail
+}
+
+// raceOnly says a replication is Ready=False only because of Capsule's own
+// race (replicationRace: every failed item carries a race message, within
+// replicationRaceGrace), in a status about the current spec: status and
+// condition both observed the object's generation. A report on an older
+// spec says nothing of the copies the current one needs.
+func raceOnly(obj *unstructured.Unstructured) bool {
+	if seen, found, _ := unstructured.NestedInt64(obj.Object, "status", "observedGeneration"); !found || seen != obj.GetGeneration() {
+		return false
+	}
+	conds, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	for _, raw := range conds {
+		cond, _ := raw.(map[string]any)
+		if cond["type"] != "Ready" {
+			continue
+		}
+		if g, ok := cond["observedGeneration"].(int64); ok && g != obj.GetGeneration() {
+			return false
+		}
+		if cond["status"] == "True" || cond["reason"] == capsuleReconciling {
+			return false
+		}
+		retrying, _ := replicationRace(obj, cond)
+		return retrying
+	}
+	return false
 }
 
 // capsuleReady reads the Ready condition Capsule keeps on its objects, for

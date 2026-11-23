@@ -3,6 +3,7 @@
 package isolation
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
@@ -314,16 +315,31 @@ func mailpitURL(t *testing.T) string {
 	if mailpitOnce.url != "" {
 		return mailpitOnce.url
 	}
+	// A local port kubectl picks (":8025"), read from what it prints: a fixed
+	// one collides with another run's forward (e2e.sh uses 18025).
 	cmd := exec.Command("kubectl", "--context", envOr("KUBE_CONTEXT", "hocbt@kubernetes"), "-n", "keycloak",
-		"port-forward", "svc/mailpit", "18025:8025")
+		"port-forward", "svc/mailpit", ":8025")
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("port-forward to Mailpit: %v", err)
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("port-forward to Mailpit: %v", err)
 	}
-	t.Cleanup(func() { _ = cmd.Process.Kill() })
-	time.Sleep(2 * time.Second)
-	mailpitOnce.url = "http://127.0.0.1:18025"
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	line, err := bufio.NewReader(out).ReadString('\n')
+	m := forwardedPort.FindStringSubmatch(line)
+	if err != nil || m == nil {
+		t.Fatalf("port-forward to Mailpit: %q %v", line, err)
+	}
+	go func() { _, _ = io.Copy(io.Discard, out) }()
+	mailpitOnce.url = "http://127.0.0.1:" + m[1]
 	return mailpitOnce.url
 }
+
+// forwardedPort is the local port in kubectl port-forward's first line,
+// "Forwarding from 127.0.0.1:41235 -> 8025".
+var forwardedPort = regexp.MustCompile(`127\.0\.0\.1:(\d+)`)
 
 // operation waits for an operation to succeed.
 func (p *portal) operation(t *testing.T, id string) {

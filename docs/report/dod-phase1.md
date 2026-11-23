@@ -29,7 +29,8 @@ Tóm tắt (cập nhật 2026-11-23 tối): 14 Đạt, 1 Đạt một phần (m�
 - NFR "Namespace create p95 dưới 15 giây" (ADR-0019), đo trên lab ([namespace-latency](namespace-latency.md)):
   - Bản đầu (operator a8928a8): phía người dùng p95 72,6 s, vì probe Capsule Proxy chờ 30 s mỗi lần Proxy chưa thấy Namespace mới.
   - Bản sửa (e35daa1, đã deploy, revision 14): p95 13,8 s, đạt nhưng sát ngưỡng (max 16,4 s, n = 20).
-  - Thời gian tạo Workspace sau sửa: ba cái khoảng 5 s, một cái 65 s chưa rõ nguyên nhân.
+  - Thời gian tạo Workspace sau sửa: ba cái khoảng 5 s, một cái 65 s (sau này xác định: GlobalTenantResource giữ Ready=False sau race tới lần resync 60 s).
+  - Bản cuối (operator rev 16, d96f980 và 3f15433): Operation chỉ xong khi mọi Namespace đã có bản sao LimitRange và NetworkPolicy, và không còn chờ 60 s khi status chỉ chậm vì race. Lần đo thứ năm: phía cụm p95 11 s, phía người dùng p95 15,2 s (vẫn vượt 15 s một chút), tạo Workspace 3,1–4,7 s.
 
 - Đăng ký Cluster từ portal trên lab (DoD mục 1): `web/e2e/admin-cluster.spec.ts` PASS (8,5 s) trong lần chạy trọn bộ ngày 2026-11-23, [e2e-portal](e2e-portal.md).
 - Phiên portal sống quá access token trên lab (ADR-0022): `web/e2e/onboarding.spec.ts` "the session outlives the access token" PASS với `E2E_SLOW=1` (5,4 phút), cùng nguồn.
@@ -45,7 +46,7 @@ Tóm tắt (cập nhật 2026-11-23 tối): 14 Đạt, 1 Đạt một phần (m�
 | Logout rồi đổi user trên Headlamp; WebSocket (exec, log stream) qua Headlamp | ADR-0006 | Chưa có test |
 | Logout portal kéo theo Headlamp và kubelogin phải đăng nhập lại | ADR-0022 | Chỉ kiểm với Keycloak giả (`TestLogout`) |
 | Binary kubelogin thật trong test tự động | ADR-0013 | Test lấy token bằng PKCE như kubelogin |
-| Audit log của kube-apiserver cho request qua Capsule Proxy | ADR-0013 | Audit vẫn tắt (cần quyền vào control-plane node). Thay vào đó đã thấy cơ chế trong log của Capsule Proxy ở mức 4, bật tạm rồi trả về mức 2 (2026-11-23 16:51Z): `impersonating for the current request` với `username` là `system:serviceaccount:tenantry-operator:tenantry-proxy-probe` cho token ServiceAccount, và `oidc:ac2b398e-…` cho ID token của account demo `alice`. Request được apiserver trả 403 theo danh tính được impersonate. Audit log của apiserver vẫn chưa kiểm |
+| Audit log của kube-apiserver cho request qua Capsule Proxy | ADR-0013 | Audit vẫn tắt (cần quyền vào control-plane node). Thay vào đó đã thấy cơ chế trong log của Capsule Proxy ở mức 4, bật tạm rồi trả về mức 2 (2026-11-23 16:51Z): `impersonating for the current request` với `username` là `system:serviceaccount:tenantry-operator:tenantry-proxy-probe` cho token ServiceAccount, và `oidc:ac2b398e-…` cho ID token của account demo `alice`; khi alice ở trong group của `acme`, `groups` là `["oidc:org_01m84nmm…:group_01m84nmm…","oidc:tenantry:tenant-users","system:authenticated"]`. Request được apiserver trả 403 theo danh tính được impersonate. Audit log của apiserver vẫn chưa kiểm |
 | `TestLiveKeycloakNarrowed` trên lab với FGAP bật | ADR-0015 | Chưa có kết quả ghi lại (cluster-verify nhánh FGAP thì đã qua) |
 | Test `PATCH` có `clusterId` ở API | ADR-0008 | Schema chặn; CRD đã chặn bằng CEL (`TestWorkspaceIdsImmutable`) |
 | Thông lượng outbox dưới tải; DB pool dưới tải | ADR-0021 | Benchmark tạo CR trực tiếp, bỏ qua API |

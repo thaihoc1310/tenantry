@@ -50,6 +50,9 @@ type PlatformWorkspaceReconciler struct {
 	// APIReader lists the Pods a force-delete leaves behind, straight from
 	// the API server, so the operator does not cache every Pod; nil skips them.
 	APIReader client.Reader
+	// Replicas checks that Capsule copied the LimitRange and NetworkPolicies
+	// into every Namespace before PolicyReady; nil skips the check.
+	Replicas *subreconciler.Replicas
 }
 
 func (r *PlatformWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -98,7 +101,7 @@ func (r *PlatformWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 	// 4. policy: the quota and Pod Security labels are in the Tenant; the
 	// LimitRange and the baseline NetworkPolicies are replicated by Capsule.
-	policyRes, quota := subreconciler.Policy(ctx, r.Client, r.Scheme(), ws)
+	policyRes, quota := subreconciler.Policy(ctx, r.Client, r.Scheme(), ws, r.Replicas)
 	if policyRes.Condition.Reason == subreconciler.ReasonApplyFailed {
 		return ctrl.Result{}, r.fail(ctx, before, ws, policyRes.Condition)
 	}
