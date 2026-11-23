@@ -59,7 +59,11 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	defer cancel()
 	var workspaces v1.PlatformWorkspaceList
 	if err := c.reader.List(ctx, &workspaces); err == nil {
+		// Every phase, so a cluster without Workspaces shows zeros, not no data.
 		phases := map[string]float64{}
+		for _, p := range []v1.WorkspacePhase{v1.PhaseProvisioning, v1.PhaseReady, v1.PhaseUpdating, v1.PhaseDegraded, v1.PhaseFailed, v1.PhaseDeleting} {
+			phases[string(p)] = 0
+		}
 		routes := map[string]float64{"true": 0, "false": 0}
 		for _, ws := range workspaces.Items {
 			phases[string(ws.Status.Phase)]++

@@ -64,8 +64,12 @@ tenantry_workspace_ip_capacity{workspace="acme-solar"} 256
 tenantry_workspace_ip_used{workspace="acme-solar"} 2
 # HELP tenantry_workspaces PlatformWorkspaces by phase.
 # TYPE tenantry_workspaces gauge
+tenantry_workspaces{phase="Degraded"} 0
+tenantry_workspaces{phase="Deleting"} 0
+tenantry_workspaces{phase="Failed"} 0
 tenantry_workspaces{phase="Provisioning"} 1
 tenantry_workspaces{phase="Ready"} 1
+tenantry_workspaces{phase="Updating"} 0
 `
 	if err := testutil.CollectAndCompare(&collector{reader: c}, strings.NewReader(want)); err != nil {
 		t.Error(err)
