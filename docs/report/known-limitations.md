@@ -12,7 +12,7 @@ Mỗi mục ghi: hành vi, vì sao, ảnh hưởng tới người dùng, và cá
 4. **Link sâu vào Headlamp** giả định `inClusterContextName` của Headlamp bằng cluster id (`cluster-a`).
 5. **Owner của Workspace sửa được ProxySetting** trong Namespace của mình (quyền admin trong ns); vì Node đã bị chặn, việc này chỉ lộ tên Namespace của chính Tenant đó.
 
-5a. **Không có endpoint cho Platform Admin đổi OrgOwner.** Owner chỉ đổi được bằng transfer do chính Owner khởi tạo; Owner mất tài khoản (bị disable, rời công ty) thì Organization không có Owner thao tác được, phải sửa tay trong DB. Phase 2: endpoint admin gán lại Owner kèm audit.
+5a. **Không có endpoint cho Platform Admin đổi OrgOwner.** Owner chỉ đổi được bằng transfer do chính Owner khởi tạo; Owner mất tài khoản (bị disable, rời công ty) thì Organization không có Owner thao tác được. Platform Admin xóa được Organization đã rỗng (`DELETE /admin/organizations/{orgId}`, trang Admin → Organizations → org → "Delete this Organization"), nhưng không gán lại Owner cho Organization còn dùng được. Phase 2: endpoint admin gán lại Owner kèm audit.
 
 ## Tài nguyên và quota
 

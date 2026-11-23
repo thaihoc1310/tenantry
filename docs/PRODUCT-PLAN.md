@@ -1505,6 +1505,7 @@ POST   /api/v1/admin/organizations/{orgId}:approve # kèm entitlement + ClusterG
 POST   /api/v1/admin/organizations/{orgId}:reject  # kèm lý do → review_note
 POST   /api/v1/admin/organizations                 # tạo Org cho khách: slug, owner (email/user), entitlement, ClusterGrant ban đầu; owner phải đã đăng nhập portal ít nhất một lần, chưa thì 422 OWNER_USER_NOT_FOUND (không có lời mời làm Owner)
 PUT    /api/v1/admin/organizations/{orgId}/entitlement
+DELETE /api/v1/admin/organizations/{orgId}         # xóa Organization Active và rỗng thay Owner; cùng kiểm tra và hệ quả như DELETE của Owner (409 ORGANIZATION_NOT_EMPTY kèm deletableAfter, 409 ORG_NOT_ACTIVE với yêu cầu Pending/Rejected); xóa lại org đã Deleted trả 204, chỉ một audit organization.delete (actor = admin)
 GET    /api/v1/admin/users?q=                      # M5, tìm user theo email/tên cho màn disable/enable
 POST   /api/v1/admin/users/{userId}:disable        # M5, users.status=Disabled + xóa phiên; Group Sync tắt account trên Keycloak
 POST   /api/v1/admin/users/{userId}:enable         # M5
