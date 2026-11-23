@@ -858,7 +858,7 @@
       "id": 21,
       "type": "timeseries",
       "title": "Shared pools: CPU requested by running Pods, allocatable, allocated and ceiling",
-      "description": "Per shared pool: the CPU requests of the Pods running on its nodes (kube-state-metrics), what the nodes can hold (operator), what the platform has given out to Shared Workspaces and its ceiling, ratio × reservable (backend, from the database). Pods stop scheduling at allocatable, even when allocated is still under the ceiling (ADR-0017).",
+      "description": "Per shared pool: the CPU requests of the Pods running on its nodes (kube-state-metrics), what the nodes can hold (operator), what the platform has given out to Shared Workspaces and its ceiling, ratio × reservable (backend, from the database). Pods stop scheduling at allocatable, even when allocated is still under the ceiling (ADR-0017), and can stop earlier: free CPU counts per node, so on the lab 1.7 CPU free across two nodes fitted no Pod of 1 CPU (docs/report/observability.md, \"Pool đầy trên lab\").",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
