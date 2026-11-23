@@ -7,41 +7,24 @@
 // session cookie is the largest. Taking someone out of a group keeps the
 // revocation contract (architecture/06 §5): the portal at once, Kubernetes
 // when the token already issued expires, within 5 minutes.
-import { execFileSync } from 'node:child_process'
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import {
   api,
   cleanUp,
   cleanupAfterAll,
-  deleteWorkspace,
   groupsOf,
+  kubectlAs,
   kubectlTokens,
   member,
   networkReady,
-  onCleanup,
-  succeeded,
+  openConsole,
+  proxy,
+  sharedWorkspace,
   until,
   workspaceOrganization,
 } from './support'
 
 cleanupAfterAll()
-
-const proxy = process.env.E2E_KUBE_PROXY ?? 'https://kube-a.tenantry.site'
-
-// kubectlAs runs kubectl against the proxy with nothing but a person's token;
-// it returns what kubectl printed, or its refusal.
-function kubectlAs(token: string, input: string, ...args: string[]): { ok: boolean; out: string } {
-  try {
-    const out = execFileSync('kubectl', ['--kubeconfig=/dev/null', `--server=${proxy}`, `--token=${token}`, ...args], {
-      input,
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    })
-    return { ok: true, out }
-  } catch (e) {
-    return { ok: false, out: String((e as { stderr?: string }).stderr ?? e) }
-  }
-}
 
 const pod = (ns: string, name: string) =>
   JSON.stringify({
@@ -58,52 +41,6 @@ const pod = (ns: string, name: string) =>
       ],
     },
   })
-
-async function workspace(page: Page, slug: string, ws: string, bindings: { groupId: string; role: string }[]) {
-  const res = await api(
-    page,
-    'POST',
-    `/organizations/${slug}/workspaces`,
-    {
-      slug: ws,
-      displayName: ws,
-      clusterId: 'cluster-a',
-      compute: { mode: 'Shared', sharedPoolId: 'shared-general' },
-      resources: {
-        requestsCpu: '250m',
-        requestsMemory: '256Mi',
-        limitsCpu: '500m',
-        limitsMemory: '512Mi',
-        pods: 5,
-        requestsStorage: '1Gi',
-        namespaceQuota: 1,
-      },
-      namespaces: ['app'],
-      bindings,
-    },
-    crypto.randomUUID(),
-  )
-  expect(res.status, JSON.stringify(res.body)).toBe(202)
-  const id: string = res.body.workspace.id
-  onCleanup(`Workspace ${ws}`, () => deleteWorkspace(page, id, ws, `${slug}-${ws}`))
-  await succeeded(page, res.body.operation.id)
-  return { id, ns: `${slug}-${ws}-app` }
-}
-
-// openConsole opens the Workspace's web console from the portal's link and
-// signs in to Headlamp with the browser's Keycloak session.
-async function openConsole(page: Page, wsId: string) {
-  const link = await api(page, 'GET', `/workspaces/${wsId}/console-link`)
-  expect(link.status, JSON.stringify(link.body)).toBe(200)
-  const consolePage = await page.context().newPage()
-  await consolePage.goto(link.body.url)
-  // Headlamp asks once to sign in; Keycloak answers at once, the session is the portal's.
-  const signIn = consolePage.getByRole('button', { name: /^sign in$/i })
-  await signIn.waitFor({ timeout: 30_000 })
-  await signIn.click()
-  await consolePage.waitForURL((u) => u.host === new URL(link.body.url).host, { timeout: 60_000 })
-  return consolePage
-}
 
 test('a Developer and a Viewer reach their own Workspace only, through the proxy and the console', async ({
   browser,
@@ -124,12 +61,12 @@ test('a Developer and a Viewer reach their own Workspace only, through the proxy
       ? true
       : undefined
   })
-  const solar = await workspace(page, slug, 'solar', [
+  const solar = await sharedWorkspace(page, slug, 'solar', [
     { groupId: admins.id, role: 'TenantOwner' },
     { groupId: developers.id, role: 'Developer' },
     { groupId: viewers.id, role: 'Viewer' },
   ])
-  const wind = await workspace(page, slug, 'wind', [{ groupId: admins.id, role: 'TenantOwner' }])
+  const wind = await sharedWorkspace(page, slug, 'wind', [{ groupId: admins.id, role: 'TenantOwner' }])
   await networkReady(solar.ns)
 
   const joe = await member(browser, page, slug, [developers])
@@ -197,7 +134,7 @@ test('the console signs in someone in 20 groups', async ({ browser }) => {
   const { owner, slug, admins } = await workspaceOrganization(browser, 'e2egr', 1, 25)
   const page = owner.page
   const ownerId = (await api(page, 'GET', '/me')).body.id as string
-  const ws = await workspace(page, slug, 'solar', [{ groupId: admins.id, role: 'TenantOwner' }])
+  const ws = await sharedWorkspace(page, slug, 'solar', [{ groupId: admins.id, role: 'TenantOwner' }])
 
   // Twenty more groups, the owner in each, all in Keycloak.
   for (let i = 1; i <= 20; i++) {
@@ -260,7 +197,7 @@ test('someone taken out of a group loses the portal at once and Kubernetes withi
       ? true
       : undefined
   })
-  const solar = await workspace(page, slug, 'solar', [
+  const solar = await sharedWorkspace(page, slug, 'solar', [
     { groupId: admins.id, role: 'TenantOwner' },
     { groupId: developers.id, role: 'Developer' },
   ])

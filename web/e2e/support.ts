@@ -335,8 +335,8 @@ export function cleanupAfterAll() {
 
 // ---- Keycloak tokens of the kubectl client --------------------------------
 // The kubectl client is public: authorization code with PKCE and a loopback
-// redirect, as kubelogin does. The browser context is logged in to Keycloak,
-// so the code comes back at once.
+// redirect, as kubelogin does. A browser context logged in to Keycloak gets
+// the code back at once.
 const issuer = 'https://auth.tenantry.site/realms/tenantry'
 const loopback = 'http://localhost:8000'
 
@@ -344,9 +344,10 @@ function b64url(bytes: ArrayBuffer | Uint8Array): string {
   return Buffer.from(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)).toString('base64url')
 }
 
-export async function kubectlTokens(
-  portal: Page,
-): Promise<{ id_token: string; refresh_token: string; access_token: string }> {
+// kubectlAuthorize asks Keycloak for a code of the kubectl client, as
+// kubelogin does: the code (and its PKCE verifier) when the browser's SSO
+// session answers at once, 'login' when Keycloak shows its login form.
+export async function kubectlAuthorize(portal: Page): Promise<{ code: string; verifier: string } | 'login'> {
   const page = await portal.context().newPage() // same Keycloak session, the portal tab stays where it is
   const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)))
   const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))
@@ -361,17 +362,34 @@ export async function kubectlTokens(
   })
   // Nothing listens on the loopback address: the navigation fails there, and
   // the code is read from the request (page.route does not see redirects).
-  const back = page.waitForRequest((r) => r.url().startsWith(loopback))
+  const back = page
+    .waitForRequest((r) => r.url().startsWith(loopback), { timeout: 30_000 })
+    .then((r) => new URL(r.url()).searchParams.get('code') ?? '')
+    .catch(() => undefined)
+  const login = page
+    .locator('#kc-form-login')
+    .waitFor({ timeout: 30_000 })
+    .then(() => 'login' as const)
+    .catch(() => undefined)
   await page.goto(`${issuer}/protocol/openid-connect/auth?${q}`).catch(() => {})
-  const code = new URL((await back).url()).searchParams.get('code') ?? ''
-  expect(code).not.toBe('')
+  const got = await Promise.race([back, login])
   await page.close()
+  if (got === 'login') return 'login'
+  expect(got, 'a code from Keycloak or its login form').toBeTruthy()
+  return { code: got!, verifier }
+}
+
+export async function kubectlTokens(
+  portal: Page,
+): Promise<{ id_token: string; refresh_token: string; access_token: string }> {
+  const got = await kubectlAuthorize(portal)
+  if (got === 'login') throw new Error('Keycloak asked for a login: the browser has no SSO session')
   return token({
     grant_type: 'authorization_code',
     client_id: 'kubectl',
-    code,
+    code: got.code,
     redirect_uri: loopback,
-    code_verifier: verifier,
+    code_verifier: got.verifier,
   })
 }
 
@@ -420,4 +438,110 @@ export async function member(
     return mine.every((g) => g.members.some((m) => m.userId === userId && m.syncStatus === 'Synced')) ? true : undefined
   })
   return { ...who, userId }
+}
+
+// ---- Kubernetes as a person, and the web console ------------------------
+
+export const proxy = process.env.E2E_KUBE_PROXY ?? 'https://kube-a.tenantry.site'
+
+// kubectlAs runs kubectl against the proxy with nothing but a person's token;
+// it returns what kubectl printed, or its refusal.
+export function kubectlAs(token: string, input: string, ...args: string[]): { ok: boolean; out: string } {
+  try {
+    const out = execFileSync('kubectl', ['--kubeconfig=/dev/null', `--server=${proxy}`, `--token=${token}`, ...args], {
+      input,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    return { ok: true, out }
+  } catch (e) {
+    return { ok: false, out: String((e as { stderr?: string }).stderr ?? e) }
+  }
+}
+
+// sharedWorkspace creates a small Shared Workspace with the Namespace app and
+// waits for it; its cleanup deletes it as cleanupAs (the owner by default; the
+// Platform Admin when the owner logs out during the test).
+export async function sharedWorkspace(
+  page: Page,
+  slug: string,
+  ws: string,
+  bindings: { groupId: string; role: string }[],
+  cleanupAs: Page = page,
+) {
+  const res = await api(
+    page,
+    'POST',
+    `/organizations/${slug}/workspaces`,
+    {
+      slug: ws,
+      displayName: ws,
+      clusterId: 'cluster-a',
+      compute: { mode: 'Shared', sharedPoolId: 'shared-general' },
+      resources: {
+        requestsCpu: '250m',
+        requestsMemory: '256Mi',
+        limitsCpu: '500m',
+        limitsMemory: '512Mi',
+        pods: 5,
+        requestsStorage: '1Gi',
+        namespaceQuota: 1,
+      },
+      namespaces: ['app'],
+      bindings,
+    },
+    crypto.randomUUID(),
+  )
+  expect(res.status, JSON.stringify(res.body)).toBe(202)
+  const id: string = res.body.workspace.id
+  onCleanup(`Workspace ${ws}`, () => deleteWorkspace(cleanupAs, id, ws, `${slug}-${ws}`))
+  await succeeded(page, res.body.operation.id)
+  return { id, ns: `${slug}-${ws}-app` }
+}
+
+// openConsole opens the Workspace's web console from the portal's link and
+// signs in to Headlamp with the browser's Keycloak session.
+export async function openConsole(page: Page, wsId: string) {
+  const link = await api(page, 'GET', `/workspaces/${wsId}/console-link`)
+  expect(link.status, JSON.stringify(link.body)).toBe(200)
+  const consolePage = await page.context().newPage()
+  await consolePage.goto(link.body.url)
+  // Headlamp asks once to sign in; Keycloak answers at once, the session is the portal's.
+  const signIn = consolePage.getByRole('button', { name: /^sign in$/i })
+  await signIn.waitFor({ timeout: 30_000 })
+  await signIn.click()
+  await consolePage.waitForURL((u) => u.host === new URL(link.body.url).host, { timeout: 60_000 })
+  return consolePage
+}
+
+// logOutOfPortal uses the portal's "Log out everywhere" (ADR-0022), which
+// also ends the Keycloak SSO session.
+export async function logOutOfPortal(page: Page) {
+  await page.getByRole('button', { name: 'Account menu' }).click()
+  await page.getByText('Log out everywhere').click()
+  await page.waitForURL((u) => u.pathname === '/login')
+}
+
+// logInAtKeycloak fills Keycloak's login form on page, the password kept out
+// of the trace (fillSecret).
+export async function logInAtKeycloak(page: Page, username: string, password: string) {
+  await page.locator('#username').fill(username)
+  await fillSecret(page, '#password', password)
+  await page.click('#kc-login')
+  await page.waitForURL((u) => !u.pathname.startsWith('/realms/'))
+}
+
+// timed runs a step and writes down how long it took, in the report and the log.
+export async function timed<T>(what: string, f: () => Promise<T>): Promise<T> {
+  const start = Date.now()
+  const out = await f()
+  const took = `${what}: ${((Date.now() - start) / 1000).toFixed(1)} s`
+  test.info().annotations.push({ type: 'duration', description: took })
+  console.log(took)
+  return out
+}
+
+// subjectOf reads the subject (the Keycloak account id) of a token.
+export function subjectOf(jwt: string): string {
+  return (JSON.parse(Buffer.from(jwt.split('.')[1]!, 'base64url').toString()) as { sub: string }).sub
 }
