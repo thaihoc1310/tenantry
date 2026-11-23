@@ -43,7 +43,7 @@ Mỗi mục ghi: hành vi, vì sao, ảnh hưởng tới người dùng, và cá
 21. **Portal tải font từ Google Fonts** (CSP cho phép), chưa tự host.
 22. **Trang Audit lọc phía client** trên các trang đã tải; danh sách Workspace không phân trang (tối đa `maxWorkspacesTotal`).
 23. **Postgres local cho dev dùng mật khẩu mặc định** `tenantry` (chỉ `docker-compose.dev.yml` và Makefile); chart lab sinh mật khẩu ngẫu nhiên.
-24. **Client `tenantry-sync` có `manage-users`** (mạnh ngang Platform Admin); thu hẹp bằng fine-grained admin permissions v2 của Keycloak là việc còn lại của M12.
+24. **Client `tenantry-sync` chiếm được tài khoản user thường** nếu lộ secret: đã thu hẹp từ `manage-users` (ngang Platform Admin) xuống fine-grained admin permissions v2, nên không gán role, không impersonate, không đụng Platform Admin, client hay realm; nhưng `manage` trên user thường (cần để enable/disable) vẫn cho đặt mật khẩu và đổi email, và Keycloak (UNANIMOUS) không cho tách scope `reset-password` khỏi `manage`. Giảm thiểu: chỉ Deployment group sync giữ secret, đổi secret định kỳ (`architecture/06-security-and-identity.md` mục 7).
 
 ## Chưa kiểm hết
 
