@@ -6,6 +6,9 @@
 -- <TAB>why", "keep<TAB>email" (a real account, never touched), "kc-group
 -- <TAB>machine name" and "kc-user<TAB>email" (what Keycloak loses).
 --
+-- Of the cluster registry, only a Registered cluster whose id starts with
+-- e2e and that nothing refers to goes (a test's leftover).
+--
 -- An organization is refused, and kept whole, while the cluster may still
 -- hold something of it: a Workspace not Deleted, an address block still in
 -- quarantine, a live dedicated node. An account is refused while a kept
@@ -90,5 +93,17 @@ WITH d AS (DELETE FROM organizations WHERE id IN (SELECT id FROM p_org) RETURNIN
 WITH d AS (DELETE FROM sessions WHERE user_id IN (SELECT id FROM p_user) RETURNING 1) SELECT 'delete', 'sessions', count(*) FROM d;
 WITH d AS (DELETE FROM idempotency_keys WHERE user_id IN (SELECT id FROM p_user) RETURNING 1) SELECT 'delete', 'idempotency_keys', count(*) FROM d;
 WITH d AS (DELETE FROM users WHERE id IN (SELECT id FROM p_user) RETURNING 1) SELECT 'delete', 'users', count(*) FROM d;
+-- Clusters a test registered (admin-cluster.spec, cleanup missed): only
+-- e2e*, still Registered, and with nothing referring to them.
+WITH d AS (DELETE FROM clusters c WHERE c.id ~ '^e2e' AND c.status = 'Registered'
+  AND NOT EXISTS (SELECT 1 FROM organization_cluster_grants x WHERE x.cluster_id = c.id)
+  AND NOT EXISTS (SELECT 1 FROM shared_compute_pools x WHERE x.cluster_id = c.id)
+  AND NOT EXISTS (SELECT 1 FROM network_pools x WHERE x.cluster_id = c.id)
+  AND NOT EXISTS (SELECT 1 FROM cluster_nodes x WHERE x.cluster_id = c.id)
+  AND NOT EXISTS (SELECT 1 FROM dedicated_node_grants x WHERE x.cluster_id = c.id)
+  AND NOT EXISTS (SELECT 1 FROM onboarding_policies x WHERE x.default_cluster_id = c.id)
+  AND NOT EXISTS (SELECT 1 FROM workspaces x WHERE x.cluster_id = c.id)
+  AND NOT EXISTS (SELECT 1 FROM outbox_events x WHERE x.target_cluster_id = c.id)
+  RETURNING 1) SELECT 'delete', 'clusters', count(*) FROM d;
 -- For Keycloak: the accounts gone here, by email (groups are listed above).
 SELECT 'kc-user', email FROM p_user ORDER BY email;

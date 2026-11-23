@@ -29,8 +29,10 @@ INSERT INTO users (id, issuer, subject, email) VALUES
   ('usr-admin', 'iss', 'admin', 'admin@tenantry.site'), ('usr-alice', 'iss', 'alice', 'alice@tenantry.site'),
   ('usr-e1', 'iss', 'e1', 'e2eaaa@tenantry.site'), ('usr-e2', 'iss', 'e2', 'e2ebbb@tenantry.site'),
   ('usr-o1', 'iss', 'o1', 'optest-1@tenantry.site'), ('usr-e3', 'iss', 'e3', 'e2eccc@tenantry.site');
-INSERT INTO clusters (id, display_name, status, proxy_endpoint, console_url, apps_domain)
-  VALUES ('cluster-a', 'Cluster A', 'Ready', 'https://kube-a.test', 'https://console-a.test', 'apps.test');
+INSERT INTO clusters (id, display_name, status, proxy_endpoint, console_url, apps_domain) VALUES
+  ('cluster-a', 'Cluster A', 'Ready', 'https://kube-a.test', 'https://console-a.test', 'apps.test'),
+  ('e2ereg1', 'E2E', 'Registered', 'https://kube-e2ereg1.invalid', 'https://console-e2ereg1.invalid', 'e2ereg1.invalid'),
+  ('e2ereg2', 'E2E ready', 'Ready', 'https://kube-e2ereg2.invalid', 'https://console-e2ereg2.invalid', 'e2ereg2.invalid');
 INSERT INTO shared_compute_pools (id, cluster_id, name, allocation_overcommit_ratio) VALUES ('shared-general', 'cluster-a', 'General', 3);
 INSERT INTO network_pools (id, cluster_id, cidrs, default_prefix_length, allowed_prefix_lengths)
   VALUES ('pods', 'cluster-a', '{10.240.0.0/18}', 24, '{24}');
@@ -92,15 +94,17 @@ INSERT INTO audit_events (actor_user_id, org_id, action, target_type, target_id,
 
 	for q, want := range map[string]int{
 		// Real data stays whole.
-		`SELECT count(*) FROM users WHERE id IN ('usr-admin', 'usr-alice')`: 2,
-		`SELECT count(*) FROM organizations WHERE id = 'org-acme'`:          1,
-		`SELECT count(*) FROM workspaces WHERE id = 'ws-acme'`:              1,
-		`SELECT count(*) FROM operations WHERE id = 'op-acme'`:              1,
-		`SELECT count(*) FROM outbox_events WHERE operation_id = 'op-acme'`: 1,
-		`SELECT count(*) FROM sessions WHERE user_id = 'usr-alice'`:         1,
-		`SELECT count(*) FROM audit_events WHERE org_id = 'org-acme'`:       1,
-		`SELECT count(*) FROM shared_compute_pools`:                         1,
-		`SELECT count(*) FROM network_pools`:                                1,
+		`SELECT count(*) FROM users WHERE id IN ('usr-admin', 'usr-alice')`:  2,
+		`SELECT count(*) FROM organizations WHERE id = 'org-acme'`:           1,
+		`SELECT count(*) FROM workspaces WHERE id = 'ws-acme'`:               1,
+		`SELECT count(*) FROM operations WHERE id = 'op-acme'`:               1,
+		`SELECT count(*) FROM outbox_events WHERE operation_id = 'op-acme'`:  1,
+		`SELECT count(*) FROM sessions WHERE user_id = 'usr-alice'`:          1,
+		`SELECT count(*) FROM audit_events WHERE org_id = 'org-acme'`:        1,
+		`SELECT count(*) FROM shared_compute_pools`:                          1,
+		`SELECT count(*) FROM network_pools`:                                 1,
+		`SELECT count(*) FROM clusters WHERE id IN ('cluster-a', 'e2ereg2')`: 2,
+		`SELECT count(*) FROM clusters WHERE id = 'e2ereg1'`:                 0,
 		// A test organization the cluster may still hold stays, with its owner.
 		`SELECT count(*) FROM organizations WHERE id = 'org-live'`: 1,
 		`SELECT count(*) FROM users WHERE id = 'usr-e1'`:           1,
