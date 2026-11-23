@@ -857,8 +857,8 @@
     {
       "id": 21,
       "type": "timeseries",
-      "title": "Shared pools: CPU requested by running Pods against allocatable",
-      "description": "From kube-state-metrics: the CPU requests of the Pods running on each shared pool's nodes, next to what the nodes can hold. Past allocatable nothing more schedules there, whatever the platform's allocation ceiling allows (ADR-0017).",
+      "title": "Shared pools: CPU requested by running Pods, allocatable, allocated and ceiling",
+      "description": "Per shared pool: the CPU requests of the Pods running on its nodes (kube-state-metrics), what the nodes can hold (operator), what the platform has given out to Shared Workspaces and its ceiling, ratio × reservable (backend, from the database). Pods stop scheduling at allocatable, even when allocated is still under the ceiling (ADR-0017).",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -887,6 +887,24 @@
           },
           "expr": "tenantry_shared_pool_allocatable{resource=\"cpu\"}",
           "legendFormat": "{{pool}} allocatable"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "tenantry_shared_pool_allocated{resource=\"cpu\"}",
+          "legendFormat": "{{pool}} allocated to Workspaces"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "tenantry_shared_pool_allocation_ceiling{resource=\"cpu\"}",
+          "legendFormat": "{{pool}} allocation ceiling"
         }
       ],
       "fieldConfig": {
