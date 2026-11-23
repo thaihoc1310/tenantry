@@ -3,9 +3,9 @@
 Keycloak's fine-grained admin permissions v2 (architecture/06 §7, M12).
 
 The worker finds, creates and deletes top-level groups, adds and removes
-members, and turns accounts on and off. Without realm-management manage-users
-(realm-tenantry.json gives it query-users and query-groups only), it gets
-exactly that through permissions of the realm's admin-permissions client:
+members, and turns accounts on and off. Meant to run with realm-management
+query-users and query-groups only, instead of manage-users, it gets exactly
+that through permissions of the realm's admin-permissions client:
 
   tenantry-sync-groups   Groups, all: view, manage, manage-membership
   tenantry-sync-users    Users, all: view, manage, manage-group-membership
@@ -29,15 +29,21 @@ with manage-membership on every group, putting someone in such a group would
 hand them its roles. The group tenantry:platform-admins itself holds none
 (the role stays mapped to the users directly).
 
+Not in use yet: on the lab (Keycloak 26.8.2) the service account could
+neither enable a user nor add one to a group with these permissions (403),
+so 60-keycloak.sh does not run apply and realm-tenantry.json keeps
+manage-users and query-groups.
+
 Usage (env: none; the Keycloak Pod has the bootstrap admin's credentials):
   keycloak-fgap.py apply    | kubectl -n keycloak exec -i keycloak-0 -- bash -s
   keycloak-fgap.py rollback | kubectl -n keycloak exec -i keycloak-0 -- bash -s
   keycloak-fgap.py check    | ...   (only the role-mapping and platform-admin checks)
 
 rollback gives the service account manage-users back first, so the worker
-works again at once, then deletes the permissions, policies and the group,
-and turns admin permissions off. realm-sync.py, run later, takes manage-users
-away again unless realm-tenantry.json is reverted too.
+works again at once, takes query-users away (back to manage-users and
+query-groups, what verify.sh expects with admin permissions off), then
+deletes the permissions, policies and the group, and turns admin permissions
+off. realm-sync.py, run later, follows realm-tenantry.json for the roles.
 
 Run it again and nothing changes. It prints what it does, no secret.
 """
@@ -76,10 +82,13 @@ sa=$(k get users -q username={SA} -q exact=true --fields id --format csv --noquo
 # Every group's role mappings must be empty (kcadm prints "{ }" for none).
 CHECK = f"""say "checking that no group carries a role mapping"
 bad=0
-for gid in $(k get groups --fields id --format csv --noquotes); do
-  rm=$(k get "groups/$gid/role-mappings")
-  case "$rm" in *realmMappings*|*clientMappings*) say "group $gid carries a role mapping"; bad=1;; esac
-done
+# One read of every group with its roles: an empty mapping prints as "[ ]" or "{{ }}".
+while IFS= read -r line; do
+  case "$line" in
+    *'"realmRoles" : [ ]'*|*'"clientRoles" : {{ }}'*) ;;
+    *'"realmRoles"'*|*'"clientRoles"'*) say "a group carries a role mapping: $line"; bad=1;;
+  esac
+done <<< "$(k get groups -q briefRepresentation=false -q max=-1)"
 [ "$bad" = 0 ] || {{ say "refusing: a group with roles would let tenantry-sync hand them out"; exit 1; }}
 fgap=$(k get realms/{REALM} --fields adminPermissionsEnabled --format csv --noquotes)
 if [ -z "${{APPLYING:-}}" ] && [ "$fgap" != true ]; then
@@ -166,6 +175,8 @@ done
 def rollback():
     return PRELUDE + f"""say "manage-users back to {SA} first"
 k add-roles --uusername {SA} --cclientid realm-management --rolename manage-users
+say "query-users away from {SA}: manage-users and query-groups, as before apply"
+k remove-roles --uusername {SA} --cclientid realm-management --rolename query-users
 ap=$(k get clients -q clientId=admin-permissions --fields id --format csv --noquotes)
 if [ -n "$ap" ]; then
   base="clients/$ap/authz/resource-server"
