@@ -89,14 +89,15 @@ func optestOrg(t *testing.T, adm *portal, grant map[string]any) (owner *account,
 func sharedGrant(cpu string, namespaces int) map[string]any {
 	return map[string]any{
 		"clusterId": "cluster-a", "maxWorkspaces": 4, "maxNamespacesTotal": namespaces,
-		"resources":     map[string]any{"requestsCpu": cpu, "requestsMemory": "8Gi", "limitsCpu": cpu, "limitsMemory": "8Gi", "pods": 40, "requestsStorage": "2Gi"},
+		"resources":     map[string]any{"requestsCpu": cpu, "requestsMemory": "8Gi", "limitsCpu": cpu, "limitsMemory": "8Gi", "pods": 40, "requestsStorage": "8Gi"},
 		"sharedPoolIds": []string{"shared-general"}, "networkPoolIds": []string{"onboarding-pod-network"}, "allowedStorageClasses": []string{"standard"},
 	}
 }
 
 // sharedWorkspace creates a Shared Workspace on shared-general, waits for it,
-// and deletes it at cleanup. It answers its id.
-func sharedWorkspace(t *testing.T, owner *account, slug, ws, adminsID string, resources map[string]any, namespaces []string) string {
+// and deletes it at cleanup. It answers its id and how long its
+// workspace.create operation took by the API's clock (createdAt to finishedAt).
+func sharedWorkspace(t *testing.T, owner *account, slug, ws, adminsID string, resources map[string]any, namespaces []string) (string, time.Duration) {
 	t.Helper()
 	var created struct {
 		Workspace struct{ ID string } `json:"workspace"`
@@ -121,7 +122,9 @@ func sharedWorkspace(t *testing.T, owner *account, slug, ws, adminsID string, re
 		}
 	})
 	owner.operation(t, created.Operation.ID)
-	return id
+	var op struct{ CreatedAt, FinishedAt time.Time }
+	owner.api(t, http.MethodGet, "/operations/"+created.Operation.ID, nil, &op)
+	return id, op.FinishedAt.Sub(op.CreatedAt)
 }
 
 // nsSample holds both clocks: server-side times (Kubernetes timestamps, 1 s
@@ -148,13 +151,27 @@ func TestNamespaceLatency(t *testing.T) {
 		n = v
 	}
 	perWorkspace := (n + 1) / 2
+	// Extra Workspaces with one Namespace each, only to time workspace.create.
+	extra := 2
+	if v, err := strconv.Atoi(os.Getenv("WS_BENCH_EXTRA")); err == nil && v >= 0 {
+		extra = min(v, 2) // the entitlement allows 4 Workspaces
+	}
 	adm := adminPortal(t)
-	owner, slug, _, adminsID, _ := optestOrg(t, adm, sharedGrant("1", 2*(perWorkspace+1)))
+	owner, slug, _, adminsID, _ := optestOrg(t, adm, sharedGrant("2", 2*(perWorkspace+1)+extra))
 	small := map[string]any{"requestsCpu": "200m", "requestsMemory": "256Mi", "limitsCpu": "400m", "limitsMemory": "512Mi",
 		"pods": 10, "requestsStorage": "1Gi", "namespaceQuota": perWorkspace + 1}
 	ids := map[string]string{}
 	for _, ws := range []string{"nsa", "nsb"} {
-		ids[ws] = sharedWorkspace(t, owner, slug, ws, adminsID, small, []string{"base"})
+		var took time.Duration
+		ids[ws], took = sharedWorkspace(t, owner, slug, ws, adminsID, small, []string{"base"})
+		t.Logf("WSSAMPLE %s workspace.create=%s", ws, took.Round(time.Millisecond))
+	}
+	one := map[string]any{"requestsCpu": "100m", "requestsMemory": "128Mi", "limitsCpu": "200m", "limitsMemory": "256Mi",
+		"pods": 5, "requestsStorage": "1Gi", "namespaceQuota": 1}
+	for i := range extra {
+		ws := fmt.Sprintf("wsx%d", i)
+		_, took := sharedWorkspace(t, owner, slug, ws, adminsID, one, []string{"base"})
+		t.Logf("WSSAMPLE %s workspace.create=%s", ws, took.Round(time.Millisecond))
 	}
 
 	var mu sync.Mutex
@@ -341,7 +358,7 @@ func TestSharedPending(t *testing.T) {
 	var all []ws
 	for _, name := range []string{"fill", "over"} {
 		w := ws{name: name, ns: slug + "-" + name + "-app"}
-		w.id = sharedWorkspace(t, owner, slug, name, adminsID, quota, []string{"app"})
+		w.id, _ = sharedWorkspace(t, owner, slug, name, adminsID, quota, []string{"app"})
 		all = append(all, w)
 	}
 	for _, w := range all {
