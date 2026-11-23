@@ -17,9 +17,11 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1 "github.com/thaihoc1310/tenantry/operator/api/v1alpha1"
@@ -292,12 +294,17 @@ func TestSharedPending(t *testing.T) {
 			err := tenant.Create(ctx, d.DeepCopy(), client.DryRunAll)
 			return err == nil, err
 		})
-		if err := tenant.Create(ctx, d); err != nil {
-			t.Fatalf("Deployment in %s: %v", w.ns, err)
-		}
+		// Calls are tried again: a connection to the lab can drop (EOF).
+		waitFor(t, "Deployment in "+w.ns, time.Minute, func() (bool, error) {
+			err := tenant.Create(ctx, d.DeepCopy())
+			return err == nil || apierrors.IsAlreadyExists(err), err
+		})
 		// Scale to zero before anything else is undone: the nodes are full.
 		t.Cleanup(func() {
-			_ = admin.Patch(ctx, d, client.RawPatch("application/merge-patch+json", []byte(`{"spec":{"replicas":0}}`)))
+			waitFor(t, "scale "+w.ns+" to zero", 2*time.Minute, func() (bool, error) {
+				err := admin.Patch(ctx, d.DeepCopy(), client.RawPatch(types.MergePatchType, []byte(`{"spec":{"replicas":0}}`)))
+				return err == nil, err
+			})
 		})
 	}
 
