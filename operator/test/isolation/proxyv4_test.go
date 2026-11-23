@@ -21,7 +21,7 @@ func TestProxyRequestAsDemoUser(t *testing.T) {
 	}
 	alice := logIn(t, "alice", secret(t, "keycloak", "keycloak-realm", "DEMO_USER_PASSWORD"))
 	token := alice.kubectlToken(t)
-	t.Logf("alice's sub: %v", claims(t, token)["sub"])
+	t.Logf("alice's sub: %v, groups in the token: %v", claims(t, token)["sub"], claims(t, token)["groups"])
 	req, _ := http.NewRequest(http.MethodGet, "https://"+envOr("KUBE_HOST", "kube-a.tenantry.site")+"/api/v1/namespaces/default/pods", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
