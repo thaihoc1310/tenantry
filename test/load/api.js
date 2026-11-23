@@ -43,6 +43,21 @@ const thresholds = {
   ],
 };
 
+// A threshold that always holds, per endpoint, so the summary carries each
+// endpoint's own durations (k6 reports a submetric only when one names it).
+for (const name of [
+  "GET /me",
+  "GET /organizations/{org}/workspaces",
+  "GET /workspaces/{id}",
+  "GET /workspaces/{id}/usage",
+  "GET /operations/{id}",
+  "PUT /workspaces/{id}/bindings/{group}",
+  "POST /workspaces/{id}/namespaces",
+  "DELETE /workspaces/{id}/namespaces/{name}",
+]) {
+  thresholds[`http_req_duration{name:${name}}`] = ["max>=0"];
+}
+
 export const options =
   MODE === "full"
     ? {

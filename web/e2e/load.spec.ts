@@ -241,6 +241,11 @@ test('the platform API under load', async ({ browser }) => {
       `errors ${((m.errors?.value ?? 0) * 100).toFixed(2)} %, requests ${m.http_reqs?.count}, ` +
       `409 busy ${m.busy_409?.count ?? 0}, 429 ${m.limited_429?.count ?? 0}, 503 SERVICE_BUSY ${m.service_busy_503?.count ?? 0}`,
   )
+  for (const [key, v] of Object.entries(m)) {
+    const name = /^http_req_duration\{name:(.*)\}$/.exec(key)?.[1]
+    if (name && v.count !== 0 && v['p(95)'] !== undefined)
+      console.log(`  ${name}: p95 ${v['p(95)'].toFixed(0)} ms, max ${v.max?.toFixed(0)} ms`)
+  }
   await cleanUp()
   expect(stopped, 'stopped for Postgres connections').toEqual([])
   expect(code, 'k6 exit code (99: a threshold was crossed)').toBe(0)
