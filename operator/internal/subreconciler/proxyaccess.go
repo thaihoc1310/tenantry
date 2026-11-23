@@ -36,10 +36,16 @@ const (
 )
 
 // Probe intervals: a passing check is repeated at most every probeEvery,
-// a failing one sooner, never in a tight loop.
+// a failing one sooner, never in a tight loop. A new Namespace shows in
+// Capsule Proxy a moment after it exists; while the probe only waits for that,
+// it looks again every probeSoon, for probeSoonFor at most. A Namespace added
+// on the portal took 31 s or 72 s to Succeed when every retry waited probeRetry
+// (docs/report/namespace-latency.md).
 const (
 	probeEvery      = 5 * time.Minute
 	probeRetry      = 30 * time.Second
+	probeSoon       = 2 * time.Second
+	probeSoonFor    = time.Minute
 	tokenSeconds    = 600
 	tokenRenewAhead = 2 * time.Minute
 )
@@ -68,6 +74,21 @@ type probeMemo struct {
 	key    string
 	at     time.Time
 	result Result
+	// waitingSince is when the probe first waited for the proxy to catch up
+	// on this key.
+	waitingSince time.Time
+}
+
+// next is how long to wait before probing again after res.
+func (m probeMemo) next() time.Duration {
+	switch {
+	case m.result.Condition.Status == metav1.ConditionTrue:
+		return probeEvery
+	case m.result.Condition.Reason == ReasonProgressing && m.at.Sub(m.waitingSince) < probeSoonFor:
+		return probeSoon
+	default:
+		return probeRetry
+	}
 }
 
 // Username of the probe as Kubernetes and Capsule Proxy see it.
@@ -105,26 +126,24 @@ func (p *ProxyProber) ProxyAccess(ctx context.Context, scheme *runtime.Scheme, w
 	memo, seen := p.last[ws.Name]
 	p.mu.Unlock()
 	if seen && memo.key == key {
-		wait := probeEvery
-		if memo.result.Condition.Status != metav1.ConditionTrue {
-			wait = probeRetry
-		}
-		if left := wait - time.Since(memo.at); left > 0 {
+		if left := memo.next() - time.Since(memo.at); left > 0 {
 			return memo.result, left
 		}
 	}
 	res = p.probe(ctx, ws, names)
 	metrics.ProxyProbes.WithLabelValues(res.Condition.Reason).Inc()
+	now := time.Now()
+	next := probeMemo{key: key, at: now, result: res, waitingSince: now}
+	if seen && memo.key == key && memo.result.Condition.Reason == ReasonProgressing {
+		next.waitingSince = memo.waitingSince
+	}
 	p.mu.Lock()
 	if p.last == nil {
 		p.last = map[string]probeMemo{}
 	}
-	p.last[ws.Name] = probeMemo{key: key, at: time.Now(), result: res}
+	p.last[ws.Name] = next
 	p.mu.Unlock()
-	if res.Condition.Status != metav1.ConditionTrue {
-		return res, probeRetry
-	}
-	return res, probeEvery
+	return res, next.next()
 }
 
 // Forget drops what is remembered of a deleted Workspace.
