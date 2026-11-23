@@ -124,9 +124,13 @@ func sharedWorkspace(t *testing.T, owner *account, slug, ws, adminsID string, re
 	return id
 }
 
+// nsSample holds both clocks: server-side times (Kubernetes timestamps, 1 s
+// resolution; the operation's own createdAt and finishedAt) and this test's
+// poll times (250 ms, but over the laptop's link).
 type nsSample struct {
-	name             string
-	cluster, forUser time.Duration
+	name                         string
+	cluster, forUser             time.Duration // poll
+	clusterServer, forUserServer time.Duration // server
 }
 
 // TestNamespaceLatency adds NS_BENCH_N Namespaces (default 20) through the
@@ -170,13 +174,18 @@ func TestNamespaceLatency(t *testing.T) {
 	if t.Failed() {
 		return
 	}
-	cluster, forUser := make([]time.Duration, len(samples)), make([]time.Duration, len(samples))
+	n = len(samples)
+	cluster, forUser := make([]time.Duration, n), make([]time.Duration, n)
+	clusterS, forUserS := make([]time.Duration, n), make([]time.Duration, n)
 	for i, s := range samples {
-		cluster[i], forUser[i] = s.cluster, s.forUser
-		t.Logf("NSSAMPLE %s cluster=%s user=%s", s.name, s.cluster.Round(time.Millisecond), s.forUser.Round(time.Millisecond))
+		cluster[i], forUser[i], clusterS[i], forUserS[i] = s.cluster, s.forUser, s.clusterServer, s.forUserServer
+		t.Logf("NSSAMPLE %s server: cluster=%s user=%s | poll: cluster=%s user=%s", s.name,
+			s.clusterServer, s.forUserServer.Round(time.Millisecond), s.cluster.Round(time.Millisecond), s.forUser.Round(time.Millisecond))
 	}
-	t.Logf("NSBENCH n=%d cluster_p50=%s cluster_p95=%s cluster_max=%s user_p50=%s user_p95=%s user_max=%s",
-		len(samples), pct(cluster, 50), pct(cluster, 95), pct(cluster, 100), pct(forUser, 50), pct(forUser, 95), pct(forUser, 100))
+	t.Logf("NSBENCH server n=%d cluster_p50=%s cluster_p95=%s cluster_max=%s user_p50=%s user_p95=%s user_max=%s",
+		n, pct(clusterS, 50), pct(clusterS, 95), pct(clusterS, 100), pct(forUserS, 50), pct(forUserS, 95), pct(forUserS, 100))
+	t.Logf("NSBENCH poll   n=%d cluster_p50=%s cluster_p95=%s cluster_max=%s user_p50=%s user_p95=%s user_max=%s",
+		n, pct(cluster, 50), pct(cluster, 95), pct(cluster, 100), pct(forUser, 50), pct(forUser, 95), pct(forUser, 100))
 }
 
 func addNamespace(t *testing.T, owner *account, slug, ws, wsID, suffix string) nsSample {
@@ -191,6 +200,8 @@ func addNamespace(t *testing.T, owner *account, slug, ws, wsID, suffix string) n
 		return nsSample{name: full}
 	}
 	var inSpec, ready, succeeded time.Time
+	var specAt, readyAt time.Time // server-side
+	var opCreated, opFinished time.Time
 	deadline := start.Add(5 * time.Minute)
 	for (ready.IsZero() || succeeded.IsZero()) && time.Now().Before(deadline) {
 		now := time.Now()
@@ -198,17 +209,23 @@ func addNamespace(t *testing.T, owner *account, slug, ws, wsID, suffix string) n
 			cr := &v1.PlatformWorkspace{}
 			if admin.Get(ctx, client.ObjectKey{Name: k8sName}, cr) == nil && contains(cr.Spec.Namespaces, suffix) {
 				inSpec = now
+				specAt = appliedAt(cr.ManagedFields, "tenantry-provisioning-worker")
 			}
 		}
-		if !inSpec.IsZero() && ready.IsZero() && namespaceReady(k8sName, full) {
-			ready = now
+		if !inSpec.IsZero() && ready.IsZero() {
+			if at, ok := namespaceReady(k8sName, full); ok {
+				ready, readyAt = now, at
+			}
 		}
 		if succeeded.IsZero() {
-			var op struct{ State string }
+			var op struct {
+				State                 string
+				CreatedAt, FinishedAt time.Time
+			}
 			owner.api(t, http.MethodGet, "/operations/"+change.Operation.ID, nil, &op)
 			switch op.State {
 			case "Succeeded":
-				succeeded = now
+				succeeded, opCreated, opFinished = now, op.CreatedAt, op.FinishedAt
 			case "Failed", "Blocked":
 				t.Errorf("operation for %s %s", full, op.State)
 				return nsSample{name: full}
@@ -220,29 +237,65 @@ func addNamespace(t *testing.T, owner *account, slug, ws, wsID, suffix string) n
 		t.Errorf("%s not ready (%v) or its operation not Succeeded (%v) in 5 minutes", full, !ready.IsZero(), !succeeded.IsZero())
 		return nsSample{name: full}
 	}
-	return nsSample{name: full, cluster: ready.Sub(inSpec), forUser: succeeded.Sub(start)}
+	return nsSample{name: full, cluster: ready.Sub(inSpec), forUser: succeeded.Sub(start),
+		clusterServer: readyAt.Sub(specAt), forUserServer: opFinished.Sub(opCreated)}
+}
+
+// appliedAt is when manager last applied the object's spec (not status).
+func appliedAt(fields []metav1.ManagedFieldsEntry, manager string) time.Time {
+	var at time.Time
+	for _, f := range fields {
+		if f.Manager == manager && f.Operation == metav1.ManagedFieldsOperationApply && f.Subresource == "" && f.Time != nil && f.Time.After(at) {
+			at = f.Time.Time
+		}
+	}
+	return at
+}
+
+// statusWrittenAt is the last write to the object's status.
+func statusWrittenAt(fields []metav1.ManagedFieldsEntry) time.Time {
+	var at time.Time
+	for _, f := range fields {
+		if f.Subresource == "status" && f.Time != nil && f.Time.After(at) {
+			at = f.Time.Time
+		}
+	}
+	return at
 }
 
 // namespaceReady: Active, with the baseline NetworkPolicy and the LimitRange
-// replicated into it, and counted by the Workspace's GlobalResourceQuota.
-func namespaceReady(tenant, ns string) bool {
+// replicated into it, and counted by the Workspace's GlobalResourceQuota. It
+// answers when that was true by the server's clocks: the latest of the three
+// objects' creationTimestamp and the quota's last status write.
+func namespaceReady(tenant, ns string) (time.Time, bool) {
 	nsObj := &corev1.Namespace{}
 	if admin.Get(ctx, client.ObjectKey{Name: ns}, nsObj) != nil || nsObj.Status.Phase != corev1.NamespaceActive {
-		return false
+		return time.Time{}, false
 	}
-	if admin.Get(ctx, client.ObjectKey{Namespace: ns, Name: "tenant-default-deny"}, &networkingv1.NetworkPolicy{}) != nil {
-		return false
+	np := &networkingv1.NetworkPolicy{}
+	if admin.Get(ctx, client.ObjectKey{Namespace: ns, Name: "tenant-default-deny"}, np) != nil {
+		return time.Time{}, false
 	}
-	if admin.Get(ctx, client.ObjectKey{Namespace: ns, Name: render.LimitRangeName}, &corev1.LimitRange{}) != nil {
-		return false
+	lr := &corev1.LimitRange{}
+	if admin.Get(ctx, client.ObjectKey{Namespace: ns, Name: render.LimitRangeName}, lr) != nil {
+		return time.Time{}, false
 	}
 	grq := &unstructured.Unstructured{}
 	grq.SetGroupVersionKind(render.QuotaGVK)
 	if admin.Get(ctx, client.ObjectKey{Name: tenant + "-" + render.QuotaName}, grq) != nil {
-		return false
+		return time.Time{}, false
 	}
 	status, _ := json.Marshal(grq.Object["status"])
-	return strings.Contains(string(status), `"`+ns+`"`)
+	if !strings.Contains(string(status), `"`+ns+`"`) {
+		return time.Time{}, false
+	}
+	at := nsObj.CreationTimestamp.Time
+	for _, t := range []time.Time{np.CreationTimestamp.Time, lr.CreationTimestamp.Time, statusWrittenAt(grq.GetManagedFields())} {
+		if t.After(at) {
+			at = t
+		}
+	}
+	return at, true
 }
 
 func contains(s []string, x string) bool {
