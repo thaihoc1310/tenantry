@@ -95,7 +95,7 @@
       "webOrigins": ["https://${CONSOLE_HOST}"],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "https://${CONSOLE_HOST}/"
+        "post.logout.redirect.uris": "https://${CONSOLE_HOST}/##https://${CONSOLE_HOST}/encoded-clusters/*"
       },
       "protocolMappers": [
         {
