@@ -193,6 +193,7 @@ func TestWorkspaceNamespaces(t *testing.T) {
 		t.Errorf("a Namespace outside the Tenant was deleted: %v %v", err, foreign.DeletionTimestamp)
 	}
 	finishNamespaceDeletion(t, "acme-water-scratch")
+	capsuleReplicates(t, "acme-water") // the new acme-water-backend gets its copies
 	reconcileOnce(t, r, "acme-water")
 	ws = getWorkspace(t, "acme-water")
 	if ws.Status.Phase != v1.PhaseReady || len(ws.Status.Namespaces) != 2 {
@@ -502,5 +503,55 @@ func TestWorkspaceIdsImmutable(t *testing.T) {
 	ws.Spec.DisplayName = "Fixed"
 	if err := testClient.Update(ctx, ws); err != nil {
 		t.Fatalf("changing displayName: %v", err)
+	}
+}
+
+// A Namespace without the copies of the LimitRange and the baseline
+// NetworkPolicies is not ready, even with the replication Ready: the
+// Workspace waits, looking again within 2 s, and is Ready once Capsule has
+// copied them (docs/report/namespace-latency.md).
+func TestWorkspaceWaitsForReplicas(t *testing.T) {
+	needEnv(t)
+	ctx := context.Background()
+	r := newWorkspaceReconciler()
+	if err := testClient.Create(ctx, newWorkspace("acme-rep")); err != nil {
+		t.Fatal(err)
+	}
+	reconcileOnce(t, r, "acme-rep")
+	capsuleReconciles(t, "acme-rep")
+	reconcileOnce(t, r, "acme-rep")
+	capsuleReplicates(t, "acme-rep")
+	reconcileOnce(t, r, "acme-rep")
+	if ws := getWorkspace(t, "acme-rep"); ws.Status.Phase != v1.PhaseReady {
+		t.Fatalf("phase %s before the new Namespace, conditions %+v", ws.Status.Phase, ws.Status.Conditions)
+	}
+
+	ws := getWorkspace(t, "acme-rep")
+	ws.Spec.Namespaces = []string{"frontend", "backend"}
+	if err := testClient.Update(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	reconcileOnce(t, r, "acme-rep") // creates acme-rep-backend
+	res := reconcileOnce(t, r, "acme-rep")
+	ws = getWorkspace(t, "acme-rep")
+	c := condition(ws, v1.ConditionPolicyReady)
+	if c.Reason != subreconciler.ReasonProgressing || !strings.Contains(c.Message, "acme-rep-backend: LimitRange/"+render.LimitRangeName) {
+		t.Fatalf("a Namespace without its copies: %+v", c)
+	}
+	if strings.Contains(c.Message, "acme-rep-frontend") {
+		t.Errorf("the complete Namespace is named too: %s", c.Message)
+	}
+	if ws.Status.Phase == v1.PhaseReady {
+		t.Error("Ready while a Namespace has no copies")
+	}
+	if res.RequeueAfter <= 0 || res.RequeueAfter > 2*time.Second {
+		t.Errorf("waiting for the copies should look again within 2s: %+v", res)
+	}
+
+	capsuleReplicates(t, "acme-rep")
+	reconcileOnce(t, r, "acme-rep")
+	ws = getWorkspace(t, "acme-rep")
+	if c := condition(ws, v1.ConditionPolicyReady); c.Status != metav1.ConditionTrue || ws.Status.Phase != v1.PhaseReady {
+		t.Errorf("after the copies: %+v, phase %s", c, ws.Status.Phase)
 	}
 }

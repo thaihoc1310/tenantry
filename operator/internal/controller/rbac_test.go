@@ -153,5 +153,9 @@ func TestOperatorRole(t *testing.T) {
 		{"create", "rbac.authorization.k8s.io", "rolebindings", "", false},
 		{"delete", "", "nodes", "", false},
 		{"create", "", "pods", "", false},
+		{"get", "", "limitranges", "", true},
+		{"get", "networking.k8s.io", "networkpolicies", "", true},
+		{"list", "networking.k8s.io", "networkpolicies", "", false},
+		{"create", "networking.k8s.io", "networkpolicies", "", false},
 	})
 }

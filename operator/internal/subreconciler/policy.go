@@ -23,8 +23,9 @@ import (
 // Pod Security labels are in the Tenant the tenant step applied, so policy
 // is Ready once Capsule has turned the quota into a GlobalResourceQuota with
 // the current hard and has replicated the LimitRange. It returns that
-// GlobalResourceQuota, nil when the Workspace has no quota.
-func Policy(ctx context.Context, c client.Client, scheme *runtime.Scheme, ws *v1.PlatformWorkspace) (Result, *unstructured.Unstructured) {
+// GlobalResourceQuota, nil when the Workspace has no quota. With replicas,
+// it is Ready only once every live Namespace holds the replicated copies.
+func Policy(ctx context.Context, c client.Client, scheme *runtime.Scheme, ws *v1.PlatformWorkspace, replicas *Replicas) (Result, *unstructured.Unstructured) {
 	const t = v1.ConditionPolicyReady
 	rep := render.Replication(ws)
 	if err := controllerutil.SetControllerReference(ws, rep, scheme); err != nil {
@@ -38,7 +39,7 @@ func Policy(ctx context.Context, c client.Client, scheme *runtime.Scheme, ws *v1
 	}
 
 	if len(ws.Spec.Resources) == 0 {
-		return ok(t), nil
+		return replicated(ctx, c, ws, rep, replicas, nil)
 	}
 	quota := &unstructured.Unstructured{}
 	quota.SetGroupVersionKind(render.QuotaGVK)
@@ -56,6 +57,27 @@ func Policy(ctx context.Context, c client.Client, scheme *runtime.Scheme, ws *v1
 		if got, found := hard[k]; !found || got.Cmp(want) != 0 {
 			return waiting(t, fmt.Sprintf("waiting for Capsule to apply %s=%s to GlobalResourceQuota %s", k, want.String(), quota.GetName())), quota
 		}
+	}
+	return replicated(ctx, c, ws, rep, replicas, quota)
+}
+
+// replicated is PolicyReady's last check: the copies are in every Namespace.
+// While they are not, it looks again every replicaSoon (Wait would wait the
+// controller's 5 s recheck).
+func replicated(ctx context.Context, c client.Client, ws *v1.PlatformWorkspace, rep *unstructured.Unstructured,
+	replicas *Replicas, quota *unstructured.Unstructured) (Result, *unstructured.Unstructured) {
+	const t = v1.ConditionPolicyReady
+	if replicas == nil {
+		return ok(t), quota
+	}
+	missing, err := replicas.Missing(ctx, c, ws, rep)
+	if err != nil {
+		return failure(t, err), quota
+	}
+	if missing != "" {
+		r := waiting(t, "waiting for Capsule to copy the Namespace defaults into "+missing)
+		r.Wait, r.After = false, replicaSoon
+		return r, quota
 	}
 	return ok(t), quota
 }

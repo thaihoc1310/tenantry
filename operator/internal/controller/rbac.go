@@ -26,6 +26,10 @@ package controller
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // Services: is a Route's target there, with its port.
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
+// The copies Capsule makes of a Workspace's replication, read one by one
+// (subreconciler.Replicas): get only, no cache of every one in the cluster.
+// +kubebuilder:rbac:groups="",resources=limitranges,verbs=get
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get
 // Pods: is a node clean, what still runs on it.
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // Nodes: labels and taints with keys tenantry.io/* and workspaces.tenantry.io/*

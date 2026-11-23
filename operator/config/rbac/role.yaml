@@ -7,6 +7,12 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - limitranges
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  resources:
   - namespaces
   verbs:
   - create
@@ -96,6 +102,12 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - networkpolicies
+  verbs:
+  - get
 - apiGroups:
   - projectcalico.org
   resources:

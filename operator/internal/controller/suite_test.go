@@ -8,6 +8,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -21,6 +22,7 @@ import (
 
 	v1 "github.com/thaihoc1310/tenantry/operator/api/v1alpha1"
 	"github.com/thaihoc1310/tenantry/operator/internal/render"
+	"github.com/thaihoc1310/tenantry/operator/internal/subreconciler"
 )
 
 // One envtest API server for the package: our CRDs plus Capsule's Tenant
@@ -100,6 +102,7 @@ func newWorkspaceReconciler() *PlatformWorkspaceReconciler {
 		Render:       render.Options{OperatorServiceAccount: operatorSA, AllowedRegistries: []string{"docker.io"}},
 		BlockedAfter: 10 * time.Minute,
 		APIReader:    testClient,
+		Replicas:     &subreconciler.Replicas{Reader: testClient},
 	}
 }
 
@@ -150,6 +153,39 @@ func capsuleReconciles(t *testing.T, name string) {
 	rep.Object["status"] = map[string]any{"size": int64(0), "conditions": []any{readyCondition()}}
 	if err := testClient.Status().Update(context.Background(), rep); err != nil {
 		t.Fatalf("set GlobalTenantResource status: %v", err)
+	}
+	capsuleReplicates(t, name)
+}
+
+// capsuleReplicates copies the replication's objects into every Namespace of
+// the Tenant, as Capsule does; an object there already is left as it is.
+func capsuleReplicates(t *testing.T, name string) {
+	t.Helper()
+	ctx := context.Background()
+	rep := &unstructured.Unstructured{}
+	rep.SetGroupVersionKind(render.ReplicationGVK)
+	if err := testClient.Get(ctx, client.ObjectKey{Name: name}, rep); err != nil {
+		return
+	}
+	var namespaces corev1.NamespaceList
+	if err := testClient.List(ctx, &namespaces, client.MatchingLabels{render.LabelCapsuleTenant: name}); err != nil {
+		t.Fatal(err)
+	}
+	resources, _, _ := unstructured.NestedSlice(rep.Object, "spec", "resources")
+	for _, ns := range namespaces.Items {
+		if ns.DeletionTimestamp != nil {
+			continue
+		}
+		for _, r := range resources {
+			raw, _ := r.(map[string]any)["rawItems"].([]any)
+			for _, it := range raw {
+				obj := (&unstructured.Unstructured{Object: it.(map[string]any)}).DeepCopy()
+				obj.SetNamespace(ns.Name)
+				if err := testClient.Create(ctx, obj); err != nil && !apierrors.IsAlreadyExists(err) {
+					t.Fatalf("copy %s/%s into %s: %v", obj.GetKind(), obj.GetName(), ns.Name, err)
+				}
+			}
+		}
 	}
 }
 
