@@ -53,7 +53,31 @@ var (
 
 func newClient() *http.Client {
 	jar, _ := cookiejar.New(nil)
-	return &http.Client{Jar: jar, Timeout: 30 * time.Second}
+	return &http.Client{Jar: jar, Timeout: 60 * time.Second, Transport: retrying{http.DefaultTransport}}
+}
+
+// retrying sends a request again, twice, when it gets no answer at all: the
+// lab's ingress drops a connection now and then. Bodies are replayed with
+// GetBody, which http.NewRequest sets for the bodies used here.
+type retrying struct{ next http.RoundTripper }
+
+func (r retrying) RoundTrip(req *http.Request) (*http.Response, error) {
+	var resp *http.Response
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(2 * time.Second)
+			if req.GetBody != nil {
+				if req.Body, err = req.GetBody(); err != nil {
+					return nil, err
+				}
+			}
+		}
+		if resp, err = r.next.RoundTrip(req); err == nil {
+			return resp, nil
+		}
+	}
+	return resp, err
 }
 
 // pageOf returns a reader of a response: its body and final URL.

@@ -55,6 +55,8 @@ spec:
               PlatformWorkspaceSpec is the desired state the central plane writes
               (PRODUCT-PLAN §14.2). Namespace names: spec.namespaces holds suffixes,
               every other field holds full names (<metadata.name>-<suffix>).
+              The three ids never change: a Workspace stays in its Organization and its
+              Cluster (ADR-0008); the API and the database hold this too.
             properties:
               accessBindings:
                 description: AccessBindings give organization groups a role in the
@@ -85,6 +87,9 @@ spec:
               clusterId:
                 minLength: 1
                 type: string
+                x-kubernetes-validations:
+                - message: clusterId is immutable
+                  rule: self == oldSelf
               compute:
                 properties:
                   dedicatedNodeGrantId:
@@ -148,6 +153,9 @@ spec:
               organizationId:
                 minLength: 1
                 type: string
+                x-kubernetes-validations:
+                - message: organizationId is immutable
+                  rule: self == oldSelf
               resources:
                 additionalProperties:
                   anyOf:
@@ -207,6 +215,9 @@ spec:
               workspaceId:
                 minLength: 1
                 type: string
+                x-kubernetes-validations:
+                - message: workspaceId is immutable
+                  rule: self == oldSelf
             required:
             - clusterId
             - compute

@@ -181,7 +181,22 @@ func TestPersonas(t *testing.T) {
 	var route struct {
 		ID, URL, State, Message string
 	}
-	alice.api(t, http.MethodPost, "/workspaces/"+solar.Workspace.ID+"/routes", map[string]any{"namespace": frontend, "name": "web", "service": "web", "port": 80}, &route, 202)
+	var change struct {
+		Route struct {
+			ID, URL, State, Message string
+		}
+		Operation struct{ ID string }
+	}
+	alice.api(t, http.MethodPost, "/workspaces/"+solar.Workspace.ID+"/routes", map[string]any{"namespace": frontend, "name": "web", "service": "web", "port": 80}, &change, 202)
+	route.ID, route.URL = change.Route.ID, change.Route.URL
+	alice.operation(t, change.Operation.ID)
+	defer func() {
+		if t.Failed() && route.State != "Active" {
+			cr, _ := admin(t, "", "get", "platformworkspace", solar.Workspace.K8sName, "-o",
+				"jsonpath=generation={.metadata.generation} observed={.status.observedGeneration} phase={.status.phase} routes={.status.routes} conditions={.status.conditions}")
+			t.Logf("Route web: state %q message %q; the CR: %s", route.State, route.Message, cr)
+		}
+	}()
 	until(t, "Route web Active", 3*time.Minute, func() bool {
 		var list struct {
 			Items []struct{ ID, URL, State, Message string }
@@ -223,6 +238,15 @@ func TestPersonas(t *testing.T) {
 	if err := setPoolNodes(adm, func(n []string) []string { return without(n, dedicatedNode) }); err != nil {
 		t.Fatal(err)
 	}
+	// Out of the pool, wk3 still runs the Pods it had (Solar's app among
+	// them): the Platform Admin drains it, then uncordons it, before the
+	// grant, which wants a clean node (PRODUCT-PLAN §24.3).
+	c.add("uncordon wk3", func() { _, _ = admin(t, "", "uncordon", dedicatedNode) })
+	if out, err := admin(t, "", "drain", dedicatedNode, "--ignore-daemonsets", "--delete-emptydir-data", "--timeout=4m"); err != nil {
+		t.Fatalf("drain %s: %s", dedicatedNode, out)
+	}
+	mustAdmin(t, "uncordon", dedicatedNode)
+	t.Logf("%s drained and uncordoned", dedicatedNode)
 	var give struct {
 		Items      []struct{ ID string }
 		Operations []struct{ ID string }

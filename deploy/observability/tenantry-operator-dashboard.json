@@ -755,7 +755,105 @@
           "mode": "multi"
         }
       }
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "DB pool: connections in use against the maximum",
+      "description": "Per process. A pool held at its maximum makes every request wait for a connection, as the portal did when a session refresh held one while Keycloak answered.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 73,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "label_replace(tenantry_db_pool_acquired_connections, \"process\", \"$1\", \"instance\", \"tenantry-(.*)-metrics\\\\..*\")",
+          "legendFormat": "in use {{process}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "label_replace(tenantry_db_pool_max_connections, \"process\", \"$1\", \"instance\", \"tenantry-(.*)-metrics\\\\..*\")",
+          "legendFormat": "max {{process}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "DB pool: waits for a connection",
+      "description": "Per process: acquires per second that found no free connection, and the mean wait of those.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 73,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "label_replace(rate(tenantry_db_pool_waits_total[5m]), \"process\", \"$1\", \"instance\", \"tenantry-(.*)-metrics\\\\..*\")",
+          "legendFormat": "waits/s {{process}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "label_replace(rate(tenantry_db_pool_wait_seconds_total[5m]) / rate(tenantry_db_pool_waits_total[5m]), \"process\", \"$1\", \"instance\", \"tenantry-(.*)-metrics\\\\..*\")",
+          "legendFormat": "mean wait (s) {{process}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
     }
   ],
-  "description": "Tenantry metrics (PRODUCT-PLAN \u00a721.2): the operator (tenantry_*, controller_runtime_*, workqueue_*) and the Platform API and workers (tenantry_api_*, tenantry_operation_*, tenantry_outbox_*, tenantry_network_pool_*, tenantry_groupsync_*)."
+  "description": "Tenantry metrics (PRODUCT-PLAN §21.2): the operator (tenantry_*, controller_runtime_*, workqueue_*) and the Platform API and workers (tenantry_api_*, tenantry_operation_*, tenantry_outbox_*, tenantry_network_pool_*, tenantry_groupsync_*)."
 }
