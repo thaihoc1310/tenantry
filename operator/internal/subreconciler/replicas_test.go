@@ -75,7 +75,8 @@ func tenantNamespace(name string, uid string) *corev1.Namespace {
 
 // A Namespace being deleted is skipped; a live one without its copies is
 // named, looked at again every 2 s for a minute, then every 30 s; once its
-// copies are there it is complete and the wait starts over next time.
+// copies are there it is complete and the wait starts over next time. A
+// Namespace no longer there, or a deleted Workspace, is forgotten.
 func TestReplicasMissing(t *testing.T) {
 	ctx := context.Background()
 	ws := replicaWorkspace(true)
@@ -138,5 +139,33 @@ func TestReplicasMissing(t *testing.T) {
 	}
 	if missing, again, _ = r.Missing(ctx, c, ws, rep); !strings.HasPrefix(missing, "acme-solar-api:") || again != replicaSoon {
 		t.Errorf("a new Namespace: %q, again %s", missing, again)
+	}
+
+	// A Namespace gone from the Workspace is no longer remembered.
+	remembered := func(uid string) bool {
+		for key := range r.complete[ws.Name] {
+			if strings.HasPrefix(key, uid+"|") {
+				return true
+			}
+		}
+		return false
+	}
+	if !remembered("uid-web") {
+		t.Fatalf("acme-solar-web is complete but not remembered: %v", r.complete)
+	}
+	if err := c.Delete(ctx, live); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Missing(ctx, c, ws, rep); err != nil {
+		t.Fatal(err)
+	}
+	if remembered("uid-web") {
+		t.Errorf("acme-solar-web is gone but still remembered: %v", r.complete)
+	}
+
+	// A deleted Workspace leaves nothing behind.
+	r.Forget(ws.Name)
+	if len(r.complete) != 0 || len(r.waiting) != 0 {
+		t.Errorf("after Forget: complete %v, waiting %v", r.complete, r.waiting)
 	}
 }

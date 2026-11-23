@@ -198,6 +198,9 @@ func (r *PlatformWorkspaceReconciler) finalize(ctx context.Context, ws *v1.Platf
 	if r.Proxy != nil {
 		r.Proxy.Forget(ws.Name)
 	}
+	if r.Replicas != nil {
+		r.Replicas.Forget(ws.Name)
+	}
 	if forced {
 		r.Recorder.Eventf(ws, nil, corev1.EventTypeWarning, "ForceDeleteLeftovers", "Finalize",
 			"force-delete left Tenant %s and Namespaces %s terminating; stuck Pods: %s",

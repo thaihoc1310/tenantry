@@ -36,16 +36,23 @@ const (
 // It reads with Reader, straight from the API server, so the operator needs
 // get on NetworkPolicies and LimitRanges but no cache of every one of them
 // in the cluster. A Namespace found complete is remembered and not read
-// again; Capsule puts back a copy someone deletes.
-//
-// ponytail: the memory holds one entry per Namespace the process has seen
-// complete and is never pruned; prune on Namespace delete if that grows.
+// again; Capsule puts back a copy someone deletes. What is remembered of a
+// Workspace is only its live Namespaces of the last pass, and Forget drops
+// it when the Workspace is deleted.
 type Replicas struct {
 	Reader client.Reader
 
 	mu       sync.Mutex
-	complete map[string]bool      // namespace UID | object list → all present
-	waiting  map[string]time.Time // Workspace → since when copies are missing
+	complete map[string]map[string]bool // Workspace → namespace UID | object list, all present
+	waiting  map[string]time.Time       // Workspace → since when copies are missing
+}
+
+// Forget drops what is remembered of a deleted Workspace.
+func (r *Replicas) Forget(name string) {
+	r.mu.Lock()
+	delete(r.complete, name)
+	delete(r.waiting, name)
+	r.mu.Unlock()
 }
 
 // replicaItem is one object the replication copies into every Namespace.
@@ -120,16 +127,21 @@ func (r *Replicas) missing(ctx context.Context, c client.Client, ws *v1.Platform
 	if err != nil {
 		return "", err
 	}
+	// Only one pass of a Workspace runs at a time (controller-runtime), so
+	// its entry is read here and replaced at the end, without the Namespaces
+	// gone or being deleted since.
+	r.mu.Lock()
+	seen := r.complete[ws.Name]
+	r.mu.Unlock()
+	done := map[string]bool{}
 	var missing []string
 	for _, ns := range namespaces {
 		if ns.DeletionTimestamp != nil {
 			continue
 		}
 		key := string(ns.UID) + "|" + set
-		r.mu.Lock()
-		done := r.complete[key]
-		r.mu.Unlock()
-		if done {
+		if seen[key] {
+			done[key] = true
 			continue
 		}
 		var absent []string
@@ -147,13 +159,14 @@ func (r *Replicas) missing(ctx context.Context, c client.Client, ws *v1.Platform
 			missing = append(missing, fmt.Sprintf("%s: %s", ns.Name, strings.Join(absent, ", ")))
 			continue
 		}
-		r.mu.Lock()
-		if r.complete == nil {
-			r.complete = map[string]bool{}
-		}
-		r.complete[key] = true
-		r.mu.Unlock()
+		done[key] = true
 	}
+	r.mu.Lock()
+	if r.complete == nil {
+		r.complete = map[string]map[string]bool{}
+	}
+	r.complete[ws.Name] = done
+	r.mu.Unlock()
 	slices.Sort(missing)
 	return strings.Join(missing, "; "), nil
 }
