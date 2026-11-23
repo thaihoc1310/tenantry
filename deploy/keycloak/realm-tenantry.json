@@ -1,5 +1,6 @@
 {
   "realm": "tenantry",
+  "adminPermissionsEnabled": true,
   "displayName": "Tenantry",
   "enabled": true,
   "sslRequired": "external",
@@ -182,7 +183,7 @@
     {
       "clientId": "tenantry-sync",
       "name": "Tenantry group sync",
-      "description": "Service account of the group sync worker: mirrors groups and memberships, turns accounts on and off. realm-management manage-users, so as strong as a Platform Admin. Secret only in tenantry-worker-groupsync.",
+      "description": "Service account of the group sync worker: mirrors groups and memberships, turns accounts on and off. query-users and query-groups, the rest through fine-grained admin permissions (keycloak-fgap.py). Secret only in tenantry-worker-groupsync.",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
@@ -198,7 +199,7 @@
   ],
 
   "clientScopeMappings": {
-    "realm-management": [{"client": "tenantry-sync", "roles": ["manage-users", "query-groups"]}]
+    "realm-management": [{"client": "tenantry-sync", "roles": ["query-users", "query-groups"]}]
   },
 
   "users": [
@@ -262,7 +263,7 @@
       "username": "service-account-tenantry-sync",
       "enabled": true,
       "serviceAccountClientId": "tenantry-sync",
-      "clientRoles": {"realm-management": ["manage-users", "query-groups"]}
+      "clientRoles": {"realm-management": ["query-users", "query-groups"]}
     }
   ]
 }
