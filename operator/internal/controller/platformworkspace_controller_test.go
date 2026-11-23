@@ -554,4 +554,17 @@ func TestWorkspaceWaitsForReplicas(t *testing.T) {
 	if c := condition(ws, v1.ConditionPolicyReady); c.Status != metav1.ConditionTrue || ws.Status.Phase != v1.PhaseReady {
 		t.Errorf("after the copies: %+v, phase %s", c, ws.Status.Phase)
 	}
+
+	// Cordoned: Capsule refuses the owners' writes, not its own copies, and
+	// the Namespaces are complete already; the check does not hold policy back.
+	ws.Spec.Cordoned = true
+	if err := testClient.Update(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	reconcileOnce(t, r, "acme-rep")
+	capsuleReconciles(t, "acme-rep")
+	reconcileOnce(t, r, "acme-rep")
+	if c := condition(getWorkspace(t, "acme-rep"), v1.ConditionPolicyReady); c.Status != metav1.ConditionTrue {
+		t.Errorf("cordoned with every copy in place: %+v", c)
+	}
 }

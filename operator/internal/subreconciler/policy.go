@@ -62,21 +62,21 @@ func Policy(ctx context.Context, c client.Client, scheme *runtime.Scheme, ws *v1
 }
 
 // replicated is PolicyReady's last check: the copies are in every Namespace.
-// While they are not, it looks again every replicaSoon (Wait would wait the
-// controller's 5 s recheck).
+// While they are not, it looks again every replicaSoon, then replicaRetry
+// (Wait would wait the controller's 5 s recheck).
 func replicated(ctx context.Context, c client.Client, ws *v1.PlatformWorkspace, rep *unstructured.Unstructured,
 	replicas *Replicas, quota *unstructured.Unstructured) (Result, *unstructured.Unstructured) {
 	const t = v1.ConditionPolicyReady
 	if replicas == nil {
 		return ok(t), quota
 	}
-	missing, err := replicas.Missing(ctx, c, ws, rep)
+	missing, again, err := replicas.Missing(ctx, c, ws, rep)
 	if err != nil {
 		return failure(t, err), quota
 	}
 	if missing != "" {
 		r := waiting(t, "waiting for Capsule to copy the Namespace defaults into "+missing)
-		r.Wait, r.After = false, replicaSoon
+		r.Wait, r.After = false, again
 		return r, quota
 	}
 	return ok(t), quota

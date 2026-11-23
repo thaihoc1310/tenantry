@@ -19,7 +19,13 @@ import (
 // replicaSoon is how often a Workspace waiting for Capsule to copy its
 // LimitRange and NetworkPolicies into a new Namespace looks again: the copies
 // came 0 to 11 s after the Namespace on the lab (docs/report/namespace-latency.md).
-const replicaSoon = 2 * time.Second
+// Past replicaSoonFor of waiting, Capsule is not keeping up or not copying
+// at all, and the Workspace looks again every replicaRetry instead.
+const (
+	replicaSoon    = 2 * time.Second
+	replicaSoonFor = time.Minute
+	replicaRetry   = 30 * time.Second
+)
 
 // Replicas checks that Capsule has copied every object of a Workspace's
 // GlobalTenantResource into each of its Namespaces. The replication's Ready
@@ -38,7 +44,8 @@ type Replicas struct {
 	Reader client.Reader
 
 	mu       sync.Mutex
-	complete map[string]bool // namespace UID | object list → all present
+	complete map[string]bool      // namespace UID | object list → all present
+	waiting  map[string]time.Time // Workspace → since when copies are missing
 }
 
 // replicaItem is one object the replication copies into every Namespace.
@@ -66,8 +73,38 @@ func items(rep *unstructured.Unstructured) []replicaItem {
 }
 
 // Missing names the copies not yet in the Workspace's live Namespaces, as
-// "<namespace>: <Kind>/<name>, …"; empty when every Namespace has them all.
-func (r *Replicas) Missing(ctx context.Context, c client.Client, ws *v1.PlatformWorkspace, rep *unstructured.Unstructured) (string, error) {
+// "<namespace>: <Kind>/<name>, …", and when to look again; empty when every
+// Namespace has them all. A Namespace being deleted is skipped: Capsule does
+// not copy into it.
+func (r *Replicas) Missing(ctx context.Context, c client.Client, ws *v1.PlatformWorkspace, rep *unstructured.Unstructured) (string, time.Duration, error) {
+	missing, err := r.missing(ctx, c, ws, rep)
+	if err != nil {
+		return "", 0, err
+	}
+	if missing == "" {
+		r.mu.Lock()
+		delete(r.waiting, ws.Name)
+		r.mu.Unlock()
+		return "", 0, nil
+	}
+	t := now()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.waiting == nil {
+		r.waiting = map[string]time.Time{}
+	}
+	since, seen := r.waiting[ws.Name]
+	if !seen {
+		since = t
+		r.waiting[ws.Name] = t
+	}
+	if t.Sub(since) < replicaSoonFor {
+		return missing, replicaSoon, nil
+	}
+	return missing, replicaRetry, nil
+}
+
+func (r *Replicas) missing(ctx context.Context, c client.Client, ws *v1.PlatformWorkspace, rep *unstructured.Unstructured) (string, error) {
 	want := items(rep)
 	if len(want) == 0 {
 		return "", nil
