@@ -276,7 +276,7 @@ describe('moving between steps', () => {
   })
 
   it('checks the Resources step before the namespace default gets in the way', async () => {
-    const validate = vi.fn(async (_b: Schemas['WorkspaceCreate']) => ok)
+    const validate = vi.fn<(b: Schemas['WorkspaceCreate']) => Promise<Schemas['WorkspaceValidation']>>(async () => ok)
     const { w } = wizard(validate)
     w.form.name = 'Third'
     w.form.namespaces = ['app']
