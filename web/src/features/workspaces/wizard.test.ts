@@ -29,7 +29,9 @@ const group = (id: string, name: string, syncStatus: Schemas['SyncStatus']): Sch
 const cap = (cpu: string, memory: string, pods: number) => ({ cpu, memory, pods })
 
 // A wizard filled as the seed's organization would be.
-function wizard(validate = vi.fn(async () => ok)) {
+function wizard(
+  validate: (b: Schemas['WorkspaceCreate']) => Promise<Schemas['WorkspaceValidation']> = vi.fn(async () => ok),
+) {
   const w = useWorkspaceWizard(() => 'acme', validate)
   fill(w.form, {
     clusters: [cluster('cluster-a', true, 'Ready')],
@@ -271,6 +273,54 @@ describe('moving between steps', () => {
     // Back is never checked; the step left with an error is marked.
     expect(await w.back()).toBe(true)
     expect(w.marked(2)).toBe(true)
+  })
+
+  it('checks the Resources step before the namespace default gets in the way', async () => {
+    const validate = vi.fn(async (_b: Schemas['WorkspaceCreate']) => ok)
+    const { w } = wizard(validate)
+    w.form.name = 'Third'
+    w.form.namespaces = ['app']
+    await nextTick()
+    await w.go(3) // leaving Resources, Namespaces not reached yet
+    const early = validate.mock.calls.at(-1)![0]
+    expect(early.resources.namespaceQuota).toBe(1)
+    expect(early.namespaces).toEqual([])
+    await w.go(5) // past Namespaces: the form as it stands
+    const late = validate.mock.calls.at(-1)![0]
+    expect(late.resources.namespaceQuota).toBe(3)
+    expect(late.namespaces).toEqual(['app'])
+    // Once Namespaces was visited, an earlier step is checked with its real values.
+    await w.back()
+    await w.back()
+    await w.go(3)
+    expect(validate.mock.calls.at(-1)![0].resources.namespaceQuota).toBe(3)
+  })
+
+  it('shows a node with no room on Resources, not at Review', async () => {
+    const validate = vi.fn(async (b: Schemas['WorkspaceCreate']): Promise<Schemas['WorkspaceValidation']> => {
+      // The server's order: the grant's namespaces first, then the node.
+      if (b.resources.namespaceQuota > 1)
+        throw new ApiError(409, 'CLUSTER_GRANT_QUOTA_EXCEEDED', 'x', '', '', {
+          resource: 'namespaces',
+          limit: 10,
+          allocated: 9,
+        })
+      throw new ApiError(409, 'DEDICATED_NODE_INSUFFICIENT_CAPACITY', 'x', '', '', {
+        resource: 'requestsCpu',
+        reservable: '2500m',
+        reserved: '2',
+        node: 'fdp-k8s-wk3',
+      })
+    })
+    const { w } = wizard(validate)
+    w.form.name = 'Third'
+    await nextTick()
+    await w.go(2)
+    expect(await w.next()).toBe(false)
+    expect(w.step.value).toBe(2)
+    expect(w.errors.value['resources.requestsCpu']).toBe(
+      'Only 0.5 cores left on node fdp-k8s-wk3. (DEDICATED_NODE_INSUFFICIENT_CAPACITY)',
+    )
   })
 
   it('lets the person move on past what no step fixes, but not create', async () => {

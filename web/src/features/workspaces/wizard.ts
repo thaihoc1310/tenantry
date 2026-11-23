@@ -291,11 +291,26 @@ export function useWorkspaceWizard(
   const marked = (i: number) => visited[i] && i !== step.value && hasError(i)
   const blocked = computed(() => !!general.value || steps.some((_, i) => i !== review && hasError(i)))
 
-  // check asks the server about the whole form; false when it refused.
-  async function check(): Promise<boolean> {
+  // The server answers with its first refusal only, and it checks the
+  // grant (namespaces included) before a dedicated node's room. Before the
+  // person has reached Namespaces, ask for the least there (a limit of one,
+  // none created), so a refusal about what they did fill in shows on its own
+  // step instead of waiting behind the namespace default.
+  const nsStep = steps.indexOf('Namespaces')
+  function bodyFor(upTo: number): Schemas['WorkspaceCreate'] {
+    const b = toCreate(form)
+    if (upTo <= nsStep && !visited[nsStep]) {
+      b.resources.namespaceQuota = 1
+      b.namespaces = []
+    }
+    return b
+  }
+
+  // check asks the server about the form as far as step upTo; false when it refused.
+  async function check(upTo: number = review): Promise<boolean> {
     checking.value = true
     try {
-      const r = await validate(toCreate(form))
+      const r = await validate(bodyFor(upTo))
       server.value = {}
       block.value = r.network
       return true
@@ -320,7 +335,7 @@ export function useWorkspaceWizard(
     }
     visited[step.value] = true
     if (hasError(step.value)) return false
-    await check()
+    await check(i)
     // Every step up to i must pass; a refusal about an earlier one stops
     // there, a later one does not.
     for (let s = step.value; s < i; s++) {
