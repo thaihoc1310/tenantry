@@ -1,5 +1,10 @@
-# Capsule Proxy: báo cáo bảo mật gửi riêng
+# Capsule Proxy: đọc Node bỏ qua proxySettings
 
-Ngày 2026-11-23 đã báo riêng cho maintainer qua GitHub private vulnerability reporting (GHSA-2v66-cjj2-h2v5, trạng thái triage). Lý do không mở issue công khai: `SECURITY.md` của projectcapsule yêu cầu báo riêng mọi lỗi bảo mật. Chi tiết kỹ thuật chỉ ghi vào tài liệu này sau khi maintainer công bố advisory.
+Đã báo upstream: **projectcapsule/capsule-proxy#1158** (issue công khai, 2026-11-23). Bản đầu gửi riêng qua private vulnerability reporting (GHSA-2v66-cjj2-h2v5), sau khi trao đổi với maintainer thì đăng công khai để ai cũng sửa được.
+
+Tóm tắt (capsule-proxy v0.15.3, gate `ProxyClusterScoped` tắt):
+- `internal/modules/node/list.go` và `get.go` lọc Node theo `Tenant.spec.nodeSelector` (`utils.GetNodeSelectors`) mà không gọi `ProxyTenant.RequestAllowed(req, NodesProxy)`. Module StorageClass thì có gọi.
+- Request đã lọc đi bằng ServiceAccount của Proxy, nên RBAC của người gọi không áp vào.
+- Owner của Tenant hay subject của ProxySetting đọc được toàn bộ object Node của pool: nhãn, IP nội bộ, `status.images` (gồm image của tenant khác).
 
 Ảnh hưởng tới Tenantry: không có. Lab chạy capsule-proxy với `--feature-gates=ProxyClusterScoped=true` (`architecture/05-network-and-scheduling.md` mục 8, `isolation-cluster.md` T13/T14, `known-limitations.md` mục 2).

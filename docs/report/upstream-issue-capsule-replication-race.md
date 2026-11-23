@@ -1,8 +1,9 @@
-> **Không gửi (2026-11-23).** Upstream đã sửa trong projectcapsule/capsule#2266 "fix: avoid creations conflicts for tenantresources", merge 2026-11-05, sau v0.15.2. Có hai thay đổi chính:
-> - hai controller replicate đọc object đích không qua cache (`replicationClient` có `reader`);
-> - `Processor.Apply` retry khi gặp Conflict.
+> **Đã báo upstream: projectcapsule/capsule#2318 (2026-11-23).**
+> - projectcapsule/capsule#2266 (merge 2026-11-05, chưa có bản phát hành sau v0.15.2) đã cho hai controller đọc object đích không qua cache và retry khi Conflict.
+> - Theo mã `main` (6f14b77, đọc chứ chưa chạy) còn lại một trường hợp: `createTarget` trả `already exists` khi hai bên cùng tạo, mà `retryableApplyConflict` chỉ bắt Conflict.
+> - Khi lên bản có sửa, đo lại race như `benchmark.md`, rồi bỏ khoảng 2 phút mà operator đang coi là Progressing.
 >
-> Tới 2026-11-23 chưa có bản phát hành nào sau v0.15.2. Khi lên bản có #2266, đo lại race như `benchmark.md`. Nếu hết `already exists` / `object has been modified` thì bỏ khoảng 2 phút operator đang coi là Progressing. Bản nháp giữ dưới đây làm ghi chép.
+> Bản nháp ban đầu giữ dưới đây.
 
 Title: GlobalTenantResource replication into a new Namespace fails with AlreadyExists when namespace-trigger and the GlobalTenantResource controller race
 
