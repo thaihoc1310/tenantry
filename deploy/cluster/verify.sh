@@ -267,6 +267,43 @@ tenant_roles() {
   kubectl -n cluster-verify delete rolebinding verify-developer verify-viewer >/dev/null || return 1
   return "${ok}"
 }
+# The provisioning worker is the central plane's only credential in the
+# cluster (ADR-0010): it writes the tenantry.io CRs the operator renders and
+# reads the inventory, nothing more. Asked with the groups a token of it
+# carries, so a grant to every ServiceAccount would show too.
+worker_rights() {
+  local as="--as=system:serviceaccount:tenantry-system:tenantry-worker-provisioning"
+  as+=" --as-group=system:serviceaccounts --as-group=system:serviceaccounts:tenantry-system --as-group=system:authenticated"
+  local want verb res sub got bad=""
+  # A subresource goes in --subresource: can-i reads "x/status" as an object named status.
+  while read -r want verb res sub; do
+    # shellcheck disable=SC2086 # $as holds several flags
+    got="$(kubectl auth can-i ${as} "${verb}" "${res}" ${sub:+--subresource="${sub}"} --all-namespaces 2>/dev/null)"
+    [[ "${got}" == "${want}" ]] || bad+=" ${verb} ${res}${sub:+/${sub}}=${got:-error}"
+  done <<'EOF'
+yes create platformworkspaces.tenantry.io
+yes patch platformworkspaces.tenantry.io
+yes delete platformworkspaces.tenantry.io
+yes create platformnodegrants.tenantry.io
+yes create platformsharedpools.tenantry.io
+yes get platformnodeinventories.tenantry.io
+no patch platformworkspaces.tenantry.io status
+no patch platformnodeinventories.tenantry.io
+no get secrets
+no list nodes
+no patch nodes
+no create namespaces
+no create pods
+no create tenants.capsule.clastix.io
+no create ippools.crd.projectcalico.org
+no create rolebindings.rbac.authorization.k8s.io
+no create clusterrolebindings.rbac.authorization.k8s.io
+no impersonate users
+no impersonate groups
+no impersonate serviceaccounts
+EOF
+  [[ -z "${bad}" ]] || { echo "unexpected:${bad}"; return 1; }
+}
 no_operator_rights() { # subject
   if kubectl auth can-i create certificates.cert-manager.io --all-namespaces --as="$1" >/dev/null 2>&1 ||
     kubectl auth can-i get secrets --all-namespaces --as="$1" >/dev/null 2>&1; then
@@ -347,6 +384,7 @@ check "PlatformNodeInventory reports every node" inventory_complete
 check "Developer and Viewer have the rights of architecture/06 §8, no more" tenant_roles
 check "the operator may not touch certificates or Secrets" \
   no_operator_rights system:serviceaccount:tenantry-operator:tenantry-operator
+check "the provisioning worker may write tenantry.io CRs and nothing else" worker_rights
 check "kube-proxy detects local Pods by interface, not by clusterCIDR" kube_proxy_by_interface
 check "a Pod outside clusterCIDR calls a Service on another node without SNAT" service_path
 check "every APIService is Available" apiservices_available
