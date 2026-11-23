@@ -1514,6 +1514,7 @@ GET    /api/v1/admin/health                        # M6, từ DB: backlog outbox
 GET    /api/v1/admin/clusters
 POST   /api/v1/admin/clusters
 PATCH  /api/v1/admin/clusters/{clusterId}          # gồm trạng thái, kể cả Registered → Ready (đặt tay trong MVP)
+DELETE /api/v1/admin/clusters/{clusterId}          # xóa cluster đăng ký nhầm: chỉ khi còn Registered và không gì tham chiếu (grant, pool, node, node grant, policy, Workspace, outbox); 409 kèm status hoặc số tham chiếu; xóa lại trả 204 (audit cluster.delete)
 GET    /api/v1/admin/onboarding-policy             # M5
 PUT    /api/v1/admin/onboarding-policy
 GET    /api/v1/admin/cluster-grants                # M5, mọi grant của mọi Organization
