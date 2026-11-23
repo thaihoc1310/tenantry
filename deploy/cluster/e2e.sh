@@ -21,7 +21,8 @@ port=18025
   done
 ) &
 forward=$!
-trap 'pkill -P "${forward}" 2>/dev/null; kill "${forward}" 2>/dev/null' EXIT
+# Under set -e a failing pkill (the forward between two tries) would turn a passing run into exit 1.
+trap 'pkill -P "${forward}" 2>/dev/null || true; kill "${forward}" 2>/dev/null || true' EXIT
 for _ in $(seq 30); do curl -fsS "http://127.0.0.1:${port}/readyz" >/dev/null 2>&1 && break; sleep 0.5; done
 
 cd "${CLUSTER_DIR}/../../web"
