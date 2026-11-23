@@ -1,4 +1,5 @@
-"""python3 -m unittest deploy/demo/test_lab.py: the retry of lab.retried."""
+"""python3 -m unittest deploy/demo/test_lab.py: the retry of lab.retried and
+what clean-e2e.py counts as a test organization."""
 import os
 import sys
 import unittest
@@ -6,6 +7,11 @@ import urllib.error
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lab  # noqa: E402
+import importlib.util  # noqa: E402
+
+_spec = importlib.util.spec_from_file_location("clean_e2e", os.path.join(os.path.dirname(os.path.abspath(__file__)), "clean-e2e.py"))
+clean_e2e = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(clean_e2e)
 
 
 class Retried(unittest.TestCase):
@@ -37,6 +43,18 @@ class Retried(unittest.TestCase):
         r, n, _ = self.run_with([e, (200, {})])
         self.assertIs(r, e)
         self.assertEqual(n, 1)
+
+
+class TestOrganizations(unittest.TestCase):
+    def test_only_e2e_and_optest(self):
+        self.assertTrue(clean_e2e.is_test("e2eacmes1kaaj"))
+        self.assertTrue(clean_e2e.is_test("optestwk1", "optest-1@tenantry.site"))
+        for slug in ("acme", "solar", "e2", "xe2e", "", None):
+            self.assertFalse(clean_e2e.is_test(slug), slug)
+
+    def test_pending_needs_a_test_owner(self):
+        self.assertFalse(clean_e2e.is_test("e2ereject1", "alice@tenantry.site"))
+        self.assertTrue(clean_e2e.is_test("e2ereject1", "e2emwrswx2j16y@tenantry.site"))
 
 
 if __name__ == "__main__":

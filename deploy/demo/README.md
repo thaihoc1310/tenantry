@@ -42,6 +42,17 @@ Every step is safe to run again, so a reset that stops half-way is finished
 by running it again. `python3 -m unittest deploy/demo/test_lab.py` checks
 the retry.
 
+## `make demo-clean-e2e CONFIRM=e2e`
+
+Takes end-to-end leftovers out of the Platform Admin's pages, through the
+API as the Platform Admin: pending requests of e2e*/optest* accounts are
+rejected, and Active organizations whose slug starts with e2e or optest lose
+their cluster grants (left alone while one holds a dedicated node), so they
+leave Grants and the organization choice of "Give a node". The organizations
+stay Active: only their owner can delete one, and e2e passwords are kept
+nowhere. Nothing else is touched, acme included. Without `CONFIRM=e2e` it
+prints the plan.
+
 ## Passwords
 
 Both live in the Secret `keycloak-realm` of the namespace `keycloak`:
