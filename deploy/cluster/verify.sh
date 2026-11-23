@@ -9,10 +9,30 @@ pass() { echo "PASS  $1"; }
 fail() { echo "FAIL  $1${2:+: $2}"; failed=1; }
 
 # check NAME COMMAND...: PASS when COMMAND succeeds, FAIL with its output otherwise.
+# check keeps a command's stdout and stderr; notes for the terminal go to fd 3.
+exec 3>&1
 check() {
   local name="$1" out
   shift
   if out="$("$@" 2>&1)"; then pass "${name}"; else fail "${name}" "${out}"; fi
+}
+
+# kdelete ARGS...: kubectl delete ARGS, tried again up to 3 times when the
+# connection to the API server drops before the answer ("unexpected EOF",
+# "connection reset by peer"). From the laptop, over its VPN, such a delete
+# sometimes never reaches the API server (it finishes in under a second there;
+# docs/report/eof-path.md). A retry adds --ignore-not-found, in case the
+# first one did get through. Any other error, a refusal included, is not
+# retried and fails at once.
+kdelete() {
+  local out cut retry extra=()
+  for retry in 0 1 2 3; do
+    if out="$(kubectl delete "$@" "${extra[@]}" 2>&1)"; then return 0; fi
+    cut="$(grep -oiE 'unexpected EOF|connection reset by peer|http2: client connection lost' <<<"${out}" | head -1)"
+    [[ -n "${cut}" && "${retry}" -lt 3 ]] || { echo "${out}" >&2; return 1; }
+    echo "      (kubectl delete $* cut off: ${cut}; retry $((retry + 1)) of 3)" >&3
+    extra=(--ignore-not-found)
+  done
 }
 
 field_is() { # resource (kind/name), jsonpath, expected value[, namespace]
@@ -47,12 +67,12 @@ check "standard is the default StorageClass" \
 # that can fail ends with `|| return 1`.
 probe() {
   local manifest="${CLUSTER_DIR}/manifests/$1" ns="$2" pod="$3" out phase
-  kubectl delete -f "${manifest}" --ignore-not-found --wait >/dev/null || return 1
+  kdelete -f "${manifest}" --ignore-not-found --wait >/dev/null || return 1
   kubectl apply -f "${manifest}" >/dev/null || return 1
   kubectl -n "${ns}" wait "pod/${pod}" --for=jsonpath='{.status.phase}'=Succeeded --timeout=2m >/dev/null
   phase="$(kubectl -n "${ns}" get pod "${pod}" -o jsonpath='{.status.phase}' 2>&1)"
   out="$(kubectl -n "${ns}" logs "${pod}" 2>&1)"
-  kubectl delete -f "${manifest}" --wait >/dev/null || return 1
+  kdelete -f "${manifest}" --wait >/dev/null || return 1
   [[ "${phase}" == Succeeded && "${out}" == ok ]] || { echo "Pod ${phase}: ${out}"; return 1; }
 }
 check "a PVC on standard binds and a non-root Pod writes to it" \
@@ -329,7 +349,7 @@ service_path() {
   manifest="$(mktemp)" || return 1
   sed -e "s/__SERVER_NODE__/${server}/" -e "s/__CLIENT_NODE__/${client}/" \
     "${CLUSTER_DIR}/manifests/verify-service-path.yaml" >"${manifest}"
-  kubectl delete namespace "${ns}" --ignore-not-found --wait >/dev/null &&
+  kdelete namespace "${ns}" --ignore-not-found --wait >/dev/null &&
     kubectl apply -f "${manifest}" >/dev/null || ok=1
   if [[ "${ok}" == 0 ]]; then
     kubectl -n "${ns}" wait pod/client --for=jsonpath='{.status.phase}'=Succeeded --timeout=3m >/dev/null
@@ -337,8 +357,8 @@ service_path() {
     out="$(kubectl -n "${ns}" logs client 2>&1)"
     [[ "${phase}" == Succeeded && "${out}" == ok ]] || { echo "Pod ${phase}: ${out}"; ok=1; }
   fi
-  kubectl delete namespace "${ns}" --ignore-not-found --wait >/dev/null || ok=1
-  kubectl delete ippools.projectcalico.org "${ns}" --ignore-not-found >/dev/null || ok=1
+  kdelete namespace "${ns}" --ignore-not-found --wait >/dev/null || ok=1
+  kdelete ippools.projectcalico.org "${ns}" --ignore-not-found >/dev/null || ok=1
   rm -f "${manifest}"
   return "${ok}"
 }
@@ -376,7 +396,7 @@ proxy_view() {
       [[ "${out}" == 403 ]] || { echo "${path} through the proxy: ${out}, want 403"; ok=1; }
     done
   fi
-  kubectl delete -f "${CLUSTER_DIR}/manifests/verify-proxy.yaml" --wait --timeout=2m >/dev/null || ok=1
+  kdelete -f "${CLUSTER_DIR}/manifests/verify-proxy.yaml" --wait --timeout=2m >/dev/null || ok=1
   return "${ok}"
 }
 check "the Workspace Operator is ready" field_is deployment/tenantry-operator '{.status.availableReplicas}' 1 tenantry-operator
