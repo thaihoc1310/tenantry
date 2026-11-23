@@ -29,7 +29,8 @@ Tóm tắt (cập nhật 2026-11-23 tối): 14 Đạt, 1 Đạt một phần (m�
 - NFR "Namespace create p95 dưới 15 giây" (ADR-0019), đo trên lab ([namespace-latency](namespace-latency.md)):
   - Bản đầu (operator a8928a8): phía người dùng p95 72,6 s, vì probe Capsule Proxy chờ 30 s mỗi lần Proxy chưa thấy Namespace mới.
   - Bản sửa (e35daa1, đã deploy, revision 14): p95 13,8 s, đạt nhưng sát ngưỡng (max 16,4 s, n = 20).
-  - Thời gian tạo Workspace sau sửa: ba cái khoảng 5 s, một cái 65 s chưa rõ nguyên nhân.
+  - Thời gian tạo Workspace sau sửa: ba cái khoảng 5 s, một cái 65 s (sau này xác định: GlobalTenantResource giữ Ready=False sau race tới lần resync 60 s).
+  - Bản cuối (operator rev 16, d96f980 và 3f15433): Operation chỉ xong khi mọi Namespace đã có bản sao LimitRange và NetworkPolicy, và không còn chờ 60 s khi status chỉ chậm vì race. Lần đo thứ năm: phía cụm p95 11 s, phía người dùng p95 15,2 s (vẫn vượt 15 s một chút), tạo Workspace 3,1–4,7 s.
 
 - Đăng ký Cluster từ portal trên lab (DoD mục 1): `web/e2e/admin-cluster.spec.ts` PASS (8,5 s) trong lần chạy trọn bộ ngày 2026-11-23, [e2e-portal](e2e-portal.md).
 - Phiên portal sống quá access token trên lab (ADR-0022): `web/e2e/onboarding.spec.ts` "the session outlives the access token" PASS với `E2E_SLOW=1` (5,4 phút), cùng nguồn.
