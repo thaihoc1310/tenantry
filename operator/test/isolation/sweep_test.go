@@ -5,8 +5,8 @@ package isolation
 import (
 	"net/http"
 	"strings"
-	"time"
 	"testing"
+	"time"
 )
 
 // TestSweepOptestAccounts disables every Active optest-* account a run that
