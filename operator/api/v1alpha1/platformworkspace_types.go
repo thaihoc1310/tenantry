@@ -56,12 +56,17 @@ const (
 // PlatformWorkspaceSpec is the desired state the central plane writes
 // (PRODUCT-PLAN §14.2). Namespace names: spec.namespaces holds suffixes,
 // every other field holds full names (<metadata.name>-<suffix>).
+// The three ids never change: a Workspace stays in its Organization and its
+// Cluster (ADR-0008); the API and the database hold this too.
 type PlatformWorkspaceSpec struct {
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="organizationId is immutable"
 	OrganizationID string `json:"organizationId"`
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="workspaceId is immutable"
 	WorkspaceID string `json:"workspaceId"`
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="clusterId is immutable"
 	ClusterID string `json:"clusterId"`
 	// +optional
 	DisplayName string `json:"displayName,omitempty"`

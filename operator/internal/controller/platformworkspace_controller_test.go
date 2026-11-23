@@ -475,3 +475,32 @@ func TestPhase(t *testing.T) {
 		}
 	}
 }
+
+// The API server refuses to move a Workspace to another Organization or
+// Cluster, or to give it another id; every other field may change.
+func TestWorkspaceIdsImmutable(t *testing.T) {
+	needEnv(t)
+	ctx := context.Background()
+	if err := testClient.Create(ctx, newWorkspace("acme-fixed")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(ctx, newWorkspace("acme-fixed")) })
+
+	for field, change := range map[string]func(*v1.PlatformWorkspaceSpec){
+		"organizationId": func(s *v1.PlatformWorkspaceSpec) { s.OrganizationID = "org-other" },
+		"workspaceId":    func(s *v1.PlatformWorkspaceSpec) { s.WorkspaceID = "ws-other" },
+		"clusterId":      func(s *v1.PlatformWorkspaceSpec) { s.ClusterID = "cluster-b" },
+	} {
+		ws := getWorkspace(t, "acme-fixed")
+		change(&ws.Spec)
+		err := testClient.Update(ctx, ws)
+		if !apierrors.IsInvalid(err) || !strings.Contains(err.Error(), field+" is immutable") {
+			t.Errorf("changing %s: %v, want it refused as immutable", field, err)
+		}
+	}
+	ws := getWorkspace(t, "acme-fixed")
+	ws.Spec.DisplayName = "Fixed"
+	if err := testClient.Update(ctx, ws); err != nil {
+		t.Fatalf("changing displayName: %v", err)
+	}
+}
