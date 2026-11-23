@@ -42,7 +42,7 @@ Tóm tắt: 13 Đạt, 2 Đạt một phần (mục 1 và 15), 0 Chưa.
 | Audit log của kube-apiserver cho request qua Capsule Proxy | ADR-0013 | Audit tắt trên lab: Pod `kube-apiserver-fdp-k8s-cp1` không có `--audit-policy-file`, `--audit-log-path` (đọc ngày 2026-11-23). Bật audit là sửa manifest static Pod trên control-plane node, cần ssh và sudo. Log của Capsule Proxy cũng không giúp được: Proxy chạy `--zap-log-level=2`, còn dòng "impersonating for the current request" chỉ ghi ở mức 4. Cơ chế hiện chỉ rút từ mã nguồn và ClusterRole của Proxy |
 | `TestLiveKeycloakNarrowed` trên lab với FGAP bật | ADR-0015 | Chưa có kết quả ghi lại (cluster-verify nhánh FGAP thì đã qua) |
 | Test `PATCH` có `clusterId` ở API | ADR-0008 | Schema chặn; CRD đã chặn bằng CEL (`TestWorkspaceIdsImmutable`) |
-| NFR Namespace create p95 dưới 15 giây | ADR-0019 | Chưa có số đo riêng |
+| NFR Namespace create p95 dưới 15 giây, phía người dùng | ADR-0019 | Đã đo ([namespace-latency](namespace-latency.md)): phía cụm p95 2 s, nhưng phía người dùng p95 72,6 s, do probe Capsule Proxy thử lại sau 30 s. Đã sửa (e35daa1) nhưng chưa deploy và chưa đo lại |
 | Thông lượng outbox dưới tải; DB pool dưới tải | ADR-0021 | Benchmark tạo CR trực tiếp, bỏ qua API |
 | PostgreSQL restart, backup, HA | ADR-0021 | Chưa kiểm |
 | Custom domain cho Route | ADR-0020 | Chưa làm |
