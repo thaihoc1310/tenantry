@@ -23,3 +23,4 @@ What it fits:
 - It runs as non-root with no capability, which also satisfies the `restricted` Pod Security level.
 - Images come from docker.io, which is on the registry allow-list.
 - Change `storage.className` if the Workspace allows another StorageClass, and `message` for the page's title.
+- `service.name` names the Service (the release name when empty), e.g. `helm upgrade web deploy/demo-app -n <ns> --reuse-values --set service.name=web11`; the Route must then name that Service.

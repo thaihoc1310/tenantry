@@ -70,7 +70,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Release.Name }}
+  name: {{ .Values.service.name | default .Release.Name }}
   labels:
     {{- include "demo-app.labels" . | nindent 4 }}
 spec:

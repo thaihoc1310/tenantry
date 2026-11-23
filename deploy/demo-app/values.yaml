@@ -21,4 +21,5 @@ resources:
 
 # The Route on the portal points at this Service and port.
 service:
+  name: ""   # empty: the release name
   port: 80
