@@ -53,8 +53,8 @@ The cluster is not the cause:
 | Condition | Network | When | DELETE from the laptop |
 |---|---|---|---|
 | 1 | home network + WireGuard `wg0` through the main VPS | last night and the morning of 2026-11-23 | about 10 s, EOF past about 10.25 s |
-| 2 | company network + `wg0` still up | about 13:15 to 13:34 | 0.3 to 0.7 s, no EOF (kubectl, and curl over HTTP/1.1 and HTTP/2, with and without a body, bodies up to 64 KiB) |
-| 3 | company network, direct over Wi-Fi (`wg0` removed) | from about 13:35 | 0.16 to 0.62 s, no EOF |
+| 2 | company network + `wg0` still up | about 13:15 to 13:33 | 0.3 to 1.2 s, no EOF (kubectl, a 20-round sampler, and curl over HTTP/1.1 and HTTP/2, with and without a body, bodies up to 64 KiB) |
+| 3 | company network, direct over Wi-Fi (`wg0` removed) | from about 13:33 | 0.16 to 0.62 s, no EOF |
 
 Likely cause, not proven: the home network's path into the tunnel (home ISP or Wi-Fi to the VPS). The tunnel and
 the VPS behaved from the company network. TLS hides the HTTP method from the path, so "only DELETEs" more likely

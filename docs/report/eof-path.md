@@ -29,8 +29,8 @@ Lỗi chỉ xảy ra ở điều kiện 1. Phép đo dưới đây chạy ở đ
 | PATCH body 1, 4, 16, 64 KiB (HTTP/2 và HTTP/1.1) | 0,5–1,0 s; 1,0–1,8 s; 2,6–2,8 s ở 64 KiB. Tăng đều theo kích thước (uplink chậm), không có bước nhảy hay chỗ đứng 10 s |
 | DELETE có body độn 1, 4, 16 KiB | 0,68–0,81 s |
 | Từ trong cụm: Pod với ServiceAccount chỉ có quyền trên `optest-eof`, 10 vòng POST, GET, PATCH, DELETE | DELETE trung bình 16 ms, tối đa 64 ms; các method khác tối đa 0,26 s |
-| Lấy mẫu nền, điều kiện 2 (13:26–13:34, 22 vòng mỗi 20 s: create, GET, DELETE) | DELETE 0,29–1,16 s, POST tới 1,66 s, GET tới 1,49 s, không có EOF |
-| Lấy mẫu nền, điều kiện 3 (13:36–13:40, 10 vòng) và lặp lại các dạng DELETE ở trên | DELETE 0,19–0,62 s, curl 0,33–0,44 s, không có EOF |
+| Lấy mẫu nền, điều kiện 2 (13:26–13:33, 20 vòng mỗi 20 s: create, GET, DELETE) | DELETE 0,38–1,16 s, POST tới 1,66 s, GET tới 1,49 s, không có EOF |
+| Lấy mẫu nền, điều kiện 3 (13:33–13:35 và 13:36–13:40, 14 vòng) và lặp lại các dạng DELETE ở trên | DELETE 0,16–0,62 s, curl 0,33–0,44 s, không có EOF |
 
 Phía kube-apiserver, từ Prometheus (`apiserver_request_duration_seconds`, chart prometheus chạy từ 07:00):
 
