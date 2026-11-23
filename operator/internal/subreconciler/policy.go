@@ -35,7 +35,13 @@ func Policy(ctx context.Context, c client.Client, scheme *runtime.Scheme, ws *v1
 		return failure(t, err), nil
 	}
 	if res, done := capsuleReady(t, rep, "LimitRange replication "+rep.GetName()); !done {
-		return res, nil
+		// Capsule's condition may be behind its copies: Ready=False from
+		// its own race keeps until its next resync, 60 s later (a Workspace
+		// took 65 s to create on the lab; docs/report/namespace-latency.md).
+		// Then the copies actually present decide, checked last below.
+		if replicas == nil || !raceOnly(rep) {
+			return res, nil
+		}
 	}
 
 	if len(ws.Spec.Resources) == 0 {
@@ -139,6 +145,33 @@ func replicationRace(obj *unstructured.Unstructured, cond map[string]any) (retry
 		return false, detail
 	}
 	return raced, detail
+}
+
+// raceOnly says a replication is Ready=False only because of Capsule's own
+// race (replicationRace: every failed item carries a race message, within
+// replicationRaceGrace), in a status about the current spec: status and
+// condition both observed the object's generation. A report on an older
+// spec says nothing of the copies the current one needs.
+func raceOnly(obj *unstructured.Unstructured) bool {
+	if seen, found, _ := unstructured.NestedInt64(obj.Object, "status", "observedGeneration"); !found || seen != obj.GetGeneration() {
+		return false
+	}
+	conds, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	for _, raw := range conds {
+		cond, _ := raw.(map[string]any)
+		if cond["type"] != "Ready" {
+			continue
+		}
+		if g, ok := cond["observedGeneration"].(int64); ok && g != obj.GetGeneration() {
+			return false
+		}
+		if cond["status"] == "True" || cond["reason"] == capsuleReconciling {
+			return false
+		}
+		retrying, _ := replicationRace(obj, cond)
+		return retrying
+	}
+	return false
 }
 
 // capsuleReady reads the Ready condition Capsule keeps on its objects, for
