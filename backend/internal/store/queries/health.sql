@@ -20,5 +20,5 @@ SELECT
     UNION ALL SELECT last_error, updated_at FROM users WHERE sync_status = 'Error') e
     ORDER BY updated_at DESC LIMIT 1), '')::text AS last_sync_error,
   (SELECT count(*) FROM operations WHERE state IN ('Pending', 'Running'))::int AS operations_running,
-  (SELECT count(*) FROM operations WHERE state IN ('Failed', 'Blocked'))::int AS operations_attention,
+  (SELECT count(*) FROM operations_attention)::int AS operations_attention,
   (SELECT count(*) FROM organizations WHERE status = 'Pending')::int AS requests_waiting;

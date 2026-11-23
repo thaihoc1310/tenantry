@@ -203,14 +203,15 @@ type Page struct {
 
 // AdminList returns the operations of every organization and of clusters,
 // newest first; state "" means any (PRODUCT-PLAN §16.5, Platform Admin).
-func (s *Service) AdminList(ctx context.Context, state, cursor string, pageSize int) (Page, error) {
+// attention keeps those a Platform Admin must look at (operations_attention).
+func (s *Service) AdminList(ctx context.Context, state string, attention bool, cursor string, pageSize int) (Page, error) {
 	if pageSize == 0 {
 		pageSize = 50
 	}
 	if pageSize < 1 || pageSize > 200 {
 		return Page{}, apperr.Invalid("limit", "must be between 1 and 200")
 	}
-	arg := store.ListOperationsForAdminParams{PageSize: int32(pageSize + 1)}
+	arg := store.ListOperationsForAdminParams{PageSize: int32(pageSize + 1), Attention: attention}
 	if state != "" {
 		arg.State = &state
 	}

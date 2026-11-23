@@ -2228,6 +2228,14 @@ paths:
         - name: state
           in: query
           schema: { type: string, enum: [Pending, Running, Succeeded, Failed, Blocked] }
+        - name: attention
+          in: query
+          description: |
+            Only what needs a Platform Admin: Failed or Blocked, and still the
+            last word on its target. A later operation on the same target, a
+            Workspace deleted, a node grant revoked or an organization deleted
+            supersedes it. The Health page counts the same.
+          schema: { type: boolean, default: false }
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 200, default: 50 }

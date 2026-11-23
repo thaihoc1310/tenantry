@@ -5768,6 +5768,13 @@ export interface operations {
         parameters: {
             query?: {
                 state?: "Pending" | "Running" | "Succeeded" | "Failed" | "Blocked";
+                /**
+                 * @description Only what needs a Platform Admin: Failed or Blocked, and still the
+                 *     last word on its target. A later operation on the same target, a
+                 *     Workspace deleted, a node grant revoked or an organization deleted
+                 *     supersedes it. The Health page counts the same.
+                 */
+                attention?: boolean;
                 limit?: number;
                 /** @description Opaque; pass `nextCursor` from the previous page. */
                 cursor?: string;

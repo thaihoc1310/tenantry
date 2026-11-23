@@ -319,16 +319,20 @@ export type OperationState = NonNullable<
   NonNullable<NonNullable<paths['/admin/operations']['get']['parameters']['query']>['state']>
 >
 
-export function useAdminOperations(state: MaybeRefOrGetter<OperationState | ''>) {
+// useAdminOperations lists operations newest first: of one state, or with
+// 'attention' those a Platform Admin must look at (Failed or Blocked, and not
+// superseded by a later operation or a deleted target).
+export function useAdminOperations(state: MaybeRefOrGetter<OperationState | 'attention' | ''>) {
   const q = useInfiniteQuery({
     queryKey: computed(() => ['admin', 'operations', toValue(state)]),
     initialPageParam: '',
-    queryFn: ({ pageParam }) =>
-      unwrap(
-        api.GET('/admin/operations', {
-          params: { query: { state: toValue(state) || undefined, limit: 50, cursor: pageParam || undefined } },
-        }),
-      ),
+    queryFn: ({ pageParam }) => {
+      const s = toValue(state)
+      const query = s === 'attention' ? { attention: true } : { state: s || undefined }
+      return unwrap(
+        api.GET('/admin/operations', { params: { query: { ...query, limit: 50, cursor: pageParam || undefined } } }),
+      )
+    },
     getNextPageParam: (last) => last.nextCursor,
     refetchInterval: 10_000,
   })

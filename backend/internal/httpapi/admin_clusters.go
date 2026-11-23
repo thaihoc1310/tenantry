@@ -206,7 +206,8 @@ func (s server) ListAdminOperations(ctx context.Context, req oapi.ListAdminOpera
 	if req.Params.Limit != nil {
 		limit = *req.Params.Limit
 	}
-	p, err := s.ops.AdminList(ctx, state, cursor, limit)
+	attention := req.Params.Attention != nil && *req.Params.Attention
+	p, err := s.ops.AdminList(ctx, state, attention, cursor, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -237,20 +237,28 @@ func (q *Queries) ListClusters(ctx context.Context) ([]Cluster, error) {
 const listOperationsForAdmin = `-- name: ListOperationsForAdmin :many
 SELECT id, org_id, resource_type, resource_id, type, state, progress, error_code, error_message, correlation_id, created_by, created_at, updated_at, finished_at, message FROM operations
 WHERE ($1::text IS NULL OR state = $1)
-  AND ($2::text IS NULL OR id < $2)
+  AND (NOT $2::bool OR id IN (SELECT a.id FROM operations_attention a))
+  AND ($3::text IS NULL OR id < $3)
 ORDER BY id DESC
-LIMIT $3
+LIMIT $4
 `
 
 type ListOperationsForAdminParams struct {
-	State    *string
-	Cursor   *string
-	PageSize int32
+	State     *string
+	Attention bool
+	Cursor    *string
+	PageSize  int32
 }
 
-// Operations of every organization and of clusters, newest first.
+// Operations of every organization and of clusters, newest first;
+// attention keeps those that need a Platform Admin (operations_attention).
 func (q *Queries) ListOperationsForAdmin(ctx context.Context, arg ListOperationsForAdminParams) ([]Operation, error) {
-	rows, err := q.db.Query(ctx, listOperationsForAdmin, arg.State, arg.Cursor, arg.PageSize)
+	rows, err := q.db.Query(ctx, listOperationsForAdmin,
+		arg.State,
+		arg.Attention,
+		arg.Cursor,
+		arg.PageSize,
+	)
 	if err != nil {
 		return nil, err
 	}

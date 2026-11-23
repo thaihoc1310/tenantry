@@ -261,6 +261,48 @@ func TestAdminOperations(t *testing.T) {
 	if rest := list("?limit=2&cursor=" + *first.NextCursor); len(rest.Items) != 1 || rest.Items[0].Id != "op-1" || rest.NextCursor != nil {
 		t.Fatalf("page 2 %+v", rest)
 	}
+
+	// Needs attention: a Failed or Blocked operation still the last word on
+	// its target. op-2 is; op-4 was retried (op-5); op-6's Workspace is
+	// Deleted; op-7 is Blocked.
+	var grant string
+	if err := db.QueryRow(context.Background(), `SELECT id FROM organization_cluster_grants WHERE org_id = $1 LIMIT 1`, orgID).Scan(&grant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(context.Background(), `
+		INSERT INTO workspaces (id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state,
+			requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes,
+			namespace_quota, compute_mode, shared_pool_id)
+		SELECT 'ws-6', $1, cluster_id, id, 'gone', 'x-gone', 'Gone', 'Deleted', 0, 0, 0, 0, 0, 0, 1, 'Shared', 'shared-general'
+		FROM organization_cluster_grants WHERE id = $2`, orgID, grant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(context.Background(), `
+		INSERT INTO operations (id, org_id, resource_type, resource_id, type, correlation_id, state) VALUES
+		('op-4', $1, 'Workspace', 'ws-4', 'workspace.update', 'r4', 'Failed'),
+		('op-5', $1, 'Workspace', 'ws-4', 'workspace.update', 'r5', 'Succeeded'),
+		('op-6', $1, 'Workspace', 'ws-6', 'workspace.delete', 'r6', 'Failed'),
+		('op-7', $1, 'Workspace', 'ws-7', 'workspace.delete', 'r7', 'Blocked')`, orgID); err != nil {
+		t.Fatal(err)
+	}
+	ids := func(l oapi.OperationList) []string {
+		out := []string{}
+		for _, op := range l.Items {
+			out = append(out, op.Id)
+		}
+		return out
+	}
+	if got := ids(list("?attention=true")); strings.Join(got, ",") != "op-7,op-2" {
+		t.Fatalf("needs attention: %v", got)
+	}
+	if got := ids(list("?state=Failed")); strings.Join(got, ",") != "op-6,op-4,op-2" {
+		t.Fatalf("all Failed, superseded included: %v", got)
+	}
+	var health oapi.PlatformHealth
+	if rec := asAdmin(h, admin, http.MethodGet, "/api/v1/admin/health", "", ""); rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &health) != nil ||
+		health.Work.OperationsNeedingAttention != 2 {
+		t.Fatalf("health counts the same: %d %s", rec.Code, rec.Body)
+	}
 }
 
 // The health page warns about a cluster never checked and a stale backlog,

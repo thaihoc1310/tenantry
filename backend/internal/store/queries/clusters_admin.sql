@@ -82,9 +82,11 @@ ORDER BY g.id
 LIMIT @page_size;
 
 -- name: ListOperationsForAdmin :many
--- Operations of every organization and of clusters, newest first.
+-- Operations of every organization and of clusters, newest first;
+-- attention keeps those that need a Platform Admin (operations_attention).
 SELECT * FROM operations
 WHERE (sqlc.narg(state)::text IS NULL OR state = sqlc.narg(state))
+  AND (NOT @attention::bool OR id IN (SELECT a.id FROM operations_attention a))
   AND (sqlc.narg(cursor)::text IS NULL OR id < sqlc.narg(cursor))
 ORDER BY id DESC
 LIMIT @page_size;

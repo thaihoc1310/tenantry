@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // Every change the platform is applying to a cluster (docs/design/mockups:
-// AdminOperations). Failed and blocked ones need a decision; forcing a stuck
-// deletion comes with Workspace deletion (M7).
+// AdminOperations). Failed and blocked ones need a decision, until a later
+// operation on the same target or the target's deletion supersedes them;
+// forcing a stuck deletion comes with Workspace deletion (M7).
 import { ElMessage } from 'element-plus'
 import { computed, ref } from 'vue'
 import AppShell from '@/app/AppShell.vue'
@@ -13,17 +14,14 @@ import StatusTag from '@/components/StatusTag.vue'
 import TPanel from '@/components/TPanel.vue'
 import { type OperationState, useAdminOperations, useRetryOperation } from './queries'
 
-type Filter = 'needs' | OperationState | ''
-const filter = ref<Filter>('needs')
-// "Needs attention" is Failed and Blocked together: two lists.
-const failed = useAdminOperations('Failed')
-const blocked = useAdminOperations('Blocked')
-const one = useAdminOperations(() => (filter.value === 'needs' ? 'Succeeded' : filter.value))
+type Filter = 'attention' | OperationState | ''
+const filter = ref<Filter>('attention')
+// The count on the tab, whichever tab is open.
+const needs = useAdminOperations('attention')
+const one = useAdminOperations(filter)
 const retry = useRetryOperation()
-
-const needs = computed(() => [...blocked.items.value, ...failed.items.value].sort((a, b) => (a.id < b.id ? 1 : -1)))
-const rows = computed(() => (filter.value === 'needs' ? needs.value : one.items.value))
-const list = computed(() => (filter.value === 'needs' ? failed : one))
+const rows = computed(() => one.items.value)
+const list = one
 
 async function doRetry(id: string) {
   try {
@@ -44,7 +42,7 @@ async function doRetry(id: string) {
     <TPanel flush>
       <div class="t-row" style="padding: 12px 20px; border-bottom: 1px solid var(--t-line-soft)">
         <el-radio-group v-model="filter" aria-label="Filter operations">
-          <el-radio-button value="needs">Needs attention ({{ needs.length }})</el-radio-button>
+          <el-radio-button value="attention">Needs attention ({{ needs.items.value.length }})</el-radio-button>
           <el-radio-button value="Pending">Pending</el-radio-button>
           <el-radio-button value="Running">Running</el-radio-button>
           <el-radio-button value="Succeeded">Succeeded</el-radio-button>
@@ -98,7 +96,7 @@ async function doRetry(id: string) {
           </el-table-column>
         </el-table>
       </div>
-      <div v-if="filter !== 'needs' && one.hasNextPage.value" class="t-panel-foot">
+      <div v-if="one.hasNextPage.value" class="t-panel-foot">
         <el-button :loading="one.isFetchingNextPage.value" @click="one.fetchNextPage()">Load more</el-button>
       </div>
     </TPanel>

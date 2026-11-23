@@ -184,6 +184,24 @@ type Operation struct {
 	Message       string
 }
 
+type OperationsAttention struct {
+	ID            string
+	OrgID         *string
+	ResourceType  string
+	ResourceID    string
+	Type          string
+	State         string
+	Progress      int16
+	ErrorCode     string
+	ErrorMessage  string
+	CorrelationID string
+	CreatedBy     *string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	FinishedAt    *time.Time
+	Message       string
+}
+
 type Organization struct {
 	ID          string
 	Slug        string
