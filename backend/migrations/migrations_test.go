@@ -184,7 +184,8 @@ func expectCode(t *testing.T, db *sql.DB, q, code string) {
 }
 
 // 0006 forbids hyphens in organization slugs from then on, without failing on
-// organizations made before, which may have one.
+// organizations made before, which may have one. 0016 then checks every row:
+// it refuses a database that still has such a slug, until that row is fixed.
 func TestSlugRuleKeepsOlderOrganizations(t *testing.T) {
 	db := testdb.Open(t)
 	ctx := context.Background()
@@ -194,8 +195,17 @@ func TestSlugRuleKeepsOlderOrganizations(t *testing.T) {
 	}
 	mustExec(t, db, `INSERT INTO users (id, issuer, subject) VALUES ('usr-a', 'https://id', 'a')`)
 	mustExec(t, db, orgInsert("org-old", "old-style", "usr-a", "Active"))
-	if _, err := p.Up(ctx); err != nil {
+	if _, err := p.UpTo(ctx, 15); err != nil {
 		t.Fatalf("0006 on a database with a hyphenated slug: %v", err)
 	}
 	expectCode(t, db, orgInsert("org-new", "new-style", "usr-a", "Pending"), "23514")
+
+	var pgErr *pgconn.PgError
+	if _, err := p.Up(ctx); !errors.As(err, &pgErr) || pgErr.Code != "23514" || pgErr.ConstraintName != "organizations_slug_check" {
+		t.Fatalf("0016 with a hyphenated slug left: %v, want 23514 on organizations_slug_check", err)
+	}
+	mustExec(t, db, `UPDATE organizations SET slug = 'oldstyle' WHERE id = 'org-old'`)
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("0016 once the slug is fixed: %v", err)
+	}
 }
