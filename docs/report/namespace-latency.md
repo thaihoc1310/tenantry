@@ -92,3 +92,61 @@ Ba trong bốn Workspace xong trong khoảng 5 s.
 - Platform Admin đã xoá nó bằng `DELETE /admin/organizations/{id}` (204).
 - Test đã được sửa: lần sau, khi phiên owner hết thì tự dùng đường admin (commit cb9a886).
 - Không còn Namespace, PlatformWorkspace hay account optest nào chưa disable.
+
+## Lần đo thứ ba: tách từng phần (2026-11-23 23:56, mạng nhà qua `wg0`)
+
+Cùng operator rev 14 (`src-856c90f9001c`), cùng cách đo, n = 20 cộng 4 Workspace. Test mới (f99566b) ghi thêm, theo giờ server, lúc từng phần của mỗi Namespace có mặt, tính từ lúc CR đổi (`NSPARTS`), và dòng thời gian condition của mỗi Workspace (`TIMELINE`).
+
+| | p50 | p95 | max |
+|---|---|---|---|
+| t_user, giờ server (Operation) | 7,6 s | 15,0 s | 22,0 s |
+| t_cluster, giờ server | 7 s | 11 s | 11 s |
+
+`workspace.create`: 3,8 s; 3,3 s; 4,8 s; 4,2 s.
+
+**Giả thuyết "status của GlobalResourceQuota làm t_cluster tăng": bác bỏ.**
+
+Theo NSPARTS, tính từ lúc CR đổi:
+
+| Phần | Trễ |
+|---|---|
+| Namespace | 0–4 s |
+| Status quota (GRQ đếm Namespace) | 0–5 s |
+| NetworkPolicy `tenant-default-deny` | 0–11 s |
+| LimitRange `tenantry-defaults` | 0–11 s |
+
+Hai phần đến muộn nhất là NetworkPolicy và LimitRange, do Capsule replicate từ GlobalTenantResource. Độ trễ của chúng tăng dần theo lần chạy: Namespace đầu 0–3 s, Namespace cuối 8–11 s. Vậy t_cluster tăng là do replication của Capsule chậm dần khi các Namespace của cùng Tenant đến dồn dập, không phải do quota.
+
+Metric của Capsule trong 5 phút đo (16:56–17:00Z), giải thích vì sao replication chậm dần khi mỗi Tenant đạt khoảng 11 Namespace:
+
+| | Giá trị |
+|---|---|
+| Request API của Capsule | 25 230 (khoảng 84 req/s), so với 559 trong 5 phút yên tĩnh một giờ trước, gấp khoảng 45 lần |
+| Một lần reconcile, p95 | `replications/namespace-trigger` 13,9 s; `replications/globaltenantresource` 18 s; `tenants` 3,1 s |
+| Retry của workqueue | `replications/globaltenantresource` 55; `tenants/namespace-cleanup` 60; `namespace-trigger` 7,5 |
+| Hàng đợi lớn nhất | tối đa 2: việc không xếp hàng lâu, mà mỗi lần reconcile chạy lâu |
+
+Mỗi Namespace mới kích một lượt replication. Mỗi lượt đọc và ghi lại mọi bản sao trong mọi Namespace của Tenant, nên công việc tăng theo số Namespace. Client của Capsule trên lab đặt QPS 40, burst 80 (`deploy/cluster/values/capsule.yaml`). Ở 84 req/s trung bình, nhiều khả năng client bị chính bộ giới hạn tốc độ của nó giữ lại, nên một lần reconcile kéo dài tới 14–18 s. **Chưa chứng minh** được phần này: Capsule 0.15.2 không xuất metric thời gian chờ của bộ giới hạn (`rest_client_rate_limiter_duration_seconds` không có series nào).
+
+**Đã sửa (35e9510, chưa deploy):** `PolicyReady` giờ chỉ đạt khi mọi Namespace đang sống đã có đủ bản sao LimitRange và NetworkPolicy, đọc thẳng từ apiserver. Trong lúc chờ, operator thử lại sau 2 s.
+- Chọn requeue ngắn thay cho watch. Một watch trên NetworkPolicy và LimitRange buộc operator cache mọi object loại đó trong cụm, và cần quyền list/watch toàn cụm, chỉ để đỡ tối đa 2 s; requeue chỉ chạy khi có Workspace đang chờ.
+- Quyền thêm vào operator chỉ là `get` trên `limitranges` và `networkpolicies`.
+- Namespace nào đã đủ bản sao thì được nhớ và không đọc lại; Capsule tự đặt lại bản sao bị xoá.
+- Envtest `TestWorkspaceWaitsForReplicas` kiểm đúng ca này.
+- Kỳ vọng sau khi deploy: t_user sẽ tiến sát t_cluster (p50 khoảng 7 s, p95 khoảng 11 s ở lần đo này). Con số đó trung thực hơn, vì người dùng chỉ được báo xong khi Pod thật sự tạo được trong Namespace.
+
+**Phát hiện thêm: Operation có thể Succeeded trước khi NetworkPolicy có mặt.** Ví dụ `nsb-n04` (Operation xong lúc 4 s, NetworkPolicy lúc 7 s), `nsb-n05` (6 s và 11 s), `nsb-n08` (8 s và 11 s). `PolicyReady` chỉ đọc Ready của GlobalTenantResource, không kiểm từng Namespace mới đã có bản sao chưa. Hệ quả cho người dùng: ngay sau khi portal báo xong, Pod tạo trong Namespace đó có thể bị VAP `tenantry-tenant-network-ready` từ chối vài giây (đúng với known-limitations mục 16). Một Deployment sẽ tự tạo lại Pod; `kubectl run` thì nhận lỗi.
+
+**Giả thuyết "GlobalTenantResource chờ resync 60 s" cho ca 65 s: lần này không thử được.**
+- Không Workspace nào chậm: TIMELINE cho thấy Ready của GlobalTenantResource ở 1–3 s, `PolicyReady` ở 1–4 s.
+- Capsule vẫn ghi 6 race replication, trong đó có Namespace `base` của `nsa`, `wsx0`, `wsx1`. Vậy một race trên Namespace không làm GlobalTenantResource mất Ready.
+- Tính cả ba lần chạy và e2e của A: khoảng 18 race, 2 lần chậm khoảng 65 s.
+- Cơ chế của ca hiếm vẫn chưa chứng minh. Ứng viên còn lại: chính controller GlobalTenantResource gặp race lúc nó tự reconcile, nên status ghi lỗi và giữ tới lần resync kế tiếp. Lần chậm tới, dòng TIMELINE sẽ cho câu trả lời.
+- Chưa đủ cơ sở để đặt `resyncPeriod` ngắn hơn.
+
+**Thời gian người dùng: nhích qua ngưỡng ở lần này.**
+- p95 là 15,0 s, max 22,0 s (lần trước 13,8 s và 16,4 s). Với n = 20, p95 chính là mẫu chậm thứ hai, nên con số dao động theo vài mẫu.
+- Ở các mẫu chậm, mọi phần đã có từ trước khi Operation xong nhiều giây. Ví dụ `nsb-n06`: các phần có ở 1–5 s, Operation xong ở 21 s; `nsa-n01`: 7 s và 14 s.
+- Outbox không tồn đọng, DB pool không có lần chờ nào. Probe trả khoảng 33 lần `Progressing` trên 29 lần `Reconciled`.
+- Nhiều khả năng phần chênh là probe chờ Capsule Proxy liệt kê Namespace mới (mỗi lần thử cách 2 s). Chưa tách được.
+- Kết luận cho NFR: phía người dùng ở quanh ngưỡng 15 s (13,8 s và 15,0 s qua hai lần đo), chưa đạt chắc chắn.
