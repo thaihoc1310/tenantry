@@ -11,6 +11,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/thaihoc1310/tenantry/backend/internal/store"
 )
 
 // The middlewares here wrap the whole HTTP surface, /healthz included; mount
@@ -40,7 +42,9 @@ func SecurityHeaders(next http.Handler) http.Handler {
 }
 
 // WithRequestID tags every request with an id that is echoed in the
-// X-Request-Id header and in error bodies, so a user report can be matched to logs.
+// X-Request-Id header and in error bodies, so a user report can be matched to
+// logs. It also gives the request the mark store.AcquireDeadline sets when no
+// database connection was free in time (503 SERVICE_BUSY).
 func WithRequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Request-Id")
@@ -48,7 +52,7 @@ func WithRequestID(next http.Handler) http.Handler {
 			id = rand.Text()
 		}
 		w.Header().Set("X-Request-Id", id)
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey, id)))
+		next.ServeHTTP(w, r.WithContext(store.WithBusyMark(context.WithValue(r.Context(), requestIDKey, id))))
 	})
 }
 

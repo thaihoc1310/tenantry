@@ -22,6 +22,9 @@ const (
 	// IdempotencyKeyReused: the key came with another request before (IMPLEMENTATION-PLAN §3.4).
 	IdempotencyKeyReused Code = "IDEMPOTENCY_KEY_REUSED"
 	RateLimited          Code = "RATE_LIMITED"
+	// The database had no connection free in time (store.AcquireDeadline);
+	// written by the HTTP layer, never returned by a service.
+	ServiceBusy Code = "SERVICE_BUSY"
 
 	// Specific conflicts the UI handles differently from a generic CONFLICT.
 	SlugTaken         Code = "SLUG_TAKEN"

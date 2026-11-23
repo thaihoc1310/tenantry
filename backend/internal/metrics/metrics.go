@@ -49,6 +49,10 @@ var (
 	Deliveries = promauto(prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "tenantry_outbox_deliveries_total", Help: "Outbox events handed to the cluster, by event type and result (delivered, failed).",
 	}, []string{"type", "result"}))
+	// Every process with a database pool.
+	DBAcquireTimeouts = promauto(prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "tenantry_db_pool_acquire_timeouts_total", Help: "Waits for a database connection that ran out before one was free (the API answers 503 SERVICE_BUSY).",
+	}))
 	SyncFailures = promauto(prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "tenantry_groupsync_failures_total", Help: "Keycloak calls of the group sync that failed, by kind (group, member, user).",
 	}, []string{"kind"}))

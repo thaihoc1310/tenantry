@@ -41,8 +41,8 @@ func run() error {
 	slog.SetDefault(log)
 
 	// Pinged at start, so a wrong DATABASE_URL fails at once. 20 of PostgreSQL's 100: room for two API replicas, the workers,
-	// migrations and an operator's psql.
-	pool, err := cfg.Pool(context.Background(), 20)
+	// migrations and an operator's psql. A request waits at most 5 seconds for a connection, then gets 503 SERVICE_BUSY.
+	pool, err := cfg.Pool(context.Background(), 20, 5*time.Second)
 	if err != nil {
 		return err
 	}

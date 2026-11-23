@@ -144,6 +144,10 @@ export const errorText: Record<ErrorCode | 'NETWORK', Text> = {
     en: 'Another Route already uses this address. Choose another name.',
     vi: 'Một Route khác đã dùng địa chỉ này. Hãy chọn tên khác.',
   },
+  SERVICE_BUSY: {
+    en: 'The platform is busy. Nothing was changed; try again in a few seconds.',
+    vi: 'Hệ thống đang bận. Chưa có gì thay đổi; thử lại sau vài giây.',
+  },
   INTERNAL: {
     en: 'Something went wrong on our side. Your data is safe; try again in a moment.',
     vi: 'Hệ thống gặp lỗi. Dữ liệu của bạn vẫn an toàn; thử lại sau ít phút.',

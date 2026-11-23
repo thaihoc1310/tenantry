@@ -2419,7 +2419,10 @@ components:
   schemas:
     ErrorCode:
       type: string
-      description: Stable error codes the UI switches on (IMPLEMENTATION-PLAN §3.3). Grows with the endpoints.
+      description: |
+        Stable error codes the UI switches on (IMPLEMENTATION-PLAN §3.3). Grows with the endpoints.
+        `SERVICE_BUSY` (503, any operation): no database connection was free
+        within 5 seconds; nothing was done, retry after `Retry-After` seconds.
       enum:
         - VALIDATION_FAILED
         - UNAUTHENTICATED
@@ -2459,6 +2462,7 @@ components:
         - NETWORK_POOL_EXHAUSTED
         - ROUTE_QUOTA_EXCEEDED
         - ROUTE_HOSTNAME_TAKEN
+        - SERVICE_BUSY
         - INTERNAL
 
     ErrorResponse:

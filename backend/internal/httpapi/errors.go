@@ -2,12 +2,18 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/thaihoc1310/tenantry/backend/internal/apperr"
 	"github.com/thaihoc1310/tenantry/backend/internal/httpapi/oapi"
+	"github.com/thaihoc1310/tenantry/backend/internal/store"
 )
+
+// busyRetryAfter is the Retry-After, in seconds, of a 503 SERVICE_BUSY.
+const busyRetryAfter = 2
 
 // statusOf is the only place an error code meets an HTTP status.
 var statusOf = map[apperr.Code]int{
@@ -20,6 +26,7 @@ var statusOf = map[apperr.Code]int{
 
 	apperr.IdempotencyKeyReused: http.StatusUnprocessableEntity,
 	apperr.RateLimited:          http.StatusTooManyRequests,
+	apperr.ServiceBusy:          http.StatusServiceUnavailable,
 
 	apperr.SlugTaken:         http.StatusConflict,
 	apperr.OrgRequestPending: http.StatusConflict,
@@ -60,6 +67,9 @@ var statusOf = map[apperr.Code]int{
 // writeError answers with an ErrorResponse.
 func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	status, body := describe(r, err)
+	if status == http.StatusServiceUnavailable {
+		w.Header().Set("Retry-After", strconv.Itoa(busyRetryAfter))
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
@@ -70,6 +80,10 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 // behind INTERNAL.
 func describe(r *http.Request, err error) (int, oapi.ErrorResponse) {
 	body := oapi.ErrorResponse{Code: oapi.INTERNAL, Message: "internal error", RequestId: requestID(r.Context())}
+	if store.AcquireTimedOut(r.Context(), err) {
+		// Logged and counted where the wait ran out (store.AcquireDeadline).
+		err = apperr.New(apperr.ServiceBusy, fmt.Sprintf("the platform is busy; retry in %d seconds", busyRetryAfter))
+	}
 	if e, ok := apperr.As(err); ok && statusOf[e.Code] != 0 {
 		body.Code, body.Message = oapi.ErrorCode(e.Code), e.Message
 		if e.Details != nil {

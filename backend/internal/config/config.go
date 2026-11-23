@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/thaihoc1310/tenantry/backend/internal/store"
 )
 
 type Config struct {
@@ -248,10 +250,18 @@ func LoadProvisioning() (Provisioning, error) {
 // TENANTRY_DB_MAX_CONNS, or fallback (pgxpool's own default follows the
 // node's CPUs, which says nothing about a Pod). It pings the database, so a
 // wrong DATABASE_URL fails at start.
-func (c Config) Pool(ctx context.Context, fallback int32) (*pgxpool.Pool, error) {
+//
+// acquireWait > 0 bounds how long a caller waits for a free connection
+// (store.AcquireDeadline): the API's requests fail with 503 SERVICE_BUSY
+// rather than hang behind a drained pool. The workers wait as long as their
+// own contexts allow.
+func (c Config) Pool(ctx context.Context, fallback int32, acquireWait time.Duration) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(c.DatabaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("DATABASE_URL: %w", err)
+	}
+	if acquireWait > 0 {
+		cfg.ConnConfig.Tracer = store.AcquireDeadline{Wait: acquireWait}
 	}
 	cfg.MaxConns = fallback
 	if c.DBMaxConns > 0 {

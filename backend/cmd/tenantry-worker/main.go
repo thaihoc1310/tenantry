@@ -91,7 +91,7 @@ func run(args []string) error {
 
 	// Each loop holds at most one transaction at a time; 6 leaves headroom
 	// for the metrics reads and the syncer's own reads.
-	pool, err := cfg.Pool(context.Background(), 6)
+	pool, err := cfg.Pool(context.Background(), 6, 0)
 	if err != nil {
 		return err
 	}
