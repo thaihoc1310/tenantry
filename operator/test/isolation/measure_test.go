@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -430,6 +432,21 @@ func TestSharedPending(t *testing.T) {
 	if pending == 0 {
 		t.Errorf("no Pod Pending: the pool held %d CPU of Pods", running)
 	}
+	// Keep the pool full for PENDING_HOLD (default 150 s): Prometheus scrapes
+	// kube-state-metrics every 60 s, so the dashboard has two samples of it.
+	hold := 150 * time.Second
+	if v, err := time.ParseDuration(os.Getenv("PENDING_HOLD")); err == nil {
+		hold = v
+	}
+	t.Logf("holding the pool full for %s", hold)
+	time.Sleep(hold)
+	for name, expr := range map[string]string{
+		"requested by running Pods":  `sum by (label_tenantry_io_compute_pool) (sum by (namespace, pod, node) (kube_pod_container_resource_requests{resource="cpu"}) * on (namespace, pod) group_left () (max by (namespace, pod) (kube_pod_status_phase{phase="Running"}) == 1) * on (node) group_left (label_tenantry_io_compute_pool) kube_node_labels{label_tenantry_io_compute_pool="shared-general"})`,
+		"allocatable":                `tenantry_shared_pool_allocatable{pool="shared-general",resource="cpu"}`,
+		"unschedulable by Workspace": `sum by (label_capsule_clastix_io_tenant) (kube_pod_status_unschedulable * on (namespace) group_left (label_capsule_clastix_io_tenant) kube_namespace_labels{label_capsule_clastix_io_tenant=~"` + slug + `-.*"})`,
+	} {
+		t.Logf("DASHBOARD %s: %s", name, promQuery(t, expr))
+	}
 	for _, w := range all {
 		var usage json.RawMessage
 		owner.api(t, http.MethodGet, "/workspaces/"+w.id+"/usage", nil, &usage)
@@ -516,4 +533,34 @@ func logTimeline(t *testing.T, name string) {
 		parts = append(parts, fmt.Sprintf("GTR.status_written@%s", statusWrittenAt(gtr.GetManagedFields()).Sub(born)))
 	}
 	t.Logf("TIMELINE %s %s", name, strings.Join(parts, " "))
+}
+
+// promQuery asks the lab's Prometheus, through the API server's Service
+// proxy, and answers the result vector as label=value pairs.
+func promQuery(t *testing.T, expr string) string {
+	t.Helper()
+	out, err := exec.Command("kubectl", "--context", envOr("KUBE_CONTEXT", "hocbt@kubernetes"), "get", "--raw",
+		"/api/v1/namespaces/observability/services/http:prometheus-server:80/proxy/api/v1/query?query="+url.QueryEscape(expr)).Output()
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	var r struct {
+		Data struct {
+			Result []struct {
+				Metric map[string]string `json:"metric"`
+				Value  []any             `json:"value"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &r); err != nil {
+		return "error: " + err.Error()
+	}
+	var parts []string
+	for _, v := range r.Data.Result {
+		parts = append(parts, fmt.Sprintf("%v=%v", v.Metric, v.Value[1]))
+	}
+	if len(parts) == 0 {
+		return "(no series)"
+	}
+	return strings.Join(parts, "; ")
 }
