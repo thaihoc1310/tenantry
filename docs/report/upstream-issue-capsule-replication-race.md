@@ -1,3 +1,9 @@
+> **Không gửi (2026-11-23).** Upstream đã sửa trong projectcapsule/capsule#2266 "fix: avoid creations conflicts for tenantresources", merge 2026-11-05, sau v0.15.2. Có hai thay đổi chính:
+> - hai controller replicate đọc object đích không qua cache (`replicationClient` có `reader`);
+> - `Processor.Apply` retry khi gặp Conflict.
+>
+> Tới 2026-11-23 chưa có bản phát hành nào sau v0.15.2. Khi lên bản có #2266, đo lại race như `benchmark.md`. Nếu hết `already exists` / `object has been modified` thì bỏ khoảng 2 phút operator đang coi là Progressing. Bản nháp giữ dưới đây làm ghi chép.
+
 Title: GlobalTenantResource replication into a new Namespace fails with AlreadyExists when namespace-trigger and the GlobalTenantResource controller race
 
 Version: Capsule v0.15.2, Kubernetes 1.36.2.

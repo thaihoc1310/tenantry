@@ -56,7 +56,7 @@ Một endpoint, kubeconfig gọn hơn khi có nhiều Cluster. Không chọn: ce
 - kubelogin cache token: test thu hồi phải xóa cache hoặc ép refresh (IMPLEMENTATION-PLAN M11, rủi ro).
 - ServiceAccount của Proxy là credential rất mạnh đứng ở public edge. ClusterRole `capsule-proxy:capsule-proxy` trên lab cho `get/list/watch` mọi tài nguyên (kể cả Secret) và `impersonate` mọi `users`, `groups`, `serviceaccounts` không giới hạn tên, tức impersonate được cả `system:masters`. Lộ token đó, hoặc một lỗi lọc như lỗi đọc Node dưới đây, là ngang cluster-admin. Đây là giá của mô hình impersonation, không phải cấu hình riêng của Tenantry.
 - Audit log của kube-apiserver ghi request thường với `user` là ServiceAccount của Proxy và `impersonatedUser` là `oidc:<sub>`. Request lọc bằng selector chỉ ghi ServiceAccount của Proxy; người gọi thật chỉ có trong log của Proxy ở mức verbose (`internal/webserver/webserver.go:501-504`).
-- Capsule Proxy 0.15.3 mặc định có lỗi đọc Node bằng ServiceAccount của Proxy; nháp issue upstream chưa gửi ([upstream-issue-capsule-proxy-nodes](../report/upstream-issue-capsule-proxy-nodes.md)).
+- Capsule Proxy 0.15.3 mặc định có lỗi đọc Node bằng ServiceAccount của Proxy; đã báo riêng cho maintainer ngày 2026-11-23 ([upstream-issue-capsule-proxy-nodes](../report/upstream-issue-capsule-proxy-nodes.md)).
 
 ## Kiểm chứng
 

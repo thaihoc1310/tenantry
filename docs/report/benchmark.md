@@ -75,7 +75,7 @@ item errors come in three forms:
 - `the object has been modified`: both update it;
 - `because it is being terminated`: it writes into a Namespace being deleted.
 
-Draft upstream issue: `upstream-issue-capsule-replication-race.md`.
+Upstream đã sửa trong projectcapsule/capsule#2266 (merge 2026-11-05, sau v0.15.2, chưa có bản phát hành), nên không gửi issue; xem `upstream-issue-capsule-replication-race.md`.
 
 Since commit d9fb1aa, the operator reads those errors as work under way for up to 2 minutes, from the
 GlobalTenantResource's condition time; any other error, or a longer wait, is still `CapsuleNotReady`.
