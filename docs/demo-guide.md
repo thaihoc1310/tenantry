@@ -239,6 +239,7 @@ Nếu đã drain wk3 mà reset không trả về được, kiểm `kubectl --con
 | Tạo lại Workspace cùng tên bị `SLUG_TAKEN` | Tên còn trong quarantine 10 phút sau khi xóa | Dùng tên khác hoặc chờ |
 | Xóa org bị `ORGANIZATION_NOT_EMPTY` kèm giờ | Workspace đã xóa còn trong quarantine | Chờ tới giờ ghi trong message |
 | Cấp node bị `NodeNotClean` | Node còn Pod tenant | Drain rồi uncordon (bước 5.3) |
+| Lệnh admin (`kubectl --context hocbt@kubernetes …`: cordon, drain, port-forward) báo `unexpected EOF` | Kết nối từ laptop tới apiserver đi qua WireGuard (`wg0`, vòng qua server main) đôi khi bị cắt giữa chừng; apiserver không ghi lỗi | Chạy lại đúng lệnh đó (cordon/drain/uncordon chạy lại vô hại); port-forward chết thì mở lại |
 | Portal hoặc API trả `503 SERVICE_BUSY` (kèm `Retry-After`) | Pool DB của API không có connection trống trong 5 giây | Chờ vài giây rồi thử lại; Grafana panel 19–20; Admin → **Health** (có từ bản deploy sau 113e937) |
 | Portal chậm hoặc treo hơn 10 giây | Đường mạng hoặc API (lỗi cạn pool DB đã sửa) | Tải lại trang; Admin → **Health**; Grafana panel 19–20 |
 | `kubectl` qua kube-a báo lỗi lạ hàng loạt | Capsule Proxy CrashLoop (gate Alpha, khi một APIService hỏng) | `kubectl --context hocbt@kubernetes get apiservice`, sửa APIService không Available (05 §8) |
