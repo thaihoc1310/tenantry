@@ -11,7 +11,8 @@ import ErrorState from '@/components/ErrorState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import TPanel from '@/components/TPanel.vue'
-import { useOrganization } from '@/features/organizations/queries'
+import { useOrgDedicatedNodes, useOrganization } from '@/features/organizations/queries'
+import { computePlace } from './compute'
 import { useWorkspaces } from './queries'
 
 const props = defineProps<{ orgSlug: string }>()
@@ -20,6 +21,12 @@ const active = computed(() => org.data.value?.status === 'Active')
 const list = useWorkspaces(() => props.orgSlug, active)
 const manages = computed(() => ['OrgOwner', 'OrgAdmin'].includes(org.data.value?.myRole ?? ''))
 const wizard = computed(() => `/orgs/${props.orgSlug}/workspaces/new`)
+// Node names for the Compute column (one cluster in the MVP); only managers
+// read the catalog.
+const dedicatedNodes = useOrgDedicatedNodes(
+  () => props.orgSlug,
+  () => (manages.value ? (list.data.value?.find((w) => w.compute.mode === 'Dedicated')?.clusterId ?? '') : ''),
+)
 </script>
 
 <template>
@@ -66,7 +73,7 @@ const wizard = computed(() => `/orgs/${props.orgSlug}/workspaces/new`)
           <el-table-column label="Compute" width="200"
             ><template #default="{ row }"
               >{{ row.compute.mode }} <span class="muted">on</span>
-              <code>{{ row.compute.sharedPoolId ?? row.compute.dedicatedNodeGrantId }}</code></template
+              <code>{{ computePlace(row.compute, dedicatedNodes.data.value) }}</code></template
             ></el-table-column
           >
           <el-table-column label="Requests" width="170" align="right"

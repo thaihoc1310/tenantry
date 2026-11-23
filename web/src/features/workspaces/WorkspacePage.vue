@@ -14,6 +14,7 @@ import { showFailure } from '@/app/failure'
 import { when } from '@/app/format'
 import ConditionTimeline from '@/components/ConditionTimeline.vue'
 import AccessRolesTab from './AccessRolesTab.vue'
+import { computePlace } from './compute'
 import ComputeDetail from './ComputeDetail.vue'
 import ConnectTab from './ConnectTab.vue'
 import { kubeconfigURL, openConsole } from './connect'
@@ -28,7 +29,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import QuotaMeter from '@/components/QuotaMeter.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import TPanel from '@/components/TPanel.vue'
-import { useOrganization } from '@/features/organizations/queries'
+import { useOrgDedicatedNodes, useOrganization } from '@/features/organizations/queries'
 import {
   useCordon,
   useDeleteWorkspace,
@@ -51,6 +52,11 @@ const { one, id, missing } = useWorkspaceBySlug(
   () => props.wsSlug,
 )
 const ws = computed(() => one.data.value)
+// The node's name for the summary; only managers read the catalog.
+const dedicatedNodes = useOrgDedicatedNodes(
+  () => props.orgSlug,
+  () => (manages.value && ws.value?.compute.mode === 'Dedicated' ? ws.value.clusterId : ''),
+)
 const usage = useWorkspaceUsage(id)
 const ops = useWorkspaceOperations(id)
 // The newest operation, followed live while it runs.
@@ -314,7 +320,7 @@ const usable = computed(() => ['Ready', 'Degraded'].includes(ws.value?.state ?? 
                 compact
                 :items="[
                   ['Cluster', ws.clusterId],
-                  ['Compute', `${ws.compute.mode} on ${ws.compute.sharedPoolId ?? ws.compute.dedicatedNodeGrantId}`],
+                  ['Compute', `${ws.compute.mode} on ${computePlace(ws.compute, dedicatedNodes.data.value)}`],
                   ['Namespaces', `${usage.data.value?.namespaces.length ?? 0} of ${ws.resources.namespaceQuota}`],
                   ['Created', when(ws.createdAt)],
                 ]"

@@ -9,6 +9,9 @@ const fmt = new Intl.DateTimeFormat('en-GB', {
 
 export const when = (iso: string) => fmt.format(new Date(iso))
 
+// "1 node", "2 nodes".
+export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
+
 const rel = new Intl.RelativeTimeFormat('en', { numeric: 'always' })
 
 // "in 6 days", "in 3 hours"; "expired" once the time has passed. For

@@ -8,6 +8,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { ApiError } from '@/api/client'
 import { cores, cpu, gib, memory, quantity } from '@/api/units'
 import { showFailure } from '@/app/failure'
+import { plural } from '@/app/format'
 import NumField from '@/components/NumField.vue'
 import { type ClusterNode, type SharedPool, useCreateSharedPool, usePutSharedPool } from './queries'
 
@@ -135,8 +136,8 @@ async function submit() {
         <div class="mono">kubectl drain {{ removed[0] }} --ignore-daemonsets --delete-emptydir-data</div>
       </el-alert>
       <p class="t-field-note" style="margin-top: 12px">
-        After this change: {{ form.nodes.length }} nodes, {{ after.cpu }} cores and {{ after.memory }} Gi to reserve
-        against; Workspaces may reserve up to {{ Math.round(after.cpu * form.ratio * 100) / 100 }} cores.
+        After this change: {{ plural(form.nodes.length, 'node') }}, {{ after.cpu }} cores and {{ after.memory }} Gi to
+        reserve against; Workspaces may reserve up to {{ Math.round(after.cpu * form.ratio * 100) / 100 }} cores.
       </p>
     </el-form>
     <template #footer>

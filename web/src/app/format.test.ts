@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { expiresIn } from './format'
+import { expiresIn, plural } from './format'
 
 describe('expiresIn', () => {
   const now = Date.parse('2026-11-22T12:00:00Z')
@@ -12,5 +12,13 @@ describe('expiresIn', () => {
   it('says expired once the time has passed', () => {
     expect(expiresIn('2026-11-22T12:00:00Z', now)).toBe('expired')
     expect(expiresIn('2026-11-01T00:00:00Z', now)).toBe('expired')
+  })
+})
+
+describe('plural', () => {
+  it('says 1 node and 0 or 2 nodes', () => {
+    expect(plural(1, 'node')).toBe('1 node')
+    expect(plural(2, 'node')).toBe('2 nodes')
+    expect(plural(0, 'node')).toBe('0 nodes')
   })
 })
