@@ -44,7 +44,7 @@ Tóm tắt: 13 Đạt, 2 Đạt một phần (mục 1 và 15), 0 Chưa.
 | Logout portal kéo theo Headlamp và kubelogin phải đăng nhập lại | ADR-0022 | Chỉ kiểm với Keycloak giả (`TestLogout`) |
 | Phiên sống quá access token trên lab (`E2E_SLOW=1`) | ADR-0022 | Chưa có kết quả ghi lại |
 | Binary kubelogin thật trong test tự động | ADR-0013 | Test lấy token bằng PKCE như kubelogin |
-| Audit log của kube-apiserver cho request qua Capsule Proxy | ADR-0013 | Audit tắt trên lab: Pod `kube-apiserver-fdp-k8s-cp1` không có `--audit-policy-file`, `--audit-log-path` (đọc ngày 2026-11-23). Bật audit là sửa manifest static Pod trên control-plane node, cần ssh và sudo. Log của Capsule Proxy cũng không giúp được: Proxy chạy `--zap-log-level=2`, còn dòng "impersonating for the current request" chỉ ghi ở mức 4. Cơ chế hiện chỉ rút từ mã nguồn và ClusterRole của Proxy |
+| Audit log của kube-apiserver cho request qua Capsule Proxy | ADR-0013 | Audit vẫn tắt (cần quyền vào control-plane node). Thay vào đó đã thấy cơ chế trong log của Capsule Proxy ở mức 4, bật tạm rồi trả về mức 2 (2026-11-23 16:51Z): `impersonating for the current request` với `username` là `system:serviceaccount:tenantry-operator:tenantry-proxy-probe` cho token ServiceAccount, và `oidc:ac2b398e-…` cho ID token của account demo `alice`. Request được apiserver trả 403 theo danh tính được impersonate. Audit log của apiserver vẫn chưa kiểm |
 | `TestLiveKeycloakNarrowed` trên lab với FGAP bật | ADR-0015 | Chưa có kết quả ghi lại (cluster-verify nhánh FGAP thì đã qua) |
 | Test `PATCH` có `clusterId` ở API | ADR-0008 | Schema chặn; CRD đã chặn bằng CEL (`TestWorkspaceIdsImmutable`) |
 | Thông lượng outbox dưới tải; DB pool dưới tải | ADR-0021 | Benchmark tạo CR trực tiếp, bỏ qua API |
