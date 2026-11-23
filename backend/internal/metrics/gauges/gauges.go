@@ -17,7 +17,9 @@ import (
 )
 
 // Provisioning adds what the provisioning worker of clusterID
-// watches: its outbox backlog and the address blocks left in its pools.
+// watches: its outbox backlog, the address blocks left in its pools, and
+// how much of each shared pool its Shared Workspaces hold against the
+// pool's ceiling.
 func Provisioning(db *pgxpool.Pool, clusterID string, log *slog.Logger) {
 	q := store.New(db)
 	pending := prometheus.NewDesc("tenantry_outbox_pending_events", "Outbox events of the cluster not delivered yet.", []string{"cluster"}, nil)
@@ -38,7 +40,44 @@ func Provisioning(db *pgxpool.Pool, clusterID string, log *slog.Logger) {
 			Log:  log,
 			Read: func(ctx context.Context) ([]metrics.Sample, error) { return freeBlocks(ctx, q, clusterID) },
 		},
+		metrics.Gauge{
+			Desc: prometheus.NewDesc("tenantry_shared_pool_allocation_ceiling",
+				"What the Shared Workspaces of a shared pool may reserve in total: overcommit ratio × reservable (PRODUCT-PLAN §5.3); cpu in cores, memory in bytes.",
+				[]string{"pool", "resource"}, nil),
+			Log:  log,
+			Read: func(ctx context.Context) ([]metrics.Sample, error) { return poolSamples(ctx, q, clusterID, ceiling) },
+		},
+		metrics.Gauge{
+			Desc: prometheus.NewDesc("tenantry_shared_pool_allocated",
+				"What the Shared Workspaces of a shared pool hold of it: the sum of their requests and Pods; cpu in cores, memory in bytes.",
+				[]string{"pool", "resource"}, nil),
+			Log:  log,
+			Read: func(ctx context.Context) ([]metrics.Sample, error) { return poolSamples(ctx, q, clusterID, allocated) },
+		},
 	)
+}
+
+func ceiling(v reservation.PoolView) reservation.Capacity   { return v.Ceiling }
+func allocated(v reservation.PoolView) reservation.Capacity { return v.Allocated }
+
+// poolSamples reads the shared pools of the cluster, as the admin page and
+// the create checks see them (reservation.PoolViews), one sample per pool
+// and resource.
+func poolSamples(ctx context.Context, q *store.Queries, clusterID string, of func(reservation.PoolView) reservation.Capacity) ([]metrics.Sample, error) {
+	pools, err := reservation.PoolViews(ctx, q, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]metrics.Sample, 0, 3*len(pools))
+	for _, p := range pools {
+		c := of(p)
+		out = append(out,
+			metrics.Sample{Value: float64(c.CPUMilli) / 1000, Labels: []string{p.ID, "cpu"}},
+			metrics.Sample{Value: float64(c.MemoryBytes), Labels: []string{p.ID, "memory"}},
+			metrics.Sample{Value: float64(c.Pods), Labels: []string{p.ID, "pods"}},
+		)
+	}
+	return out, nil
 }
 
 func freeBlocks(ctx context.Context, q *store.Queries, clusterID string) ([]metrics.Sample, error) {
