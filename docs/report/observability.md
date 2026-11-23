@@ -66,6 +66,6 @@ Sau mỗi bước trên portal (tạo Workspace, thêm Namespace, tạo Route), 
 
 ## Lưu ý trước demo
 
-- Lab vừa demo-reset nên không có Workspace nào. Panel 1 và 7 hiện "No data" cho tới khi có Workspace đầu tiên. Bản sửa để panel 1 hiện số 0 ở mọi phase (commit `7f2809c`) chưa deploy.
+- Lab không có Workspace nào (sau demo-reset): panel 1 hiện số 0 ở cả 6 phase (operator từ `7f2809c`, chạy trên lab từ revision 13), còn panel 7 "No data" cho tới khi có Workspace đầu tiên có CIDR.
 - Panel 2 và 15 chỉ có số khi đã có Workspace được tạo trong 1 giờ gần nhất, kể từ lần khởi động gần nhất của operator (panel 2) hoặc backend (panel 15). Muốn có số khi trình bày thì tạo một Workspace trước demo ít nhất vài phút.
 - Panel 18, dòng failures/s, để trống khi chưa có lần sync nào lỗi kể từ lúc worker khởi động. Đó là trạng thái tốt.
