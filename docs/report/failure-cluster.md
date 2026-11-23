@@ -36,3 +36,38 @@ Result: 4/4 pass. Every object was cleaned up, PersistentVolumes included, and `
    or `kubectl -n <ns> delete pod <pod> --grace-period=0 --force` when its node is gone.
 3. Nothing else to do. Capsule finishes the Namespace and the Tenant, and the operator finishes the delete
    (step 5 waits for Calico to free the Workspace's addresses).
+
+## "unexpected EOF" on deletes from the laptop (2026-11-23)
+
+What was seen: last night and in the morning of 2026-11-23, every DELETE sent from the dev laptop through
+`k8s-api` took about 10 s. Those past about 10.25 s ended in `unexpected EOF` and were not applied; running
+them again worked. GETs, watches, `kubectl wait` and port-forwards were fine. Two cluster-verify checks
+failed on it, then passed a few minutes later.
+
+The cluster is not the cause:
+- From 08:00 to 08:59, kube-apiserver served 1654 DELETEs and none took over 1 s
+  (`apiserver_request_duration_seconds`). No DELETE took over 5 s in any hour since.
+- From a Pod inside the cluster, a DELETE takes 16 ms on average and 64 ms at most.
+- The deletes that ended in EOF never reached the API server.
+
+| Condition | Network | When | DELETE from the laptop |
+|---|---|---|---|
+| 1 | home network + WireGuard `wg0` through the main VPS | last night and the morning of 2026-11-23 | about 10 s, EOF past about 10.25 s |
+| 2 | company network + `wg0` still up | about 13:15 to 13:34 | 0.3 to 0.7 s, no EOF (kubectl, and curl over HTTP/1.1 and HTTP/2, with and without a body, bodies up to 64 KiB) |
+| 3 | company network, direct over Wi-Fi (`wg0` removed) | from about 13:35 | 0.16 to 0.62 s, no EOF |
+
+Likely cause, not proven: the home network's path into the tunnel (home ISP or Wi-Fi to the VPS). The tunnel and
+the VPS behaved from the company network. TLS hides the HTTP method from the path, so "only DELETEs" more likely
+reflects when those requests ran than what they were. Condition 1 can only be reproduced at home.
+
+To confirm it at home, with `wg0` up:
+1. Run the same sampler: a ConfigMap created, read and deleted every 20 s in a scratch namespace, with `ss -ti` on slow ones.
+2. Check the path MTU through the tunnel with `ping -M do -s <size> 203.29.16.150`. A size of 1252 (a 1280-byte
+   packet) must pass. Find where larger ones stop.
+3. Run `tracepath 203.29.16.150`, then the same to the VPS's public address outside the tunnel.
+
+Measured details: `eof-path.md`. cluster-verify retries a delete cut off by a dropped connection up to 3 times
+(`kdelete` in `deploy/cluster/verify.sh`); a refusal still fails.
+
+**For the user:** at the company, reach the lab directly without `wg0`. At home with `wg0`, an admin command
+that ends in `unexpected EOF` was not applied: run it again.
