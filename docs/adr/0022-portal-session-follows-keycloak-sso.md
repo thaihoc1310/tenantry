@@ -75,4 +75,5 @@ An toàn hơn nếu refresh token lộ. Không chọn: hai request đồng thờ
   - `TestLogout`, `TestLogoutNeedsCSRF`, `TestLogoutWithNothingToEnd`: logout gọi Keycloak bằng refresh token hiện tại và kết thúc SSO session.
 - Disable xóa mọi phiên, kể cả phiên trên thiết bị khác: `TestDisableEnableUser` (`backend/internal/httpapi/admin_orgs_test.go`).
 - Trên lab: `web/e2e/onboarding.spec.ts` "the session outlives the access token" chờ 5 phút 20 giây rồi kiểm `GET /api/v1/me` vẫn 200; chỉ chạy khi đặt `E2E_SLOW=1`. PASS trên lab ngày 2026-11-23 (5,4 phút, [e2e-portal](../report/e2e-portal.md)).
-- Logout portal kéo theo Headlamp và kubelogin phải đăng nhập lại: chỉ kiểm với Keycloak giả (`TestLogout`), trên lab chưa kiểm.
+- Logout portal kéo theo Headlamp và kubelogin phải đăng nhập lại: `web/e2e/logout.spec.ts` PASS trên lab ngày 2026-11-24 (3,3 phút, [e2e-portal](../report/e2e-portal.md) mục "Headlamp and logout"). Sau "Log out everywhere", portal trả 401 và request authorize kiểu kubelogin (PKCE) nhận form đăng nhập Keycloak thay vì mã. Headlamp vẫn dùng token đang giữ tới khi hết hạn rồi mới hỏi đăng nhập: 155 s ở lần chạy đạt, khoảng 300 s ở lần đầu, không quá Access Token Lifespan 5 phút.
+  - Spec không chạy binary kubelogin; nó gửi đúng request authorize mà kubelogin gửi.
