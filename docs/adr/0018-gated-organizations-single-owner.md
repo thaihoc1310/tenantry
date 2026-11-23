@@ -40,10 +40,9 @@ Không chọn: chuyển quyền cho người không muốn nhận thì Organizat
 ## Hệ quả
 
 - Người mới phải chờ Admin trước khi có Organization của riêng mình; trong lúc đó vẫn được mời vào Organization khác.
-- Một người duy nhất là điểm hỏng: Owner nghỉ việc hoặc mất account thì không ai transfer được, vì transfer cần Owner đề nghị. API hiện không có endpoint admin nào đổi Owner (đã soát các path `/admin/organizations*` trong `backend/openapi/tenantry.v1.yaml`).
+- Một người duy nhất là điểm hỏng: Owner nghỉ việc hoặc mất account thì không ai transfer được, vì transfer cần Owner đề nghị. API hiện không có endpoint admin nào đổi Owner (đã soát các path `/admin/organizations*` trong `backend/openapi/tenantry.v1.yaml`). MVP chấp nhận giới hạn này, gán lại Owner bởi Platform Admin để Phase 2 ([known-limitations](../report/known-limitations.md) mục 5a).
 - Transfer phải tính tới đua với các thay đổi membership khác; xác nhận transfer và rời Organization cùng khóa row Organization nên chạy lần lượt.
 - Người nhận phải là OrgAdmin trước, nên chuyển cho member thường là hai bước: nâng lên OrgAdmin rồi transfer.
-- [known-limitations](../report/known-limitations.md) không có mục riêng cho quyết định này.
 
 ## Kiểm chứng
 

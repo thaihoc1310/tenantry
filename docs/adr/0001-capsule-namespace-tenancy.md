@@ -31,11 +31,23 @@ Product layer (Organization, ClusterGrant, reservation, CIDR) nằm ở PostgreS
 
 ### Mỗi tenant một cluster riêng
 
-Cách cô lập mạnh nhất. Không chọn vì nằm ngoài phạm vi ([§2.3](../PRODUCT-PLAN.md)), platform không tạo cluster ([§31](../PRODUCT-PLAN.md) quyết định 8), và chi phí mỗi tenant lớn. Baseline đo bằng kind ([baseline-kind-vcluster.csv](../report/baseline-kind-vcluster.csv)): 33,4 s tới khi sẵn sàng, khoảng 100m CPU và 655 MiB lúc rảnh, 9 Pod thêm cho mỗi tenant.
+Cách cô lập mạnh nhất. Không chọn vì nằm ngoài phạm vi ([§2.3](../PRODUCT-PLAN.md)), platform không tạo cluster ([§31](../PRODUCT-PLAN.md) quyết định 8), và chi phí mỗi tenant lớn. Baseline đo bằng kind trên máy dev ([baseline-kind-vcluster.csv](../report/baseline-kind-vcluster.csv)): 33,4 s tới khi sẵn sàng, khoảng 100m CPU và 655 MiB lúc rảnh, 9 Pod thêm cho mỗi tenant.
 
 ### vCluster
 
-Cho mỗi tenant một control plane ảo trong cụm host. Không chọn vì người dùng đích không cần control plane, và mỗi tenant vẫn tốn tài nguyên thường trực. Đo vcluster 0.37.7: 24,8–26,9 s, khoảng 40m CPU và 303 MiB lúc rảnh, 2 Pod thêm ([benchmark.md](../report/benchmark.md), mục Baseline). Pod của vCluster vẫn chạy trên node của cụm host, nên quota, NetworkPolicy và node placement ở cụm host vẫn phải làm như với Capsule.
+Cho mỗi tenant một control plane ảo trong cụm host. Không chọn vì người dùng đích không cần control plane, và mỗi tenant vẫn tốn tài nguyên thường trực. Đo vcluster 0.37.7 trên cùng máy dev: 24,8–26,9 s, khoảng 40m CPU và 303 MiB lúc rảnh, 2 Pod thêm ([benchmark.md](../report/benchmark.md), mục Baseline). Pod của vCluster vẫn chạy trên node của cụm host, nên quota, NetworkPolicy và node placement ở cụm host vẫn phải làm như với Capsule.
+
+### HNC (Hierarchical Namespace Controller)
+
+Cho tạo namespace con và truyền RBAC, policy từ namespace cha xuống. Không chọn vì phần Tenantry cần nhất lại nằm ngoài nó: không có lớp lọc `kubectl get ns` theo tenant, không ép node selector, toleration hay annotation IPPool cho mọi Namespace của một tenant, và quota chung trên cả cây namespace không phải phần lõi. Chỉ so chức năng, không đo.
+
+### Kiosk
+
+Có khái niệm account, space và template để tenant tự tạo namespace với quota theo account. Không chọn vì không có proxy lọc tài nguyên cho tenant, không có cơ chế node placement hay metadata managed của Namespace như Capsule, và Tenantry đã giữ account, quota ở platform database (ADR-0002, ADR-0007). Chỉ so chức năng, không đo.
+
+### Rancher Projects
+
+Gom namespace thành project có quota và RBAC chung. Không chọn vì project là khái niệm của Rancher: phải chạy Rancher management server và dùng auth, API của nó, tức thêm một control plane quản lý cụm nằm giữa Tenantry và kube-apiserver; Tenantry sẽ phải điều khiển Rancher thay vì render object Kubernetes. Chỉ so chức năng, không đo.
 
 ### Namespace và RBAC tự quản, không dùng Capsule
 
@@ -58,10 +70,6 @@ Mặt xấu và giới hạn:
 
 - Isolation suite trên lab: 8/8 subtest pass, 31 lần từ chối như mong muốn, 0 rò rỉ (`operator/test/isolation/isolation_test.go`, `TestIsolation`; [isolation-cluster.md](../report/isolation-cluster.md)). Bảng trong report ghi lớp nào từ chối: RBAC, Capsule webhook, VAP, PodNodeSelector, Pod Security.
 - Kịch bản persona end to end pass trên lab (`test/e2e/personas_test.go`, `TestPersonas`; [e2e-personas.md](../report/e2e-personas.md)).
+- Baseline kind/vCluster đo trên máy dev 16 CPU, còn số của Workspace đo trên lab (3 CPU mỗi worker). Hai môi trường khác nhau nên các số chỉ dùng để so bậc độ lớn (giây và trăm MiB thường trực so với 0), không so trực tiếp.
 - Benchmark control plane N=10/20/50 và baseline kind/vCluster (`operator/test/isolation/bench_test.go`, `TestBenchmark`; [benchmark.md](../report/benchmark.md), [benchmark-control-plane.csv](../report/benchmark-control-plane.csv)).
 - `make cluster-verify` kiểm `proxy_view`: qua Capsule Proxy, member chỉ thấy Namespace của Workspace mình và không thấy Node (`deploy/cluster/verify.sh`).
-
-## Câu hỏi cần soát
-
-- Baseline kind/vCluster đo trên máy dev (16 CPU, 15 GiB), còn số 10–20 s của Workspace đo trên lab. Hai môi trường khác nhau; có cần đo lại cùng một nơi trước khi dùng làm số so sánh trong luận văn không?
-- Docs không đánh giá HNC, Kiosk hay Rancher Projects. Có cần thêm các phương án này không? Nếu thêm thì cần một lần thử hoặc đọc tài liệu có nguồn, hiện chưa có.

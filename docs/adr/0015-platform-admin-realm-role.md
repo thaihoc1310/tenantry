@@ -37,8 +37,8 @@ Không phụ thuộc Keycloak. Không chọn: tách nơi giữ quyền mạnh nh
 - Một lần đăng nhập, một loại phiên, một bộ thời hạn; admin dùng mọi tính năng account của Keycloak (reset, MFA khi bật) như người khác.
 - Gỡ `platform-admin` có hiệu lực trên portal chậm nhất 5 phút, ở lần refresh kế tiếp; trong lúc Keycloak không trả lời, request nhận 500 chứ không dùng tiếp role cũ ([06 mục 3.2, 5](../architecture/06-security-and-identity.md)).
 - Role có trong mọi token của admin, kể cả token cho Kubernetes; vô hại vì Kubernetes không map realm role ([06 mục 2](../architecture/06-security-and-identity.md)).
-- Account admin dùng chung trang đăng nhập public với khách hàng. Realm export bật chống brute-force nhưng không bắt OTP cho admin; MFA enrollment UI nằm ở stretch (PRODUCT-PLAN §25).
-- Ai gán được realm role là tự phong admin được. Client `tenantry-sync` có `manage-users` nên làm được việc đó; secret của nó mạnh ngang Platform Admin ([06 mục 7](../architecture/06-security-and-identity.md), [known-limitations](../report/known-limitations.md) mục 24). `deploy/cluster/keycloak-fgap.py` được viết để thu hẹp nó bằng fine-grained admin permissions v2: không `map-roles`, không reset password, và mọi user giữ `platform-admin` được đưa vào group `tenantry:platform-admins` mà `tenantry-sync` bị cấm chạm. Lần áp trên lab ở M12 thất bại ở ca dương và đã rollback, nên hiện tại secret của `tenantry-sync` vẫn mạnh ngang Platform Admin.
+- Account admin dùng chung trang đăng nhập public với khách hàng. Realm export bật chống brute-force nhưng không bắt OTP cho admin; MFA enrollment UI nằm ở stretch (PRODUCT-PLAN §25). MVP và demo không bật OTP. Khuyến nghị cho production: bắt OTP cho account giữ `platform-admin` bằng conditional OTP theo role của Keycloak (cấu hình realm, không đổi code).
+- Ai gán được realm role là tự phong admin được. Bản đầu, client `tenantry-sync` có `manage-users` nên làm được việc đó, và secret của nó mạnh ngang Platform Admin ([06 mục 7](../architecture/06-security-and-identity.md), [known-limitations](../report/known-limitations.md) mục 24). `deploy/cluster/keycloak-fgap.py` thu hẹp nó bằng fine-grained admin permissions v2: không `map-roles`, không reset password, và mọi user giữ `platform-admin` được đưa vào group `tenantry:platform-admins` mà `tenantry-sync` bị cấm chạm. Lần áp đầu ở M12 thất bại và đã rollback; bản sửa sau đó xanh trên lab, `tenantry-sync` chỉ còn `query-users` và `query-groups` cùng các permission của FGAP.
 - Muốn tách admin ra realm riêng về sau thì phải thêm issuer thứ hai cho API; dữ liệu Organization không đổi vì không gắn với role.
 
 ## Kiểm chứng
@@ -47,8 +47,4 @@ Không phụ thuộc Keycloak. Không chọn: tách nơi giữ quyền mạnh nh
 - `TestRefresh` (`backend/internal/httpapi/refresh_test.go`): role gỡ ở Keycloak vẫn còn tới khi access token hết hạn, sau lần refresh thì mất; `TestRefreshWhileKeycloakDown`: Keycloak không trả lời thì 500, không dùng role cũ.
 - `web/e2e/onboarding.spec.ts` "a person without the role cannot open the admin area": người không có role bị đưa về `/`, `GET /api/v1/admin/organizations` trả 403.
 - Admin làm việc qua portal trên lab: `web/e2e/admin.spec.ts`, `web/e2e/health.spec.ts`; [e2e-personas](../report/e2e-personas.md) dùng account `admin` duyệt Organization và cấp node.
-- Test cho bản thu hẹp (chưa áp): `TestLiveKeycloakNarrowed` (`backend/internal/keycloak/client_live_test.go`) kiểm 403 cho cấp `platform-admin`, reset password, sửa, disable hay đưa Platform Admin vào group; chỉ chạy khi đặt `KEYCLOAK_TEST_FGAP`. Chưa có lần chạy PASS trên lab: lần áp FGAP ở M12 đã rollback.
-
-## Câu hỏi cần soát
-
-- Có cần bắt OTP cho account giữ `platform-admin` trước demo không (conditional OTP theo role là cấu hình realm, không đổi code)?
+- Test cho bản thu hẹp: `TestLiveKeycloakNarrowed` (`backend/internal/keycloak/client_live_test.go`) kiểm 403 cho cấp `platform-admin`, reset password, sửa, disable hay đưa Platform Admin vào group; chỉ chạy khi đặt `KEYCLOAK_TEST_FGAP`. FGAP đã bật trên lab ở M12; kết quả chạy test này trên lab chưa được ghi vào report nào. `make cluster-verify` (nhánh FGAP bật) chạy `keycloak-fgap.py check`.

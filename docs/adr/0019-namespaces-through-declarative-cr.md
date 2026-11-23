@@ -53,7 +53,6 @@ Không chọn: API là tiến trình public-facing; cho nó quyền ghi Namespac
 - Pod trong Namespace vừa tạo bị từ chối vài giây tới khi NetworkPolicy baseline có mặt ([known-limitations](../report/known-limitations.md) mục 16).
 - Hai lớp quyền có thể lệch có chủ ý: OrgOwner không thuộc group được bind tạo được Namespace trên portal nhưng `kubectl` bị từ chối ([06 mục 4](../architecture/06-security-and-identity.md)).
 - Owner của Workspace có quyền admin trong Namespace nên sửa được ProxySetting của Namespace mình ([known-limitations](../report/known-limitations.md) mục 5); không liên quan đường portal nhưng là hệ quả của việc Namespace cũng tạo được bằng `kubectl`.
-- [03 mục 7a](../architecture/03-flows.md) còn ghi mã `NAMESPACE_QUOTA_EXCEEDED`; code và OpenAPI dùng `409 CONFLICT` kèm `details.limit` (IMPLEMENTATION-PLAN §5.1, mục "Như đã làm ở M6").
 
 ## Kiểm chứng
 

@@ -49,7 +49,7 @@ Mặt xấu và giới hạn:
 - Cluster `Unavailable` thì Workspace ở đó hiện "unknown", Operation giữ `Pending`, không có đường dự phòng ([04 mục 6](../architecture/04-state-machines.md)).
 - Chuyển Cluster phải xóa Workspace cũ, và xóa là mất hết kể cả PVC ([§17.4](../PRODUCT-PLAN.md)).
 - `k8s_name` là `UNIQUE` toàn platform, không theo Cluster. Workspace vừa xóa giữ slug trong 10 phút quarantine, nên tạo lại cùng slug ở Cluster khác cũng phải chờ ([known-limitations](../report/known-limitations.md) mục 8).
-- Bất biến được giữ ở API và DB, không ở CRD: `PlatformWorkspace.spec.clusterId` không có luật CEL `self == oldSelf` (`operator/api/v1alpha1/platformworkspace_types.go`), khác với `nodeName` và `organizationId` của `PlatformNodeGrant`. Operator không đọc trường này để quyết định gì.
+- Bất biến được giữ ở cả ba tầng: API, DB, và CRD. `spec.clusterId`, `spec.organizationId`, `spec.workspaceId` của `PlatformWorkspace` có luật CEL `self == oldSelf` (`operator/api/v1alpha1/platformworkspace_types.go`), như `nodeName` và `organizationId` của `PlatformNodeGrant`. Ai ghi được CR, kể cả worker có lỗi, cũng không chuyển được Workspace sang Organization hay Cluster khác.
 - Cùng lý do, Shared ↔ Dedicated, đổi node và đổi shared pool của Workspace cũng không đổi trực tiếp được ([§17.2](../PRODUCT-PLAN.md)).
 
 ## Kiểm chứng
@@ -57,8 +57,5 @@ Mặt xấu và giới hạn:
 - `TestCreateWorkspaceRefusals` (`backend/internal/httpapi/workspaces_test.go`): tạo Workspace trên Cluster chưa có grant hoặc không tồn tại trả `409 CLUSTER_NOT_GRANTED`.
 - `TestPatchWorkspace` (cùng file): đổi tên và resize; resize khi Cluster `Maintenance` trả `409 CLUSTER_NOT_READY`.
 - `TestClusterScopeAndUnavailable` (`backend/internal/outbox/outbox_test.go`): worker của `cluster-b` không lấy event của `cluster-a`; event của Cluster `Unavailable` không được giao, `attempts` giữ 0, Operation giữ `Pending`, giao lại khi Cluster `Ready`.
+- Envtest `TestWorkspaceIdsImmutable` (`operator/internal/controller/platformworkspace_controller_test.go`): kube-apiserver từ chối đổi `organizationId`, `workspaceId`, `clusterId` với message `... is immutable`; đổi `displayName` vẫn được.
 - Chưa kiểm: không có test gửi `clusterId` vào `PATCH` (schema đã chặn, nhưng chưa có ca test riêng). Chưa kiểm với Cluster thứ hai thật.
-
-## Câu hỏi cần soát
-
-- Có nên thêm CEL `self == oldSelf` cho `spec.clusterId` (và `organizationId`, `workspaceId`) của `PlatformWorkspace` để bất biến được giữ cả ở tầng CRD không?

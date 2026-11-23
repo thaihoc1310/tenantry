@@ -55,8 +55,6 @@ Cấu hình mặc định của chart bind ServiceAccount vào cluster-admin. L�
 - `web/e2e/access.spec.ts` "the console signs in someone in 20 groups": user 22 group (JWT 3033 byte) đăng nhập Headlamp được, cookie 3067/3071 byte (IMPLEMENTATION-PLAN, kết quả M11 track A; known-limitations mục 3).
 - [token-size](../report/token-size.md): đường Traefik → Headlamp → Capsule Proxy trả 201 với token 21 group, kể cả thêm header 64 KiB.
 - `TestKubeconfigAndConsole` (`backend/internal/httpapi/workspaces_test.go`): deep link vào Namespace, 404 cho người không thấy Workspace, 409 `CLUSTER_NOT_READY` khi Cluster `Unavailable`.
+- Tính năng Helm của Headlamp đang tắt (§12.4 "disable Helm/cluster features"): Headlamp v0.46.0 trên lab chạy không có cờ `-enable-helm` (mặc định tắt) và thư mục `/headlamp/plugins` rỗng, nên không có Helm operations hay app catalog. Kiểm bằng args của Deployment và `ls` trong Pod ngày 2026-11-23, chưa có test tự động. Dù có bật, Helm của Headlamp cũng chỉ chạy bằng token của user qua Capsule Proxy.
 - Logout rồi đổi user trên Headlamp (§12.4 "test logout và đổi user"): chưa kiểm trên lab.
-
-## Câu hỏi cần soát
-
-- §12.4 yêu cầu "disable Helm/cluster features không phù hợp" và "test JWT header size/WebSocket". Header size đã đo; WebSocket (exec, log stream qua Headlamp) và việc tắt tính năng Helm của Headlamp chưa thấy test hay cấu hình nào trong `headlamp.yaml`.
+- WebSocket qua Headlamp (exec, log stream): chưa kiểm.

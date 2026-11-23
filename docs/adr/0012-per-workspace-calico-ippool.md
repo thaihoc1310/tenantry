@@ -31,7 +31,7 @@ Cô lập mạng giữa Workspace là việc của NetworkPolicy theo label tena
 
 ### Một pool Calico chung cho mọi tenant, chỉ dùng NetworkPolicy
 
-Cô lập vẫn đạt vì NetworkPolicy chọn theo label. Không chọn vì mất vùng địa chỉ riêng cho Organization và Workspace mà [§1](../PRODUCT-PLAN.md) đã cam kết; IP của Pod không còn cho biết nó thuộc Workspace nào.
+Cô lập traffic vẫn đạt vì NetworkPolicy chọn theo label. Không chọn vì địa chỉ IP cũng là một tài nguyên phải cô lập: với pool chung, một Workspace tạo thật nhiều Pod (hoặc Pod chết rồi tạo lại liên tục) làm cạn IP của mọi tenant trên cùng node. Với IPPool riêng, Workspace đó chỉ làm cạn block của chính nó. Thêm vào đó, trong cụm một IP cho biết ngay nó thuộc Workspace nào, và CIDR của Workspace đã xóa phải qua quarantine trước khi cấp lại, nên IP cũ không rơi vào tay tenant khác ngay. Lý do không phải định danh với bên ngoài: `natOutgoing: true` nên bên ngoài chỉ thấy IP của node.
 
 ### Một IPPool cho mỗi Organization
 
@@ -56,7 +56,8 @@ Không chọn: phải sửa `podSubnet`, `--cluster-cidr`, tạo lại pool mặ
 ## Hệ quả
 
 Mặt tốt:
-- IP của Pod nằm đúng CIDR của Workspace và cho biết Workspace của nó.
+- Một Workspace dùng hết IP chỉ chặn chính nó: Pod mới của nó không có địa chỉ, Workspace khác không bị ảnh hưởng (panel "Workspace IP usage" trên dashboard cho thấy mức dùng từng CIDR).
+- Trong cụm, IP của Pod nằm đúng CIDR của Workspace và cho biết Workspace của nó; bên ngoài cụm thì không, vì `natOutgoing`.
 - Thêm CIDR vào NetworkPool chỉ là sửa DB; IPPool tạo riêng cho từng Workspace lúc cấp ([§7.1](../PRODUCT-PLAN.md)).
 
 Mặt xấu và giới hạn:
@@ -76,7 +77,3 @@ Mặt xấu và giới hạn:
 - `make cluster-verify`: "kube-proxy detects local Pods by interface, not by clusterCIDR" và "a Pod outside clusterCIDR calls a Service on another node without SNAT" (`deploy/cluster/verify.sh`).
 - Benchmark N=50: mọi Workspace xóa sạch, không còn IPPool hay IPAM block nào ([benchmark.md](../report/benchmark.md)).
 - Chưa kiểm: `calicoctl ipam release` cho IP rò, vì chưa có IP rò thật (known-limitations, mục "Chưa kiểm hết").
-
-## Câu hỏi cần soát
-
-- Docs nói Workspace "được cấp" một CIDR nhưng không ghi rõ vì sao cần CIDR riêng khi cô lập đã do NetworkPolicy lo. Lý do ở phương án "pool chung" (vùng địa chỉ của Organization, IP cho biết Workspace) là suy ra từ §1 và §7.1; cần tác giả xác nhận hoặc bổ sung lý do gốc (ví dụ firewall phía ngoài theo dải của Organization).
