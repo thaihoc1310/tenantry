@@ -17,3 +17,4 @@ web/dist/
 *.tsbuildinfo
 # CodeGraph index (local tool)
 .codegraph/
+__pycache__/
