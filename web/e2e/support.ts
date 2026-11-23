@@ -167,7 +167,13 @@ export async function succeeded(page: Page, opId: string) {
 // active Organization for them with a grant on cluster-a, and waits for its
 // group admins to reach Keycloak, so it can be bound. maxWorkspaces bounds
 // both the entitlement and the grant.
-export async function workspaceOrganization(browser: Browser, prefix: string, maxWorkspaces = 2, maxGroups = 5) {
+export async function workspaceOrganization(
+  browser: Browser,
+  prefix: string,
+  maxWorkspaces = 2,
+  maxGroups = 5,
+  maxMembers = 5,
+) {
   const owner = await signUp(browser)
   const admin = await logIn(browser, 'admin', adminPassword(), '/admin/organizations')
   const slug = `${prefix}${Date.now().toString(36).slice(-6)}`
@@ -180,7 +186,7 @@ export async function workspaceOrganization(browser: Browser, prefix: string, ma
       displayName: `E2E ${slug}`,
       description: 'End-to-end test of Workspaces.',
       ownerEmail: owner.who.email,
-      entitlement: { maxMembers: 5, maxGroups, maxWorkspacesTotal: maxWorkspaces },
+      entitlement: { maxMembers, maxGroups, maxWorkspacesTotal: maxWorkspaces },
       clusterGrant: {
         clusterId: 'cluster-a',
         maxWorkspaces,
@@ -386,13 +392,19 @@ export function groupsOf(jwt: string): string[] {
 // member signs a newcomer up and brings them into the organization through
 // an invitation naming groups; it returns once Keycloak has every membership,
 // so the person's next token names the groups.
-export async function member(browser: Browser, owner: Page, slug: string, groups: { id: string; name: string }[]) {
+export async function member(
+  browser: Browser,
+  owner: Page,
+  slug: string,
+  groups: { id: string; name: string }[],
+  role: 'OrgMember' | 'OrgAdmin' = 'OrgMember',
+) {
   const who = await signUp(browser)
   const inv = await api(
     owner,
     'POST',
     `/organizations/${slug}/invitations`,
-    { email: who.who.email, role: 'OrgMember', groupIds: groups.map((g) => g.id) },
+    { email: who.who.email, role, groupIds: groups.map((g) => g.id) },
     crypto.randomUUID(),
   )
   expect(inv.status, JSON.stringify(inv.body)).toBe(201)

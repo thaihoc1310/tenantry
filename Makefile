@@ -78,6 +78,13 @@ demo-purge-test-data: ## Hard purge of e2e*/optest* orgs and accounts (DB, Keycl
 e2e: ## End-to-end tests of the portal on the lab (signs up test accounts e2e*; E2E_SLOW=1 adds the 5-minute refresh test)
 	deploy/cluster/e2e.sh
 
+.PHONY: load-test load-test-check
+load-test: ## Load on the platform API with k6 (ADR-0021): LOAD=dry (1 VU, 30 s) or LOAD=full (10->100 VUs, ~16 min, direct network only); web/e2e/load.spec.ts
+	@test "$(LOAD)" = dry -o "$(LOAD)" = full || { echo "set LOAD=dry or LOAD=full"; exit 2; }
+	LOAD=$(LOAD) deploy/cluster/e2e.sh load.spec.ts
+load-test-check: ## Offline check of test/load/api.js against a stand-in API (docker, no lab)
+	test/load/mock.py
+
 .PHONY: keycloak-live-test
 keycloak-live-test: ## Check the Keycloak client against the lab's Keycloak, as tenantry-sync (after make deploy)
 	deploy/cluster/keycloak-live-test.sh
