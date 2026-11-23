@@ -63,7 +63,12 @@ func optestOrg(t *testing.T, adm *portal, grant map[string]any) (owner *account,
 	orgID = org.Organization.ID
 	t.Cleanup(func() {
 		for end := time.Now().Add(20 * time.Minute); time.Now().Before(end); time.Sleep(15 * time.Second) {
-			if code := owner.api(t, http.MethodDelete, "/organizations/"+orgID, nil, nil); code == http.StatusNoContent || code == http.StatusNotFound {
+			code := owner.api(t, http.MethodDelete, "/organizations/"+orgID, nil, nil)
+			if code == http.StatusUnauthorized || code == http.StatusForbidden {
+				// The owner's session can end during a long run: the Admin deletes it.
+				code = adm.api(t, http.MethodDelete, "/admin/organizations/"+orgID, nil, nil)
+			}
+			if code == http.StatusNoContent || code == http.StatusNotFound {
 				t.Logf("Organization %s deleted", slug)
 				return
 			}
