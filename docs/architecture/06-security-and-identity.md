@@ -145,15 +145,16 @@ sequenceDiagram
   else access_expires_at còn hạn
     API-->>B: xử lý request với user + realm_roles trong row
   else access token đã hết hạn
-    API->>DB: SELECT ... FOR UPDATE row phiên
-    API->>KC: grant refresh_token (client portal + secret)
+    API->>DB: đọc row phiên rồi trả connection (không khóa)
+    Note over API: singleflight: mỗi phiên chỉ một lần refresh trong process
+    API->>KC: grant refresh_token (client portal + secret), không giữ connection DB
     alt Keycloak từ chối (invalid_grant)
-      API->>DB: DELETE row
+      API->>DB: đọc lại row: replica khác vừa renew thì dùng row đó, không thì DELETE row
       API-->>B: 401 UNAUTHENTICATED → SPA chuyển /auth/login
     else Keycloak không trả lời
       API-->>B: 500 INTERNAL, giữ row, request sau thử refresh lại
     else Thành công
-      API->>DB: UPDATE realm_roles, refresh token, access_expires_at, expires_at
+      API->>DB: UPDATE … WHERE refresh_token_enc = <cũ> (optimistic; replica khác đã renew thì giữ row của nó)
       API-->>B: xử lý request
     end
   end
@@ -165,7 +166,7 @@ sequenceDiagram
 - **Xác minh email**: realm bật `verifyEmail`, nên user tự đăng ký phải bấm link trong thư thì token mới có `email_verified=true`. Thiếu bước này, ai cũng đăng ký được bằng email của người khác và nhận lời mời thay họ (`03-flows.md` mục 3). Với Keycloak 26.8 và `verifyEmail` bật, form đăng ký chỉ hỏi email và tên, không hỏi mật khẩu: user đặt mật khẩu sau khi bấm link xác minh, nên người không giữ hộp thư đó không giữ chỗ được account. Giữ nguyên hành vi mặc định này. Ở cụm MVP, Keycloak gửi thư vào Mailpit, một hộp thư giả chạy trong namespace `keycloak`: thư không ra ngoài, chỉ người có quyền `port-forward` đọc được. Mailpit không có Ingress, vì nó giữ cả link xác minh và link đặt lại mật khẩu của mọi user. Hệ quả: người ngoài chưa tự đăng ký được nếu không có người vận hành lấy link giúp. Đổi sang SMTP thật chỉ là sửa cấu hình SMTP của realm, không đổi code.
 - **Cookie phiên** là 32 byte ngẫu nhiên. DB chỉ lưu `sha256` của nó, nên đọc được bảng `sessions` cũng không dựng lại được cookie.
 - **Token trong DB**: chỉ refresh token, mã hóa AES-256-GCM bằng khóa nằm trong Secret. Access token và ID token không được lưu — API chỉ cần claim `realm_access.roles` (chép vào `realm_roles`) và thời điểm hết hạn.
-- **Refresh lười**: chỉ refresh khi có request tới và access token đã hết hạn; khóa row phiên trong lúc refresh để hai request đồng thời không cùng gọi Keycloak. Keycloak từ chối refresh token (`invalid_grant`) thì phiên chết; Keycloak không trả lời thì request đó nhận 500, phiên giữ nguyên và request sau thử lại — không dùng tiếp role cũ, để lời hứa "gỡ `platform-admin` có hiệu lực trong 5 phút" vẫn đúng.
+- **Refresh lười**: chỉ refresh khi có request tới và access token đã hết hạn; trong một process, singleflight cho mỗi phiên đảm bảo chỉ một lần gọi Keycloak; không giữ connection DB hay lock trong lúc chờ Keycloak (bản cũ giữ `SELECT … FOR UPDATE` và đã làm cạn pool, IMPLEMENTATION-PLAN M12); ghi kết quả bằng `UPDATE` có điều kiện trên refresh token cũ. Keycloak từ chối refresh token (`invalid_grant`) thì phiên chết; Keycloak không trả lời thì request đó nhận 500, phiên giữ nguyên và request sau thử lại — không dùng tiếp role cũ, để lời hứa "gỡ `platform-admin` có hiệu lực trong 5 phút" vẫn đúng.
 - **Role `platform-admin`** đọc lại ở mỗi lần refresh, nên gỡ role có hiệu lực trên portal sau tối đa 5 phút.
 - **Quyền trong Organization không nằm trong phiên**: mỗi request đọc `organization_members`, nên remove member hay đổi role có hiệu lực ngay ở request kế tiếp.
 - **Logout** (`POST /auth/logout`): xóa row, xóa cookie, rồi gọi endpoint logout của Keycloak bằng refresh token. SSO session kết thúc, nên Headlamp và kubelogin của user cũng phải đăng nhập lại — "đăng xuất" nghĩa là ra khỏi mọi nơi.

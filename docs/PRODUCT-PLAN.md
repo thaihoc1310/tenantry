@@ -1069,8 +1069,7 @@ Mỗi Cluster có endpoint riêng. Capsule Proxy xác thực bearer token, filte
 
 File tải từ portal chứa:
 
-- proxy server URL;
-- CA data;
+- proxy server URL (không kèm CA data: kube-a dùng cert Let's Encrypt được tin sẵn);
 - context name;
 - OIDC exec credential plugin config;
 - Workspace ID chỉ để đặt context/UX, authorization vẫn do token/RBAC.

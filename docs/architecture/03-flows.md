@@ -658,7 +658,7 @@ sequenceDiagram
   API->>DB: COUNT workspace_namespaces chưa Deleted + 1 ≤ namespace_quota của Solar?
   alt Vượt namespace quota của Workspace
     API->>DB: ROLLBACK
-    API-->>SPA: 409 NAMESPACE_QUOTA_EXCEEDED
+    API-->>SPA: 409 CONFLICT (details.limit = namespaceQuota)
   end
   API->>DB: INSERT workspace_namespaces acme-solar-frontend source=portal state=Desired
   API->>DB: INSERT operations namespace.create, outbox workspace.apply, audit namespace.create
@@ -687,7 +687,7 @@ sequenceDiagram
 - Bước 12 và 17: `workspace_namespaces.name` giữ tên đầy đủ, `spec.namespaces` giữ hậu tố (`02-data-model.md`).
 - Bước 19: ServiceAccount của operator là Capsule user và owner của mọi Tenant, nên Namespace đi đúng đường owner của Capsule (prefix, quota Tenant); cấu hình Capsule `users` và kiểm lại trên Capsule 0.15.x ở M6 (`IMPLEMENTATION-PLAN.md` M6).
 - Bước 22: annotation IPPool do Capsule gắn từ `Tenant.namespaceOptions.additionalMetadata` mà controller render, không phải controller patch Namespace; tenant bị Capsule cấm sửa annotation này [7.3]. Namespace mới dùng chung quota của Workspace, không nhận phần riêng ([5.4]).
-- NFR: Namespace create p95 dưới 15 giây [23]; mã `NAMESPACE_QUOTA_EXCEEDED` thêm vào enum `ErrorCode` khi làm endpoint.
+- NFR: Namespace create p95 dưới 15 giây [23]; vượt `namespaceQuota` trả `409 CONFLICT` với `details.limit = namespaceQuota` (không có mã riêng).
 
 ### 7b. Namespace tạo bằng kubectl hiện lên portal qua status sync
 
