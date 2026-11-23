@@ -22,6 +22,10 @@ Tóm tắt: 13 Đạt, 2 Đạt một phần (mục 1 và 15), 0 Chưa.
 | 14 | Xoá một Workspace nhả đúng resource, CIDR, node reservation, không ảnh hưởng Workspace còn lại trên node | Đạt | [e2e-personas](e2e-personas.md): xoá Water, Green vẫn Ready; wk3 còn 1500m trên 2500m (Green giữ 1 CPU / 4Gi / 10 Pod). CIDR: `web/e2e/network.spec.ts` (IPPool và IPAM block mất sau khi xoá, tên còn giữ trong quarantine). [benchmark](benchmark.md) N=50: mọi Workspace xoá sạch, không còn IPPool hay IPAM block. [failure-cluster](failure-cluster.md): xoá có Pod kẹt và `:force`. Backend `TestDedicatedReservationLifecycle`, `TestDeleteRelease`. | |
 | 15 | E2E, concurrency và benchmark report (kèm baseline) trình bày trong luận văn | Đạt một phần | Report đã có trong `docs/report/`: [e2e-personas](e2e-personas.md), [isolation-cluster](isolation-cluster.md), [failure-cluster](failure-cluster.md), [benchmark](benchmark.md) (N=10/20/50, baseline kind/vCluster, race trước/sau sửa, Capsule mặc định so với đã chỉnh), [token-size](token-size.md), [observability](observability.md), [known-limitations](known-limitations.md). Concurrency phía API: map §24.5 sang test trong IMPLEMENTATION-PLAN M12 (`TestCreateWorkspaceReservesTheGrant`, `TestNetworkAllocation`, `TestDedicatedWorkspaces`, `TestIdempotentConcurrentRepeats`, …). | Chưa trình bày trong luận văn. Chưa có một lần chạy trọn bộ `make e2e` (Playwright) trên lab được ghi lại; kết quả từng spec nằm rải ở commit và ở mục kết quả M11. Baseline kind/vCluster đo trên máy dev, khác lab, nên chỉ so bậc độ lớn (ADR-0001). |
 
+## Đã kiểm thêm sau lần soát đầu
+
+- Quyền của SA `tenantry-worker-provisioning` (ADR-0010): `make cluster-verify` có check "the provisioning worker may write tenantry.io CRs and nothing else". Check hỏi `kubectl auth can-i` với đúng các group của token SA. Được: create, patch, delete trên `platformworkspaces`, `platformnodegrants`, `platformsharedpools`; get `platformnodeinventories`. Bị từ chối: ghi `status`, ghi inventory, Secret, Node, Namespace, Pod, Tenant, IPPool, RoleBinding, ClusterRoleBinding, impersonate. Trên lab ngày 2026-11-23: cluster-verify 38/38.
+
 ## Mục chưa kiểm (gom từ ADR và known-limitations)
 
 | Mục | Nguồn | Vì sao chưa |
@@ -29,15 +33,14 @@ Tóm tắt: 13 Đạt, 2 Đạt một phần (mục 1 và 15), 0 Chưa.
 | Đăng ký Cluster từ portal trên lab | DoD mục 1 | Chỉ có test backend; `cluster-a` có từ M5, không ghi lại cách |
 | Cluster thứ hai thật, hai worker, Cluster Agent | ADR-0008, ADR-0009, ADR-0010 | Phase 2 |
 | Pod Shared `Pending` khi pool dùng thật vượt dung lượng; mức dùng thực cạnh ceiling | ADR-0017 | Chưa dựng tải đủ lớn; dashboard chưa có panel mức dùng thực |
-| Node `Overcommitted` do drift, node NotReady làm Workspace `Degraded` | ADR-0011 | Chỉ có unit test `TestCapacityState` |
+| Node `Overcommitted` do drift, node NotReady làm Workspace `Degraded` | ADR-0011 | Chỉ có unit test `TestCapacityState`. Trên lab cần dừng kubelet hoặc đổi allocatable của node, tức phải vào node bằng ssh và sudo; track B không có quyền đó và không dùng `kubectl debug node` thay thế |
 | `calicoctl ipam release` cho IP rò | ADR-0012, known-limitations "Chưa kiểm hết" | Chưa gặp IP rò thật |
 | Logout rồi đổi user trên Headlamp; WebSocket (exec, log stream) qua Headlamp | ADR-0006 | Chưa có test |
 | Logout portal kéo theo Headlamp và kubelogin phải đăng nhập lại | ADR-0022 | Chỉ kiểm với Keycloak giả (`TestLogout`) |
 | Phiên sống quá access token trên lab (`E2E_SLOW=1`) | ADR-0022 | Chưa có kết quả ghi lại |
 | Binary kubelogin thật trong test tự động | ADR-0013 | Test lấy token bằng PKCE như kubelogin |
-| Audit log của kube-apiserver cho request qua Capsule Proxy | ADR-0013 | Cơ chế rút từ mã nguồn, chưa xem audit log |
-| `TestLiveKeycloakNarrowed` trên lab với FGAP bật | ADR-0015 | Chưa có kết quả ghi lại (cluster-verify nhánh FGAP thì đã 37/37) |
-| Quyền của SA `tenantry-worker-provisioning` trong `cluster-verify` | ADR-0010 | Chỉ khai báo trong chart |
+| Audit log của kube-apiserver cho request qua Capsule Proxy | ADR-0013 | Audit tắt trên lab: Pod `kube-apiserver-fdp-k8s-cp1` không có `--audit-policy-file`, `--audit-log-path` (đọc ngày 2026-11-23). Bật audit là sửa manifest static Pod trên control-plane node, cần ssh và sudo. Log của Capsule Proxy cũng không giúp được: Proxy chạy `--zap-log-level=2`, còn dòng "impersonating for the current request" chỉ ghi ở mức 4. Cơ chế hiện chỉ rút từ mã nguồn và ClusterRole của Proxy |
+| `TestLiveKeycloakNarrowed` trên lab với FGAP bật | ADR-0015 | Chưa có kết quả ghi lại (cluster-verify nhánh FGAP thì đã qua) |
 | Test `PATCH` có `clusterId` ở API | ADR-0008 | Schema chặn; CRD đã chặn bằng CEL (`TestWorkspaceIdsImmutable`) |
 | NFR Namespace create p95 dưới 15 giây | ADR-0019 | Chưa có số đo riêng |
 | Thông lượng outbox dưới tải; DB pool dưới tải | ADR-0021 | Benchmark tạo CR trực tiếp, bỏ qua API |
