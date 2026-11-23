@@ -1,6 +1,6 @@
 # Observability trên lab: Prometheus, Grafana và dashboard Tenantry
 
-Cài bằng `deploy/cluster/90-observability.sh` (IMPLEMENTATION-PLAN M12 mục 1), Namespace `observability`, chạy trên node system (`fdp-k8s-wk1`). Kiểm lần cuối ngày 2026-11-23: 8/8 target `up`, Grafana nạp dashboard, cả 20 panel có truy vấn chạy được.
+Cài bằng `deploy/cluster/90-observability.sh` (IMPLEMENTATION-PLAN M12 mục 1), Namespace `observability`, chạy trên node system (`fdp-k8s-wk1`). Kiểm lần cuối ngày 2026-11-23: 8/8 target `up`, Grafana nạp dashboard, cả 20 panel có truy vấn chạy được. Lúc đó lab rảnh, backend `41713e6`: DB pool api 0/20, worker-groupsync 1/6, worker-provisioning 3/6 connection, không có lần chờ nào.
 
 ## Mở Grafana
 
