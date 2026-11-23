@@ -36,7 +36,11 @@ people would do it, and touches nothing but the organization `acme`:
 4. the onboarding policy goes back to the seed's defaults.
 
 Accounts are never deleted. Without `CONFIRM=acme` it prints the plan and
-changes nothing.
+changes nothing. A GET, PUT or DELETE that fails on the network (timeout,
+reset) is tried again up to 3 times, 2 then 4 seconds apart; a POST is not.
+Every step is safe to run again, so a reset that stops half-way is finished
+by running it again. `python3 -m unittest deploy/demo/test_lab.py` checks
+the retry.
 
 ## Passwords
 

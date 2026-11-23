@@ -133,22 +133,51 @@ class Portal:
         return next((c.value for c in self.jar if c.name == "__Host-tenantry_csrf"), "")
 
     def api(self, method, path, body=None, idempotent=False):
+        """One call; (status, body). GET, PUT and DELETE are tried again on a
+        network failure (retried), the others are not."""
         data = None if body is None else json.dumps(body).encode()
-        req = urllib.request.Request(f"https://{PORTAL}/api/v1{path}", data=data, method=method)
-        req.add_header("Content-Type", "application/json")
-        req.add_header("X-CSRF-Token", urllib.parse.unquote(self.csrf()))
-        if idempotent:
-            req.add_header("Idempotency-Key", str(uuid.uuid4()))
-        try:
-            with self.http.open(req, timeout=30) as r:
-                raw = r.read()
-                return r.status, (json.loads(raw) if raw else None)
-        except urllib.error.HTTPError as e:
-            raw = e.read()
+        key = str(uuid.uuid4()) if idempotent else None
+
+        def call():
+            req = urllib.request.Request(f"https://{PORTAL}/api/v1{path}", data=data, method=method)
+            req.add_header("Content-Type", "application/json")
+            req.add_header("X-CSRF-Token", urllib.parse.unquote(self.csrf()))
+            if key:
+                req.add_header("Idempotency-Key", key)
             try:
-                return e.code, json.loads(raw)
-            except ValueError:
-                return e.code, {"message": raw.decode(errors="replace")[:200]}
+                with self.http.open(req, timeout=30) as r:
+                    raw = r.read()
+                    return r.status, (json.loads(raw) if raw else None)
+            except urllib.error.HTTPError as e:
+                raw = e.read()
+                try:
+                    return e.code, json.loads(raw)
+                except ValueError:
+                    return e.code, {"message": raw.decode(errors="replace")[:200]}
+
+        return retried(f"{method} {path}", call) if method in SAFE_TO_REPEAT else call()
+
+
+# Methods the portal API answers the same way when repeated: a lost answer
+# can be asked again. POST (reject, force) is not repeated.
+SAFE_TO_REPEAT = {"GET", "PUT", "DELETE"}
+
+
+def retried(what, call, tries=3, backoff=2.0, sleep=time.sleep):
+    """call(), tried again after a network failure (timeout, reset, refused):
+    at most tries times, waiting backoff, then twice as long. An HTTP answer,
+    whatever its status, is not a failure here."""
+    for attempt in range(tries):
+        try:
+            return call()
+        except urllib.error.HTTPError:
+            raise
+        except (urllib.error.URLError, OSError) as e:
+            if attempt == tries - 1:
+                raise
+            wait_s = backoff * 2 ** attempt
+            print(f"  {what}: {e}; trying again in {wait_s:.0f}s", flush=True)
+            sleep(wait_s)
 
 
 def wait(what, check, timeout=600, every=5):
