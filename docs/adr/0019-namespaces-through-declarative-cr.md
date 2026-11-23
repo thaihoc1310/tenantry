@@ -65,4 +65,5 @@ Không chọn: API là tiến trình public-facing; cho nó quyền ghi Namespac
   - Bản đầu (operator a8928a8): phía người dùng (Operation) p95 72,6 s, vì probe Capsule Proxy chờ 30 s mỗi lần Proxy chưa thấy Namespace mới. Đã sửa (e35daa1: thử lại sau 2 s).
   - Sau bản sửa đó: p95 13,8 s và 15,0 s ở hai lần đo, nhưng có Operation xong trước khi NetworkPolicy có mặt.
   - Bản hiện tại (d96f980, operator rev 15): Operation chỉ xong khi mọi Namespace đã có đủ bản sao LimitRange và NetworkPolicy. Phía cụm p95 9 s; phía người dùng p95 16,1 s (p50 11,9 s, max 18,1 s), tức **không đạt** 15 s ở phía người dùng.
-  - Tạo Workspace: phần lớn 3–5 s, nhưng 65–69 s khi GlobalTenantResource giữ Ready=False sau race của Capsule tới lần resync 60 s. Bản sửa 3f15433 dựa vào bản sao có thật khi status chỉ chậm vì race; chưa deploy và chưa đo lại.
+  - Tạo Workspace ở lần đo thứ tư: phần lớn 3–5 s, nhưng 65–69 s khi GlobalTenantResource giữ Ready=False sau race của Capsule tới lần resync 60 s.
+  - Bản cuối (3f15433, operator rev 16, lần đo thứ năm): khi status chỉ chậm vì race, operator dựa vào bản sao có thật. Tạo Workspace 3,1–4,7 s, kể cả khi có race. Phía cụm p95 11 s; phía người dùng p95 15,2 s (p50 12,0 s, max 16,1 s), vẫn vượt 15 s một chút.

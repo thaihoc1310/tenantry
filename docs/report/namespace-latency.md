@@ -172,3 +172,29 @@ Operator rev 15 (`src-a7894de1906c`, commit d96f980): `PolicyReady` chờ bản 
 - Vậy GlobalTenantResource giữ Ready=False tới lần ghi status kế tiếp, khoảng 60 s sau. Khớp với việc controller GlobalTenantResource không trả lỗi mà luôn `requeue_after` theo `resyncPeriod` 60 s.
 - Namespace thêm vào một Workspace đã Ready thì race không làm GlobalTenantResource mất Ready: 9 race trong lần này, không cái nào kéo Operation lên 60 s. Chỉ lần reconcile đầu của một GlobalTenantResource mới bị giữ.
 - Chưa giải thích được vì sao lần thứ ba có race trên `base` mà Workspace vẫn nhanh; có thể tuỳ race xảy ra trước hay sau lần reconcile đầu của GlobalTenantResource.
+
+## Lần đo thứ năm: sau bản sửa "tin bản sao có thật" (2026-11-24 01:45, mạng nhà qua `wg0`)
+
+Operator rev 16 (`src-bbfd3af0b385`, commit 3e4459d). Bản sửa 3f15433: khi GlobalTenantResource báo Ready=False chỉ vì race của chính Capsule, thì bản sao có thật trong mọi Namespace quyết định, không chờ lần resync 60 s. Bản sửa chỉ áp dụng khi đủ cả bốn điều kiện:
+- mọi item lỗi đều mang một trong ba thông điệp race;
+- status và condition của GlobalTenantResource cùng nói về `generation` hiện tại;
+- bộ kiểm bản sao thấy mọi Namespace đang sống đã đủ;
+- vẫn trong cửa sổ 2 phút.
+
+Cùng cách đo, n = 20 cộng 4 Workspace. **Đây là số liệu cuối cho luận văn**, thay cho lần đo thứ tư.
+
+| | p50 | p95 | max |
+|---|---|---|---|
+| t_user, giờ server (Operation) | 12,0 s | 15,2 s | 16,1 s |
+| t_cluster, giờ server | 7 s | 11 s | 11 s |
+| `workspace.create` (4 Workspace) | 3,1 s; 4,0 s; 4,1 s; 4,7 s | | |
+
+**Ca 65 s không còn.**
+- Capsule race trên Namespace `base` của `nsa` (18:46:01Z), `wsx0` (18:46:13Z) và `wsx1` (18:46:19Z).
+- TIMELINE của `nsa` và `wsx1` cho thấy GlobalTenantResource vẫn `Ready=False/Failed` lúc 2 s, đúng dấu hiệu đã làm lần đo thứ tư mất 65–69 s. Nhưng `PolicyReady` đã True lúc 2 s, và hai Workspace xong trong 4,0 s và 4,1 s.
+
+**Không Operation nào xong trước khi đủ mọi thành phần:** 0/20, theo NSPARTS, `op_done` không nhỏ hơn mốc muộn nhất của Namespace, NetworkPolicy, LimitRange và quota ở mọi mẫu.
+
+**NFR "Namespace create p95 < 15 s":** phía cụm đạt (11 s). Phía người dùng 15,2 s, vẫn vượt ngưỡng một chút.
+- Phần chênh t_user − t_cluster khoảng 3–6 s: worker ghi status, probe Capsule Proxy (mỗi lần thử cách 2 s).
+- t_cluster vẫn tăng dần trong lần chạy (Namespace đầu khoảng 3 s, Namespace cuối khoảng 11 s), như đã phân tích ở lần đo thứ ba: replication của Capsule chậm dần khi các Namespace của cùng Tenant đến dồn dập. Capsule ghi 14 race của `namespace-trigger` trong lần này.
