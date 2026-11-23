@@ -130,6 +130,81 @@ Two side notes from that afternoon:
   field. We have no theme of our own (`deploy/keycloak` holds only the realm). The error is harmless,
   since the registration works in every passing test, and upstream.
 
+## Headlamp and logout (ADR-0006, ADR-0022)
+
+Two specs added on 2026-11-24 to close two rows of "Mục chưa kiểm" in `dod-phase1.md`. They are run
+on their own (`deploy/cluster/e2e.sh headlamp.spec.ts logout.spec.ts`) and are part of `make e2e`.
+
+| | |
+|---|---|
+| Date | 2026-11-24, 01:50–02:28 +07:00 |
+| Repo | `d1c3690` for the first run; `41622b1` (specs) and `bc28255` (realm fix) for the result of record |
+| Images | backend `src-74a3593aa136`, web `src-df83049a9bd3`; Headlamp v0.46.0 |
+| Network | home, through the WireGuard tunnel (`wg0`) |
+
+### What each spec checks
+
+- `headlamp.spec.ts`:
+  1. Joe, a Developer of `solar`, applies a busybox Pod through the proxy with his own token. It
+     writes `tick-N` each second.
+  2. In Headlamp, Show Logs: the tick number keeps growing while the log is open.
+  3. Terminal / Exec: `echo e2e-$((6*7))` answers `e2e-42`. Both are WebSockets through Capsule
+     Proxy.
+  4. Joe uses Log out in Headlamp. Signing in again must show Keycloak's login form.
+  5. Bea, a Viewer of `wind`, logs in on the same browser. Headlamp's Namespaces list `wind` and not
+     `solar`. The user menu does not name Joe. Joe's Pod page shows no logs button and no log line.
+- `logout.spec.ts`:
+  1. Before the logout, the owner gets into Headlamp and gets a kubectl code (PKCE, as kubelogin
+     does) without a password.
+  2. Then "Log out everywhere" on the portal.
+  3. After it, the portal answers 401, and the kubectl authorize request gets Keycloak's login form
+     instead of a code.
+  4. Headlamp, reopened from the same tab, must ask for a login, and Sign In must show Keycloak's
+     form.
+
+### Runs
+
+| Run | headlamp.spec | logout.spec |
+|---|---|---|
+| 1 (`d1c3690`) | FAIL: Headlamp's logout ended on Keycloak's "We are sorry... Invalid redirect uri" | FAIL: the spec looked for Keycloak's form in Headlamp's tab; it is in a popup (the trace shows it there) |
+| 2 (headlamp only) | FAIL, the same logout error; Sign In then came back without a login: the SSO session was still alive | – |
+| 3 (realm fixed on the lab, logout.spec reads the popup) | FAIL: Sign In did show the login form, but in the popup kept from the first sign-in, which the spec did not look in | PASS (3.3 min) |
+| 4 (`41622b1`, the result of record) | PASS (2.6 min) | (PASS in run 3) |
+
+No failure came from the network.
+
+### The finding: Headlamp's logout did not end the Keycloak session
+
+Headlamp v0.46.0 ends the session at Keycloak itself (RP-initiated logout, with `id_token_hint`). It
+asks to be sent back to `https://console-a.tenantry.site/encoded-clusters/<cluster>/login`. The
+realm allowed only `https://${CONSOLE_HOST}/` after logout for `headlamp-cluster-a`. Keycloak
+refused with "Invalid redirect uri" and kept the SSO session. The next Sign In in that browser came
+back without a password, as the person who had just logged out.
+
+The fix, `bc28255`:
+- `post.logout.redirect.uris` of `headlamp-cluster-a` is now `https://${CONSOLE_HOST}/` plus
+  `https://${CONSOLE_HOST}/encoded-clusters/*`, and nothing wider.
+- It was applied on the lab as one attribute of that client, through kcadm (redirect URIs and the
+  other attributes unchanged).
+- `deploy/keycloak/test_realm.py` checks the two values.
+
+### Durations (runs 3 and 4)
+
+| Step | Time |
+|---|---:|
+| Headlamp sign-in with the portal's session | 3.0 s |
+| First log lines in Headlamp | 0.4 s |
+| The log stream moves on by 3 lines | 0.4–0.9 s |
+| A command answered through the Headlamp terminal | 4.2–4.3 s |
+| Headlamp logout, back on its sign-in page | 2.1 s |
+| Portal logout | 0.6 s |
+| kubectl authorize after the logout (login form) | 0.2 s |
+| Headlamp asks for a login after the portal logout | 155 s (run 3); about 300 s (run 1) |
+
+Headlamp keeps the token it holds after a portal logout, until that token expires; the realm's access
+token lifespan is 5 minutes. Only then does it ask to sign in, and signing in needs a password. This
+is the limit ADR-0022 states ("chậm nhất 5 phút"), now measured on the lab.
+
 ## Platform Admin password rotated
 
 On 2026-11-23, after the evening run, the Platform Admin password (`PLATFORM_ADMIN_PASSWORD` in the
