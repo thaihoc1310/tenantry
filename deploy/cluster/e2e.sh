@@ -16,6 +16,7 @@ port=18025
 (
   while true; do
     command kubectl --context "${KUBE_CONTEXT}" -n keycloak port-forward svc/mailpit "${port}:8025" >/dev/null 2>&1
+    echo "e2e.sh: $(date +%T) the Mailpit port-forward dropped; opening it again" >&2
     sleep 1
   done
 ) &
