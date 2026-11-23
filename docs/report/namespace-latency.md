@@ -151,3 +151,24 @@ Mỗi Namespace mới kích một lượt replication. Mỗi lượt đọc và 
 - Outbox không tồn đọng, DB pool không có lần chờ nào. Probe trả khoảng 33 lần `Progressing` trên 29 lần `Reconciled`.
 - Nhiều khả năng phần chênh là probe chờ Capsule Proxy liệt kê Namespace mới (mỗi lần thử cách 2 s). Chưa tách được.
 - Kết luận cho NFR: phía người dùng ở quanh ngưỡng 15 s (13,8 s và 15,0 s qua hai lần đo), chưa đạt chắc chắn.
+
+## Lần đo thứ tư: sau bản sửa bản sao (2026-11-24 01:28, mạng nhà qua `wg0`)
+
+Operator rev 15 (`src-a7894de1906c`, commit d96f980): `PolicyReady` chờ bản sao LimitRange và NetworkPolicy trong mọi Namespace (35e9510, 74086c7). Cùng cách đo, n = 20 cộng 4 Workspace. **Đây là số liệu cuối cho luận văn.**
+
+| | p50 | p95 | max |
+|---|---|---|---|
+| t_user, giờ server (Operation) | 11,9 s | 16,1 s | 18,1 s |
+| t_cluster, giờ server | 6 s | 9 s | 11 s |
+| `workspace.create` (4 Workspace) | 3,3 s; 3,6 s; 65,4 s; 68,8 s | | |
+
+**Bản sửa đúng như mong đợi.** Ở cả 20 Namespace, Operation chỉ xong sau khi đã có đủ Namespace, NetworkPolicy, LimitRange và status quota (theo NSPARTS, `op_done` luôn sau mốc muộn nhất). Lần đo thứ ba còn có Operation xong lúc 4 s trong khi NetworkPolicy tới lúc 7 s. Đổi lại, t_user giờ là con số trung thực: t_cluster cộng 2–6 s (worker ghi status, probe Capsule Proxy).
+
+**NFR "Namespace create p95 < 15 s" phía người dùng: không đạt** ở cấu hình này (16,1 s). Phía cụm đạt (9 s).
+
+**Ca 65 s đã có bằng chứng.**
+- Hai Workspace chậm (`nsb` 68,8 s, `wsx1` 65,4 s) đều bị Capsule race replication trên Namespace `base` (18:28:01Z và 18:29:16Z). Hai Workspace nhanh không bị race.
+- TIMELINE: `nsb` có `PolicyReady`, Ready của GlobalTenantResource và lần ghi status của nó cùng lúc 1m6s; `wsx1` cùng lúc 1m4s.
+- Vậy GlobalTenantResource giữ Ready=False tới lần ghi status kế tiếp, khoảng 60 s sau. Khớp với việc controller GlobalTenantResource không trả lỗi mà luôn `requeue_after` theo `resyncPeriod` 60 s.
+- Namespace thêm vào một Workspace đã Ready thì race không làm GlobalTenantResource mất Ready: 9 race trong lần này, không cái nào kéo Operation lên 60 s. Chỉ lần reconcile đầu của một GlobalTenantResource mới bị giữ.
+- Chưa giải thích được vì sao lần thứ ba có race trên `base` mà Workspace vẫn nhanh; có thể tuỳ race xảy ra trước hay sau lần reconcile đầu của GlobalTenantResource.
