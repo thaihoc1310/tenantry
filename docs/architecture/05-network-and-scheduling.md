@@ -521,7 +521,7 @@ flowchart LR
   U1 -->|"Bearer token"| PX
   U2 -->|"Bearer token"| HL
   HL -->|"Bearer token của user<br/>HTTPS qua Traefik"| PX
-  PX -->|"forward token, lọc response"| API
+  PX -->|"TokenReview token của user;<br/>request thường: token SA của Proxy + Impersonate-User/Group;<br/>list được lọc: SA của Proxy + labelSelector, không impersonate;<br/>Self*Review: token của user"| API
   API --> RBAC
   U3 -->|"session cookie"| PAPI
   PAPI -. "không bao giờ gọi kube-apiserver bằng token user;<br/>Provisioning Worker dùng SA scoped chỉ trên CRD tenantry.io" .-> API
@@ -551,6 +551,8 @@ Capsule Proxy chỉ có một endpoint, `kube-a.tenantry.site`, cho cả kubectl
 - Gate còn Alpha: lúc khởi động Proxy đọc API discovery, APIService nào không Available (metrics-server, `calico-api`) thì Proxy thoát và CrashLoop tới khi APIService lên lại. `cluster-verify` có check "every APIService is Available". Runbook: Proxy CrashLoop → `kubectl get apiservice`, sửa APIService đang không Available. Xem lại gate mỗi lần nâng capsule-proxy.
 - `--oidc-username-claim` không dùng trên đường BearerToken (Proxy lấy user từ TokenReview, tức `oidc:<sub>` như apiserver); chart luôn render cờ này nên đặt `sub` cho khớp nghĩa.
 - Nội dung issue gửi upstream soạn sẵn ở `docs/report/upstream-issue-capsule-proxy-nodes.md`, chưa gửi.
+
+**Proxy gọi apiserver thế nào (đọc mã nguồn capsule-proxy 0.15.3, chưa kiểm bằng audit log).** Proxy xác định người gọi bằng TokenReview trên token của user. Request thường đi bằng token ServiceAccount của Proxy kèm `Impersonate-User`/`Impersonate-Group`, nên RBAC và admission vẫn áp theo user. List được lọc (Namespace, tài nguyên cluster-scoped) đi bằng ServiceAccount của Proxy kèm labelSelector và không impersonate, nên đúng hay sai chỉ nhờ selector; chính chỗ này sinh ra lỗi đọc Node ở trên. SelfSubjectAccessReview/RulesReview đi bằng token của user. ClusterRole của Proxy (chart upstream) có get/list/watch trên mọi tài nguyên và impersonate không giới hạn tên, tức ngang cluster-admin; đây là bản chất của mô hình impersonation (`docs/report/known-limitations.md`).
 
 **Namespace qua Proxy.** Lab chạy `--enable-reflector=false`, nên Proxy chỉ liệt kê Namespace của Tenant cho owner và cho subject của một `ProxySetting` nằm trong một Namespace của Tenant; RoleBinding không làm Namespace hiện ra. Sub-reconciler `proxyaccess` đặt `ProxySetting` tên `tenantry` ở Namespace đầu tiên (theo tên) của Tenant, ns đó bị xóa thì chuyển sang ns khác; subjects là các group Developer/Viewer của Workspace và ServiceAccount probe. Phần quyền tài nguyên cluster trong ProxySetting bị Proxy bỏ qua. Owner (admin trong ns) sửa hoặc thêm được ProxySetting; vì Node đã chặn, việc đó chỉ lộ tên Namespace của chính Tenant.
 
