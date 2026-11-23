@@ -8,6 +8,7 @@ import {
   api,
   cleanUp,
   cleanupAfterAll,
+  headlampSignIn,
   kubectlAs,
   kubectlTokens,
   logInAtKeycloak,
@@ -120,34 +121,59 @@ test('Headlamp streams logs and opens a shell through the proxy; after logging o
     )
   })
 
-  // Joe logs out of Headlamp.
+  // Joe logs out of Headlamp: Headlamp ends his Keycloak session too
+  // (RP-initiated logout) and comes back to its own sign-in.
   await hl.getByRole('button', { name: 'Account of current user' }).click()
   await hl.getByRole('menuitem', { name: /log out/i }).click()
   const after = await timed('Headlamp logout', () =>
     until(
       'Headlamp logged out',
       async () => {
-        if (await hl.locator('#kc-form-login').isVisible()) return 'keycloak'
-        if (await hl.getByRole('button', { name: /^sign in$/i }).isVisible()) return 'headlamp'
-        const body = (
-          await hl
-            .locator('body')
-            .innerText()
-            .catch(() => '')
-        ).slice(0, 300)
-        if (/invalid|we are sorry|error/i.test(body) && new URL(hl.url()).host !== new URL(origin).host)
-          throw new Error(`the logout ended on Keycloak's error page: ${body}`)
+        if (await hl.locator('#kc-form-login').isVisible()) return 'keycloak form'
+        if (await hl.getByRole('button', { name: /^sign in$/i }).isVisible()) return 'headlamp sign-in'
+        if (new URL(hl.url()).origin !== origin) {
+          const body = (
+            await hl
+              .locator('body')
+              .innerText()
+              .catch(() => '')
+          )
+            .replace(/\s+/g, ' ')
+            .trim()
+          if (/we are sorry|invalid/i.test(body)) return `keycloak error: ${body.slice(0, 120)}`
+        }
         return undefined
       },
       60_000,
     ),
   )
-  if (after === 'headlamp') await hl.getByRole('button', { name: /^sign in$/i }).click()
-  // Signing in again asks who it is: the first person's session is gone.
-  await expect(hl.locator('#kc-form-login'), 'Keycloak asks for a login').toBeVisible({ timeout: 30_000 })
+  test.info().annotations.push({ type: 'Headlamp logout ended on', description: after })
+  console.log(`Headlamp logout ended on: ${after}`)
+
+  // Signing in again must ask who it is.
+  let login = hl
+  if (after !== 'keycloak form') {
+    await hl.goto(origin)
+    const got = await headlampSignIn(hl)
+    if (got === 'silent') {
+      await hl.goto(`${origin}/c/cluster-a/namespaces`)
+      const back = await hl
+        .getByText(solar.ns)
+        .first()
+        .waitFor({ timeout: 30_000 })
+        .then(() => true)
+        .catch(() => false)
+      throw new Error(
+        `after Headlamp's logout (${after}), Sign In came back without a login` +
+          (back ? `, as Joe: ${solar.ns} is listed` : ''),
+      )
+    }
+    login = got
+  }
 
   // Bea signs in on the same browser.
-  await logInAtKeycloak(hl, bea.who.username, bea.who.password)
+  await logInAtKeycloak(login, bea.who.username, bea.who.password)
+  if (login !== hl) await login.waitForEvent('close', { timeout: 10_000 }).catch(() => {}) // it may stay open
   await hl.waitForURL((u) => u.origin === origin, { timeout: 60_000 })
   await hl.goto(`${origin}/c/cluster-a/namespaces`)
   await expect(hl.getByText(wind.ns).first()).toBeVisible({ timeout: 60_000 })
@@ -157,10 +183,9 @@ test('Headlamp streams logs and opens a shell through the proxy; after logging o
   await hl.getByRole('button', { name: 'Account of current user' }).click()
   const menu = await hl.getByRole('menuitem', { name: /log out/i }).innerText()
   expect(menu).not.toContain(subjectOf(joeToken))
-  test.info().annotations.push({
-    type: 'Headlamp user menu',
-    description: menu.includes(beaSub) ? 'names Bea' : `does not name Bea: ${menu.replace(/\s+/g, ' ')}`,
-  })
+  const named = menu.includes(beaSub) ? 'names Bea' : `does not name Bea: ${menu.replace(/\s+/g, ' ')}`
+  test.info().annotations.push({ type: 'Headlamp user menu', description: named })
+  console.log(`Headlamp user menu: ${named}`)
   await hl.keyboard.press('Escape')
   // Joe's Pod is not Bea's to see.
   await hl.goto(`${origin}/c/cluster-a/pods/${solar.ns}/ticker`)

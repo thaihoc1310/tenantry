@@ -528,7 +528,12 @@ export async function logInAtKeycloak(page: Page, username: string, password: st
   await page.locator('#username').fill(username)
   await fillSecret(page, '#password', password)
   await page.click('#kc-login')
-  await page.waitForURL((u) => !u.pathname.startsWith('/realms/'))
+  // A popup (Headlamp's sign-in) closes itself once Keycloak answers.
+  await page
+    .waitForURL((u) => !u.pathname.startsWith('/realms/'))
+    .catch((e) => {
+      if (!page.isClosed()) throw e
+    })
 }
 
 // timed runs a step and writes down how long it took, in the report and the log.
@@ -544,4 +549,27 @@ export async function timed<T>(what: string, f: () => Promise<T>): Promise<T> {
 // subjectOf reads the subject (the Keycloak account id) of a token.
 export function subjectOf(jwt: string): string {
   return (JSON.parse(Buffer.from(jwt.split('.')[1]!, 'base64url').toString()) as { sub: string }).sub
+}
+
+// headlampSignIn presses Headlamp's "Sign In", which opens Keycloak in a
+// popup (a named window: a second sign-in reuses the first one's): the page
+// that shows Keycloak's login form, or 'silent' when none does within 30 s
+// because the SSO session answered and the popup closed by itself.
+export async function headlampSignIn(console: Page): Promise<Page | 'silent'> {
+  await console.getByRole('button', { name: /^sign in$/i }).click()
+  const end = Date.now() + 30_000
+  while (Date.now() < end) {
+    for (const p of console.context().pages()) {
+      if (
+        !p.isClosed() &&
+        (await p
+          .locator('#kc-form-login')
+          .isVisible()
+          .catch(() => false))
+      )
+        return p
+    }
+    await console.waitForTimeout(1000)
+  }
+  return 'silent'
 }

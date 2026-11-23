@@ -8,6 +8,7 @@ import {
   api,
   cleanUp,
   cleanupAfterAll,
+  headlampSignIn,
   kubectlAuthorize,
   logOutOfPortal,
   openConsole,
@@ -45,7 +46,8 @@ test('logging out of the portal ends the Keycloak session: kubectl and Headlamp 
 
   // Headlamp, opened again from where the person was: it may serve the token
   // it holds until that expires (5 minutes), then it asks to sign in, and
-  // signing in shows Keycloak's form instead of coming straight back.
+  // signing in shows Keycloak's form (in a popup) instead of coming straight
+  // back.
   await hl.bringToFront()
   const asked = await until(
     'Headlamp asking for a login',
@@ -60,9 +62,10 @@ test('logging out of the portal ends the Keycloak session: kubectl and Headlamp 
       ]).catch(() => {})
       if (await form.isVisible()) return Date.now()
       if (await signIn.isVisible()) {
-        await signIn.click()
-        await expect(form, 'Keycloak asks for a login').toBeVisible({ timeout: 30_000 })
-        return Date.now()
+        const at = Date.now()
+        // Keycloak opens in a popup: its login form, not a popup that closes by itself.
+        expect(await headlampSignIn(hl), 'Keycloak asks for a login').not.toBe('silent')
+        return at
       }
       return undefined
     },
