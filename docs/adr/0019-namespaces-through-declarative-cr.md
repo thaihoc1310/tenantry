@@ -61,4 +61,8 @@ Không chọn: API là tiến trình public-facing; cho nó quyền ghi Namespac
 - [e2e-personas](../report/e2e-personas.md): Namespace `frontend` tạo trên portal, Operation `Succeeded`; Bob (Viewer) tạo Namespace trên portal bị `403`.
 - Lab, [isolation-cluster](../report/isolation-cluster.md) (T19): Namespace thứ tư trên quota 3 bị Capsule từ chối; Namespace mang tiền tố của Workspace khác bị `forceTenantPrefix` từ chối.
 - `web/e2e/access.spec.ts` (kết quả M11 ghi ở IMPLEMENTATION-PLAN M12): Developer không tạo được Namespace qua proxy.
-- NFR "Namespace create p95 dưới 15 giây" (PRODUCT-PLAN §23): đo 20 Namespace trên lab ([namespace-latency](../report/namespace-latency.md)). Phía cụm (CR đổi tới Namespace có NetworkPolicy, LimitRange và quota) p95 2 s. Phía người dùng (Operation) p95 72,6 s, vì probe Capsule Proxy chờ 30 s mỗi lần Proxy chưa kịp thấy Namespace mới. Bản sửa e35daa1 thử lại sau 2 s. Đo lại sau khi deploy: phía người dùng p50 7,7 s, p95 13,8 s, max 16,4 s, đạt NFR nhưng sát ngưỡng.
+- NFR "Namespace create p95 dưới 15 giây" (PRODUCT-PLAN §23), đo 20 Namespace trên lab ([namespace-latency](../report/namespace-latency.md)) qua bốn lần:
+  - Bản đầu (operator a8928a8): phía người dùng (Operation) p95 72,6 s, vì probe Capsule Proxy chờ 30 s mỗi lần Proxy chưa thấy Namespace mới. Đã sửa (e35daa1: thử lại sau 2 s).
+  - Sau bản sửa đó: p95 13,8 s và 15,0 s ở hai lần đo, nhưng có Operation xong trước khi NetworkPolicy có mặt.
+  - Bản hiện tại (d96f980, operator rev 15): Operation chỉ xong khi mọi Namespace đã có đủ bản sao LimitRange và NetworkPolicy. Phía cụm p95 9 s; phía người dùng p95 16,1 s (p50 11,9 s, max 18,1 s), tức **không đạt** 15 s ở phía người dùng.
+  - Tạo Workspace: phần lớn 3–5 s, nhưng 65–69 s khi GlobalTenantResource giữ Ready=False sau race của Capsule tới lần resync 60 s. Bản sửa 3f15433 dựa vào bản sao có thật khi status chỉ chậm vì race; chưa deploy và chưa đo lại.
