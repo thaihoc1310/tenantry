@@ -159,10 +159,10 @@ kubectl get nodes                                                           # r�
 | 5.3 | Admin (terminal) | **Chờ** nhãn pool rời wk3: `kubectl --context hocbt@kubernetes get node fdp-k8s-wk3 -L tenantry.io/compute-pool` phải trống cột pool. Rồi `kubectl --context hocbt@kubernetes drain fdp-k8s-wk3 --ignore-daemonsets --delete-emptydir-data` và `kubectl --context hocbt@kubernetes uncordon fdp-k8s-wk3` | Pod Shared dời sang wk2. **Bắt buộc**: node còn Pod tenant thì không cấp được (NodeNotClean). Drain dừng vì Pod "trần" (tạo bằng `kubectl run`) thì thêm `--force` |
 | 5.4 | Admin | Grant của `acme` → **Dedicated nodes** → cấp `fdp-k8s-wk3` (system reserve mặc định 500m / 1536Mi) | Node Ready; reservable 2,5 CPU / 10 GiB |
 | 5.5 | Alice | Create Workspace `water`: **Dedicated**, chọn node wk3, 1 CPU / 4 GiB (limits = requests), storage ≥ 1 GiB, Namespace `app`, `admins` = TenantOwner | Ready |
-| 5.6 | Alice | Create Workspace `green`: Dedicated, cùng node, 1 CPU / 4 GiB, storage ≥ 1 GiB, Namespace `app` | Ready; node card còn 0,5 CPU |
+| 5.6 | Alice | Create Workspace `green`: Dedicated, cùng node, 1 CPU / 4 GiB, storage ≥ 1 GiB, Namespace `app`, `admins` = TenantOwner | Ready; node card còn 0,5 CPU |
 | 5.7 | Alice | Tạo Workspace thứ ba Dedicated 1 CPU trên wk3 | Bị chặn `DEDICATED_NODE_INSUFFICIENT_CAPACITY` |
 
-**5.8 IP và placement.** Cài app vào water bằng kubeconfig của **Alice** (Joe không có quyền ở water). Namespace Dedicated bắt limits = requests (Guaranteed), nên phải hạ limits của chart xuống bằng requests, nếu không Pod bị LimitRange từ chối:
+**5.8 IP và placement.** Cài app vào water bằng kubeconfig của **Alice** (Joe không có quyền ở water; Alice cài được vì `admins` là TenantOwner ở water). Không cần tải file kubeconfig mới: mọi Workspace cùng server `kube-a` và cùng danh tính, nên file solar của Alice dùng được với `-n acme-water-app`. Namespace Dedicated bắt limits = requests (Guaranteed), nên phải hạ limits của chart xuống bằng requests, nếu không Pod bị LimitRange từ chối:
 
 ```sh
 helm install web deploy/demo-app -n acme-water-app \
@@ -227,6 +227,7 @@ Nếu đã drain wk3 mà reset không trả về được, kiểm `kubectl --con
 | Tạo lại Workspace cùng tên bị `SLUG_TAKEN` | Tên còn trong quarantine 10 phút sau khi xóa | Dùng tên khác hoặc chờ |
 | Xóa org bị `ORGANIZATION_NOT_EMPTY` kèm giờ | Workspace đã xóa còn trong quarantine | Chờ tới giờ ghi trong message |
 | Cấp node bị `NodeNotClean` | Node còn Pod tenant | Drain rồi uncordon (bước 5.3) |
+| Portal hoặc API trả `503 SERVICE_BUSY` (kèm `Retry-After`) | Pool DB của API không có connection trống trong 5 giây | Chờ vài giây rồi thử lại; Grafana panel 19–20; Admin → **Health** (có từ bản deploy sau 113e937) |
 | Portal chậm hoặc treo hơn 10 giây | Đường mạng hoặc API (lỗi cạn pool DB đã sửa) | Tải lại trang; Admin → **Health**; Grafana panel 19–20 |
 | `kubectl` qua kube-a báo lỗi lạ hàng loạt | Capsule Proxy CrashLoop (gate Alpha, khi một APIService hỏng) | `kubectl --context hocbt@kubernetes get apiservice`, sửa APIService không Available (05 §8) |
 
