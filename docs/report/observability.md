@@ -60,7 +60,7 @@ Phần trên là Workspace Operator, giữa (sau hàng "Platform API and workers
 | 18 | Group sync: pending, oldest, failures | Còn bao nhiêu thay đổi group/membership chưa đẩy sang Keycloak, cái cũ nhất chờ bao lâu, có lỗi không? |
 | 19 | DB pool: connections in use against the maximum | Từng process (api, worker-provisioning, worker-groupsync) đang dùng bao nhiêu connection so với tối đa (20, 6, 6)? Chạm trần là mọi request phải chờ. |
 | 20 | DB pool: waits for a connection | Có lần nào phải chờ connection không, và chờ trung bình bao lâu? Bình thường là 0; dòng thời gian chờ trung bình để trống khi chưa có lần chờ nào. |
-| 21 | Shared pools: CPU requested by running Pods, allocatable, allocated and ceiling | Với từng shared pool: các Pod đang chạy trên node của pool xin bao nhiêu CPU (kube-state-metrics), node giữ được bao nhiêu (operator), platform đã cấp bao nhiêu cho Workspace Shared và trần cấp phát `ratio × reservable` (backend). Request chạm allocatable là Pod mới không xếp được nữa, dù phần đã cấp còn dưới trần (ADR-0017). |
+| 21 | Shared pools: CPU requested by running Pods, allocatable, allocated and ceiling | Với từng shared pool: các Pod đang chạy trên node của pool xin bao nhiêu CPU (kube-state-metrics), node giữ được bao nhiêu (operator), platform đã cấp bao nhiêu cho Workspace Shared và trần cấp phát `ratio × reservable` (backend). Request chạm allocatable là Pod mới không xếp được nữa, dù phần đã cấp còn dưới trần (ADR-0017). Pod có thể kẹt sớm hơn: chỗ trống tính trên từng node, nên tổng còn 1,7 CPU vẫn không xếp được Pod 1 CPU nào (mục "Pool đầy trên lab"). |
 | 22 | Pods the scheduler cannot place, by Workspace | Workspace nào có Pod Pending vì scheduler không tìm được chỗ? Với Workspace Shared thường nghĩa là pool đầy, không phải quota của Workspace hết. |
 
 ## Đọc dashboard khi demo
@@ -72,7 +72,7 @@ Sau mỗi bước trên portal (tạo Workspace, thêm Namespace, tạo Route), 
 - Lab không có Workspace nào (sau demo-reset): panel 1 hiện số 0 ở cả 6 phase (operator từ `7f2809c`, chạy trên lab từ revision 13), còn panel 7 "No data" cho tới khi có Workspace đầu tiên có CIDR.
 - Panel 2 và 15 chỉ có số khi đã có Workspace được tạo trong 1 giờ gần nhất, kể từ lần khởi động gần nhất của operator (panel 2) hoặc backend (panel 15). Muốn có số khi trình bày thì tạo một Workspace trước demo ít nhất vài phút.
 - Panel 18, dòng failures/s, để trống khi chưa có lần sync nào lỗi kể từ lúc worker khởi động. Đó là trạng thái tốt.
-- Panel 21: hai dòng "allocated to Workspaces" và "allocation ceiling" lấy từ gauge `tenantry_shared_pool_allocated` và `tenantry_shared_pool_allocation_ceiling` của backend; trống cho tới khi backend có hai gauge đó.
+- Panel 21: hai dòng "allocated to Workspaces" và "allocation ceiling" lấy từ gauge `tenantry_shared_pool_allocated` và `tenantry_shared_pool_allocation_ceiling` của worker provisioning (đã có trên lab, xem mục "Pool đầy trên lab").
 
 ## kube-state-metrics trên lab
 
@@ -81,3 +81,17 @@ Sau mỗi bước trên portal (tạo Workspace, thêm Namespace, tạo Route), 
 - Khoảng 390 series: `kube_pod_status_phase` 260, `kube_pod_container_resource_requests` 85, `kube_node_status_allocatable` 24, `kube_namespace_labels` 19, `kube_node_labels` 4. `kube_pod_status_unschedulable` chỉ có series khi có Pod không xếp được.
 - Chỉ có quyền list/watch Pod, Node và Namespace (ClusterRole của chart sinh theo danh sách collector). Nhãn được giữ: nhãn pool `tenantry.io/compute-pool` của Node và nhãn Tenant `capsule.clastix.io/tenant` của Namespace.
 - Lần chạy đầu: panel 21 cho `shared-general` 0,285 CPU được request trên 3 CPU allocatable (lúc đó pool chỉ có wk2, vì wk3 vừa được cấp cho demo). Panel 22 trống vì không có Pod nào chờ chỗ.
+
+## Pool đầy trên lab
+
+`TestSharedPending` (`operator/test/isolation/measure_test.go`), chạy ngày 2026-11-23 19:19–19:33Z, operator revision 16, độc quyền lab:
+
+- Dựng: một Organization optest, grant 8 CPU trên `shared-general`; hai Workspace Shared `fill` và `over`, mỗi cái quota 4 CPU và một Deployment 4 Pod pause, mỗi Pod 1 CPU (requests bằng limits). Pool có wk2 và wk3, allocatable 6 CPU; trước khi chạy, wk2 đã có 235m được request (Pod `demo` và DaemonSet), wk3 có 30m. Tổng 8 CPU vẫn dưới trần cấp phát 15 CPU (2,5 × 6), nên API nhận cả hai Workspace.
+- Kết quả: 4 Pod Running, tất cả của `fill`; 4 Pod Pending, tất cả của `over`. Dự đoán là 5 Running, nhưng thực tế mỗi node chỉ xếp được 2 Pod 1 CPU: wk2 còn 0,765 CPU, wk3 còn 0,97 CPU, không node nào còn đủ 1 CPU.
+- Message trên Pod (`PodScheduled=False`, reason `Unschedulable`), giống trong event `FailedScheduling`: `0/4 nodes are available: 2 Insufficient cpu, 2 node(s) had untolerated taint(s). no new claims to deallocate, preemption: 0/4 nodes are available: 2 No preemption victims found for incoming pod, 2 Preemption is not helpful for scheduling.` Hai node "taint" là cp1 và wk1 (system pool).
+- Dashboard trong lúc giữ pool đầy (150 s, hai lần scrape):
+  - panel 21: CPU request của Pod đang chạy là 4,265, allocatable 6; allocated to Workspaces 8 (19:21–19:23Z, về 0 khi test xoá Workspace), allocation ceiling 15;
+  - panel 22: `optestzxzmgg-over` có 4 Pod không xếp được.
+- Portal: cả hai Workspace `state: Ready`, mọi condition `True`; usage của mỗi cái là `requestsCpu` 4/4, `pods` 4/10. ResourceQuota tính cả Pod Pending, nên `over` trông như đang dùng hết quota, và portal không có dấu hiệu nào cho thấy Pod của nó không chạy. Người dùng chỉ thấy Pending qua kubectl hoặc Headlamp; admin thấy qua panel 21 và 22.
+- Dọn: scale về 0, xoá Workspace, xoá Organization sau quarantine (`deletableAfter` 19:32:36Z). Sau đó không còn Pod optest trên wk2, wk3; `demo-preflight` 15/15 PASS.
+

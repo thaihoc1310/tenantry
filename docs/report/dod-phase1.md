@@ -40,7 +40,7 @@ Tóm tắt (cập nhật 2026-11-23 tối): 14 Đạt, 1 Đạt một phần (m�
 | Mục | Nguồn | Vì sao chưa |
 |---|---|---|
 | Cluster thứ hai thật, hai worker, Cluster Agent | ADR-0008, ADR-0009, ADR-0010 | Phase 2 |
-| Pod Shared `Pending` khi pool dùng thật vượt dung lượng; mức dùng thực cạnh ceiling | ADR-0017 | Chưa dựng tải đủ lớn; dashboard chưa có panel mức dùng thực |
+| Pod Shared `Pending` khi pool dùng thật vượt dung lượng; mức dùng thực cạnh ceiling | ADR-0017 | Đạt trên lab 2026-11-23 19:19Z: `TestSharedPending`, 4 Running, 4 Pending (`Insufficient cpu`); panel 21 request 4,265 / allocatable 6 / allocated 8 / ceiling 15, panel 22 có 4 Pod. Portal không cho thấy Pod Pending: Workspace vẫn `Ready`, quota CPU 4/4 ([observability](observability.md)) |
 | Node `Overcommitted` do drift, node NotReady làm Workspace `Degraded` | ADR-0011 | Chỉ có unit test `TestCapacityState`. Trên lab cần dừng kubelet hoặc đổi allocatable của node, tức phải vào node bằng ssh và sudo; track B không có quyền đó và không dùng `kubectl debug node` thay thế |
 | `calicoctl ipam release` cho IP rò | ADR-0012, known-limitations "Chưa kiểm hết" | Chưa gặp IP rò thật |
 | Logout rồi đổi user trên Headlamp; WebSocket (exec, log stream) qua Headlamp | ADR-0006 | Đạt trên lab 2026-11-24: `web/e2e/headlamp.spec.ts` (log stream chạy tiếp, exec trả `e2e-42`, logout Headlamp rồi user khác đăng nhập chỉ thấy Namespace của mình). Lần chạy đầu tìm ra lỗi: logout của Headlamp bị Keycloak từ chối "Invalid redirect uri" nên SSO session còn; sửa `post.logout.redirect.uris` của `headlamp-cluster-a` (bc28255) ([e2e-portal](e2e-portal.md)) |
