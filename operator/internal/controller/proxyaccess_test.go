@@ -129,6 +129,42 @@ func TestWorkspaceProxyAccess(t *testing.T) {
 		t.Error("probed again within five minutes")
 	}
 
+	// A new Namespace the proxy does not show yet: the probe waits for it and
+	// looks again within seconds, not after the 30 s of a failure.
+	ws = getWorkspace(t, "acme-px")
+	ws.Spec.Namespaces = []string{"web", "api", "db"}
+	if err := testClient.Update(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	reconcileOnce(t, r, "acme-px")
+	res = reconcileOnce(t, r, "acme-px")
+	if c := condition(getWorkspace(t, "acme-px"), v1.ConditionProxyAccessReady); c.Reason != subreconciler.ReasonProgressing ||
+		!strings.Contains(c.Message, "acme-px-db") {
+		t.Fatalf("new Namespace not shown yet: %+v", c)
+	}
+	if res.RequeueAfter <= 0 || res.RequeueAfter > 2*time.Second {
+		t.Errorf("waiting for the proxy should look again within 2s: %+v", res)
+	}
+	fake.set(http.StatusOK, map[string]string{"acme-px-api": "acme-px", "acme-px-web": "acme-px", "acme-px-db": "acme-px"})
+	time.Sleep(res.RequeueAfter)
+	reconcileOnce(t, r, "acme-px")
+	if c := condition(getWorkspace(t, "acme-px"), v1.ConditionProxyAccessReady); c.Status != metav1.ConditionTrue {
+		t.Fatalf("once the proxy shows it: %+v", c)
+	}
+	ws = getWorkspace(t, "acme-px")
+	ws.Spec.Namespaces = []string{"web", "api"}
+	ws.Spec.NamespacesToDelete = []string{"acme-px-db"}
+	if err := testClient.Update(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	reconcileOnce(t, r, "acme-px")
+	finishNamespaceDeletion(t, "acme-px-db")
+	ws = getWorkspace(t, "acme-px")
+	ws.Spec.NamespacesToDelete = nil
+	if err := testClient.Update(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+
 	// The proxy shows another Tenant's Namespace: not filtering. A new
 	// generation probes at once.
 	fake.set(http.StatusOK, map[string]string{"acme-px-api": "acme-px", "acme-px-web": "acme-px", "globex-x-web": "globex-x"})

@@ -853,6 +853,113 @@
           "mode": "multi"
         }
       }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Shared pools: CPU requested by running Pods, allocatable, allocated and ceiling",
+      "description": "Per shared pool: the CPU requests of the Pods running on its nodes (kube-state-metrics), what the nodes can hold (operator), what the platform has given out to Shared Workspaces and its ceiling, ratio × reservable (backend, from the database). Pods stop scheduling at allocatable, even when allocated is still under the ceiling (ADR-0017).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 81,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "label_replace(sum by (label_tenantry_io_compute_pool) (sum by (namespace, pod, node) (kube_pod_container_resource_requests{resource=\"cpu\"}) * on (namespace, pod) group_left () (max by (namespace, pod) (kube_pod_status_phase{phase=\"Running\"}) == 1) * on (node) group_left (label_tenantry_io_compute_pool) kube_node_labels{label_tenantry_io_compute_pool!=\"\", label_tenantry_io_compute_pool!=\"system\"}), \"pool\", \"$1\", \"label_tenantry_io_compute_pool\", \"(.*)\")",
+          "legendFormat": "{{pool}} requested by running Pods"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "tenantry_shared_pool_allocatable{resource=\"cpu\"}",
+          "legendFormat": "{{pool}} allocatable"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "tenantry_shared_pool_allocated{resource=\"cpu\"}",
+          "legendFormat": "{{pool}} allocated to Workspaces"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "tenantry_shared_pool_allocation_ceiling{resource=\"cpu\"}",
+          "legendFormat": "{{pool}} allocation ceiling"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Pods the scheduler cannot place, by Workspace",
+      "description": "From kube-state-metrics: Pods Pending as Unschedulable in each Workspace's Namespaces. On a Shared Workspace it usually means its pool is full, not that its quota is.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 81,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "label_replace(sum by (label_capsule_clastix_io_tenant) (kube_pod_status_unschedulable * on (namespace) group_left (label_capsule_clastix_io_tenant) kube_namespace_labels{label_capsule_clastix_io_tenant!=\"\"}), \"workspace\", \"$1\", \"label_capsule_clastix_io_tenant\", \"(.*)\")",
+          "legendFormat": "{{workspace}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
     }
   ],
   "description": "Tenantry metrics (PRODUCT-PLAN §21.2): the operator (tenantry_*, controller_runtime_*, workqueue_*) and the Platform API and workers (tenantry_api_*, tenantry_operation_*, tenantry_outbox_*, tenantry_network_pool_*, tenantry_groupsync_*)."

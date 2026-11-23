@@ -61,4 +61,4 @@ Mặt xấu và giới hạn:
 - Backend: `TestDedicatedWorkspaces` (`backend/internal/httpapi/workspaces_test.go`, hai create cùng lúc cho 0,5 CPU cuối, đúng một 202 và một 409), `TestDedicatedNodes` (`admin_pools_test.go`), `TestDedicatedReservationLifecycle` (`backend/internal/provisioning/status_test.go`), `TestReservableAndRemaining` và `TestCapacityState` (`backend/internal/reservation/capacity_test.go`).
 - Operator envtest: `TestNodeGrant`, `TestWorkspaceDedicated` (`operator/internal/controller/compute_test.go`).
 - Web e2e: `web/e2e/dedicated.spec.ts` ("Dedicated Workspaces share a node without overbooking it"). `make cluster-verify` kiểm `PodNodeSelector` và `PodTolerationRestriction` đang bật.
-- Chưa kiểm trên lab: nhánh `Overcommitted` do drift (chỉ có unit test `TestCapacityState`), node NotReady làm Workspace `Degraded`.
+- Chưa kiểm trên lab: nhánh `Overcommitted` do drift (chỉ có unit test `TestCapacityState`), node NotReady làm Workspace `Degraded`. Cả hai cần dừng kubelet hoặc đổi allocatable trên node, tức phải ssh và sudo vào node.

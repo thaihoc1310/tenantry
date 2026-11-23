@@ -61,4 +61,4 @@ Không chọn: API là tiến trình public-facing; cho nó quyền ghi Namespac
 - [e2e-personas](../report/e2e-personas.md): Namespace `frontend` tạo trên portal, Operation `Succeeded`; Bob (Viewer) tạo Namespace trên portal bị `403`.
 - Lab, [isolation-cluster](../report/isolation-cluster.md) (T19): Namespace thứ tư trên quota 3 bị Capsule từ chối; Namespace mang tiền tố của Workspace khác bị `forceTenantPrefix` từ chối.
 - `web/e2e/access.spec.ts` (kết quả M11 ghi ở IMPLEMENTATION-PLAN M12): Developer không tạo được Namespace qua proxy.
-- NFR "Namespace create p95 dưới 15 giây" (PRODUCT-PLAN §23): chưa kiểm, chưa có số đo riêng.
+- NFR "Namespace create p95 dưới 15 giây" (PRODUCT-PLAN §23): đo 20 Namespace trên lab ([namespace-latency](../report/namespace-latency.md)). Phía cụm (CR đổi tới Namespace có NetworkPolicy, LimitRange và quota) p95 2 s. Phía người dùng (Operation) p95 72,6 s, vì probe Capsule Proxy chờ 30 s mỗi lần Proxy chưa kịp thấy Namespace mới. Bản sửa e35daa1 thử lại sau 2 s; chưa deploy và chưa đo lại.
