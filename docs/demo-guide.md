@@ -25,14 +25,14 @@ kubectl --context hocbt@kubernetes -n keycloak get secret keycloak-realm \
 
 **Trình duyệt: mỗi người một profile riêng.** Keycloak giữ phiên SSO theo cookie, nên cùng một profile thì đăng nhập người này sẽ thành người kia. Tạo 4 profile (hoặc 4 cửa sổ container riêng): **Admin**, **Alice**, **Joe**, **Bob**.
 
-**kubectl cho Joe và Bob trên cùng một máy.** `kubelogin` cache token theo issuer và client, không theo người, và mở trình duyệt mặc định. Nếu không tách, Bob sẽ dùng nhầm token của Joe. Khi tải kubeconfig của từng người (bước 4.2), sửa phần `args` của `exec`, thêm hai dòng:
+**kubectl cho Alice, Joe và Bob trên cùng một máy.** `kubelogin` cache token theo issuer và client, không theo người, và mở trình duyệt mặc định. Nếu không tách, người sau dùng nhầm token của người trước. Khi tải kubeconfig của từng người (tab **Connect**), sửa phần `args` của `exec`, thêm hai dòng:
 
 ```yaml
-        - --token-cache-dir=/home/thaihoc/.kube/cache/oidc-login-joe   # bob: ...-bob
+        - --token-cache-dir=/home/thaihoc/.kube/cache/oidc-login-joe   # alice: ...-alice, bob: ...-bob
         - --skip-open-browser
 ```
 
-Với `--skip-open-browser`, kubelogin in ra một URL; mở URL đó trong **đúng profile** của người đó để đăng nhập.
+Với `--skip-open-browser`, kubelogin in ra một URL; mở URL đó trong **đúng profile** của người đó để đăng nhập. Mỗi người một file kubeconfig (`KUBECONFIG=...`), mở mỗi người một terminal cho dễ.
 
 ---
 
@@ -53,7 +53,7 @@ Với `--skip-open-browser`, kubelogin in ra một URL; mở URL đó trong **đ
    ```
 
    **Lưu ý**: lần tập cuối nên xong trước giờ demo ít nhất 20 phút, để kịp reset.
-3. Mở Grafana (tùy chọn, để chiếu ở Phần 6):
+3. Mở Grafana (tùy chọn, để chiếu ở Phần 6). Lệnh port-forward chiếm terminal, chạy ở một terminal riêng:
 
    ```sh
    kubectl --context hocbt@kubernetes -n observability port-forward svc/grafana 3000:80
@@ -68,7 +68,7 @@ Với `--skip-open-browser`, kubelogin in ra một URL; mở URL đó trong **đ
 ## 2. Phần 1 — Bài toán (chỉ nói, 3–5 phút)
 
 - Người dùng chỉ cần data plane (Namespace, workload, URL), không cần control plane riêng.
-- Số liệu so sánh (`docs/report/benchmark.md`): cụm kind riêng mất khoảng 33 giây và 655 MiB RAM khi idle; vcluster khoảng 26 giây và 303 MiB mỗi instance; một Workspace của Tenantry 10–20 giây và không tốn thêm Pod nào.
+- Số liệu so sánh (`docs/report/benchmark.md`): cụm kind riêng mất khoảng 33 giây và 655 MiB RAM khi idle; vcluster khoảng 26 giây và 303 MiB mỗi instance; một Workspace của Tenantry 10–20 giây và không tốn thêm Pod nào. Nói là **so bậc độ lớn**: kind/vcluster đo trên máy dev 16 CPU, Workspace đo trên lab (3 CPU mỗi worker), như ADR-0001.
 - Giới hạn trung thực của shared control plane: `docs/report/known-limitations.md` (chọn 3–4 mục, ví dụ thu hồi quyền trễ tối đa 5 phút, Capsule Proxy có quyền rộng, Node không xem được qua kubectl).
 
 ---
@@ -120,11 +120,13 @@ helm install web deploy/demo-app -n acme-solar-frontend
 kubectl -n acme-solar-frontend get pods,pvc,svc        # Pod Running, PVC Bound
 ```
 
-**Lưu ý**: Namespace mới tạo có thể từ chối Pod trong vài giây đầu (lỗi 422 nhắc `tenantry-tenant-network-ready`): NetworkPolicy chưa kịp vào. Deployment tự thử lại, khoảng 6 giây là lên.
+**Lưu ý**:
+- Namespace mới tạo từ chối Pod trong vài giây đầu (422 nhắc `tenantry-tenant-network-ready`) vì NetworkPolicy chưa kịp vào. Với helm/Deployment, lỗi này không in ra terminal mà nằm trong Event của ReplicaSet (`kubectl -n acme-solar-frontend describe rs`); Deployment tự thử lại, khoảng 6 giây là lên.
+- Developer tạo được Secret nhưng không đọc/liệt kê được, nên `helm install` của Joe chạy được còn **`helm list`, `helm upgrade`, `helm uninstall` bằng Joe sẽ bị Forbidden**. Đừng chạy ba lệnh đó bằng Joe; cần thì dùng Alice (TenantOwner).
 
 **4.4 Route.** Alice → tab **Routes → Create**: Namespace `acme-solar-frontend`, tên `web`, Service `web`, port `80` → chờ **Active** → mở `https://web-acme-solar.mvp.tenantry.site` (HTTPS thật, cert wildcard).
 
-**4.5 Headlamp.** Alice hoặc Joe → tab **Connect → Open web console** → vào thẳng Namespace của Workspace mà không nhập lại mật khẩu. Trang Nodes trống (cố ý, xem known-limitations 2).
+**4.5 Headlamp.** Alice hoặc Joe → tab **Connect → Open web console** → Headlamp hiện trang **Sign in**, bấm một lần, Keycloak trả về ngay mà **không hỏi lại mật khẩu** (dùng phiên SSO của portal) → thấy Namespace của Workspace. Trang Nodes trống (cố ý, xem known-limitations 2).
 
 **4.6 Bob chỉ xem** (kubeconfig của Bob, cache riêng):
 
@@ -134,7 +136,7 @@ kubectl -n acme-solar-frontend delete deploy web        # Forbidden
 kubectl -n acme-solar-frontend get secrets              # Forbidden
 ```
 
-**4.7 Vi phạm policy** (dùng kubeconfig của Joe), mỗi lệnh phải bị từ chối kèm message:
+**4.7 Vi phạm policy** (dùng kubeconfig của Joe), mỗi lệnh phải bị từ chối kèm message. Riêng lệnh `create ingress`: với Joe (Developer) nó bị RBAC chặn trước (`cannot create resource "ingresses"`); muốn chiếu message của VAP `tenantry-tenant-ingress-lockdown` thì chạy lại lệnh đó bằng kubeconfig của **Alice** (TenantOwner):
 
 ```sh
 kubectl -n acme-solar-frontend run bad --image=nginx --privileged          # Pod Security baseline
@@ -154,13 +156,20 @@ kubectl get nodes                                                           # r�
 |---|---|---|---|
 | 5.1 | Admin | **Grants** → grant của `acme` trên `cluster-a`: `maxWorkspaces` 4, `maxNamespacesTotal` 10, `requestsStorage` 50Gi (giữ nguyên CPU/RAM/Pod) | Lưu được |
 | 5.2 | Admin | **Clusters → Shared pools** → sửa `shared-general`, bỏ `fdp-k8s-wk3` | Dialog nhắc lệnh drain |
-| 5.3 | Admin (terminal) | `kubectl --context hocbt@kubernetes drain fdp-k8s-wk3 --ignore-daemonsets --delete-emptydir-data` rồi `kubectl --context hocbt@kubernetes uncordon fdp-k8s-wk3` | Pod Shared dời sang wk2. **Bắt buộc**: node còn Pod tenant thì không cấp được (NodeNotClean) |
+| 5.3 | Admin (terminal) | **Chờ** nhãn pool rời wk3: `kubectl --context hocbt@kubernetes get node fdp-k8s-wk3 -L tenantry.io/compute-pool` phải trống cột pool. Rồi `kubectl --context hocbt@kubernetes drain fdp-k8s-wk3 --ignore-daemonsets --delete-emptydir-data` và `kubectl --context hocbt@kubernetes uncordon fdp-k8s-wk3` | Pod Shared dời sang wk2. **Bắt buộc**: node còn Pod tenant thì không cấp được (NodeNotClean). Drain dừng vì Pod "trần" (tạo bằng `kubectl run`) thì thêm `--force` |
 | 5.4 | Admin | Grant của `acme` → **Dedicated nodes** → cấp `fdp-k8s-wk3` (system reserve mặc định 500m / 1536Mi) | Node Ready; reservable 2,5 CPU / 10 GiB |
-| 5.5 | Alice | Create Workspace `water`: **Dedicated**, chọn node wk3, 1 CPU / 4 GiB (limits = requests) | Ready |
-| 5.6 | Alice | Create Workspace `green`: Dedicated, cùng node, 1 CPU / 4 GiB | Ready; node card còn 0,5 CPU |
+| 5.5 | Alice | Create Workspace `water`: **Dedicated**, chọn node wk3, 1 CPU / 4 GiB (limits = requests), storage ≥ 1 GiB, Namespace `app`, `admins` = TenantOwner | Ready |
+| 5.6 | Alice | Create Workspace `green`: Dedicated, cùng node, 1 CPU / 4 GiB, storage ≥ 1 GiB, Namespace `app` | Ready; node card còn 0,5 CPU |
 | 5.7 | Alice | Tạo Workspace thứ ba Dedicated 1 CPU trên wk3 | Bị chặn `DEDICATED_NODE_INSUFFICIENT_CAPACITY` |
 
-**5.8 IP và placement** (terminal admin; nhớ tạo Namespace `app` cho water/green và deploy `deploy/demo-app` vào đó nếu muốn có Pod để xem):
+**5.8 IP và placement.** Cài app vào water bằng kubeconfig của **Alice** (Joe không có quyền ở water). Namespace Dedicated bắt limits = requests (Guaranteed), nên phải hạ limits của chart xuống bằng requests, nếu không Pod bị LimitRange từ chối:
+
+```sh
+helm install web deploy/demo-app -n acme-water-app \
+  --set resources.limits.cpu=50m --set resources.limits.memory=32Mi
+```
+
+Xem IP và node (terminal admin):
 
 ```sh
 kubectl --context hocbt@kubernetes get pods -A -o wide | grep acme-
@@ -173,11 +182,11 @@ CIDR của từng Workspace xem ở tab **Network**.
 
 ```sh
 kubectl --context hocbt@kubernetes -n acme-solar-frontend run probe --rm -it --restart=Never \
-  --image=busybox:1.36 -- wget -T 3 -qO- http://<IP-Pod-của-water>      # timeout: bị chặn
+  --image=busybox:1.36 -- wget -T 3 -qO- http://<IP-Pod-của-water>:8080   # timeout: bị chặn
 # (LimitRange của Workspace tự điền requests/limits mặc định cho Pod này)
 ```
 
-Gọi vào chính app của solar (`http://web.acme-solar-frontend.svc`) thì được.
+Đối chứng: cùng lệnh nhưng gọi `http://web.acme-solar-frontend.svc` (Service cổng 80) hoặc `http://<IP-Pod-của-solar>:8080` thì trả trang. App nghe cổng **8080** (nginx-unprivileged); gọi IP Pod mà quên `:8080` sẽ ra "connection refused" chứ không phải timeout, và ca thử mất ý nghĩa.
 
 ---
 
@@ -186,7 +195,7 @@ Gọi vào chính app của solar (`http://web.acme-solar-frontend.svc`) thì đ
 1. **Thu hồi quyền**: Alice gỡ Joe khỏi `developers` (hoặc khỏi org).
    - Portal: Joe mất quyền ngay (tải lại trang).
    - kubectl: token cũ của Joe vẫn dùng được tới khi hết hạn, **tối đa 5 phút** (đo trên lab: đúng 300 giây). Sau đó `kubectl get pods` bị Forbidden. Gỡ binding của cả group khỏi Workspace thì mất ngay.
-2. **Cordon**: Workspace `green` → **Danger zone → Cordon** → tenant không tạo/sửa được gì, workload vẫn chạy; Uncordon để mở lại.
+2. **Cordon**: Workspace `green` → **Danger zone → Cordon** → tenant không tạo/sửa được gì, workload vẫn chạy. Cordon của Capsule chặn cả operator, nên mọi thay đổi khác trên `green` (Namespace, resize, xóa) đứng tới khi **Uncordon**: uncordon xong rồi mới làm gì khác với green.
 3. **Xóa Water**: Danger zone → **Delete**, gõ lại tên `water` → Operation tới Deleted; `green` vẫn Ready; node card của wk3 trả lại 1 CPU.
 4. **Kết quả đánh giá** (chiếu file hoặc Grafana):
    - `docs/report/isolation-cluster.md`: 8/8 + Dedicated 4/4, mỗi threat ghi lớp nào chặn.
@@ -211,7 +220,7 @@ Nếu đã drain wk3 mà reset không trả về được, kiểm `kubectl --con
 
 | Hiện tượng | Nguyên nhân thường gặp | Xử lý |
 |---|---|---|
-| Đăng nhập người này lại thành người kia | Cùng profile trình duyệt, hoặc cache kubelogin chung | Dùng profile riêng; `--token-cache-dir` riêng (mục 0); `kubectl oidc-login clean` |
+| Đăng nhập người này lại thành người kia | Cùng profile trình duyệt, hoặc cache kubelogin chung | Dùng profile riêng; `--token-cache-dir` riêng (mục 0); xóa cache của đúng người: `kubectl oidc-login clean --token-cache-dir=/home/thaihoc/.kube/cache/oidc-login-<tên>` |
 | Pod bị 422 nhắc `tenantry-tenant-network-ready` | Namespace vừa tạo, NetworkPolicy chưa vào | Chờ 5–10 giây; Deployment tự lên |
 | Operation đứng Running kèm message Capsule | Race replicate nội bộ Capsule | Chờ; quá 10 phút mới Failed, khi đó bấm Retry |
 | Group không Synced | Group sync worker đang chạy | Chờ vài giây; Admin → **Health** xem hàng đợi |
