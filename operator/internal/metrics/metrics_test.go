@@ -37,6 +37,8 @@ func TestCollector(t *testing.T) {
 			}},
 		},
 		&v1.PlatformWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "acme-water"}, Status: v1.PlatformWorkspaceStatus{Phase: v1.PhaseProvisioning}},
+		// No status yet (created, not reconciled once): counted as Provisioning.
+		&v1.PlatformWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "acme-green"}},
 		&v1.PlatformSharedPool{
 			ObjectMeta: metav1.ObjectMeta{Name: "shared-general"},
 			Status:     v1.PlatformSharedPoolStatus{ReadyNodes: 2, Allocatable: v1.ResourceList{"cpu": resource.MustParse("6")}},
@@ -67,7 +69,7 @@ tenantry_workspace_ip_used{workspace="acme-solar"} 2
 tenantry_workspaces{phase="Degraded"} 0
 tenantry_workspaces{phase="Deleting"} 0
 tenantry_workspaces{phase="Failed"} 0
-tenantry_workspaces{phase="Provisioning"} 1
+tenantry_workspaces{phase="Provisioning"} 2
 tenantry_workspaces{phase="Ready"} 1
 tenantry_workspaces{phase="Updating"} 0
 `

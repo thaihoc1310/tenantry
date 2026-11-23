@@ -66,7 +66,13 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 		}
 		routes := map[string]float64{"true": 0, "false": 0}
 		for _, ws := range workspaces.Items {
-			phases[string(ws.Status.Phase)]++
+			phase := ws.Status.Phase
+			if phase == "" {
+				// Created, not reconciled once yet: what the controller will
+				// report first, not a phase of its own.
+				phase = v1.PhaseProvisioning
+			}
+			phases[string(phase)]++
 			for _, r := range ws.Status.Routes {
 				if r.Ready {
 					routes["true"]++
