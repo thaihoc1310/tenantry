@@ -37,6 +37,7 @@ Mỗi mục ghi: hành vi, vì sao, ảnh hưởng tới người dùng, và cá
 
 19. **Một provisioning worker cho mỗi cluster**, không leader election (replicas 1); housekeeping chạy chung Deployment và idempotent.
 20. **Metrics scrape qua Service**: API nhiều replica thì mỗi lần scrape chỉ thấy một Pod; port metrics của backend không có auth, chỉ trong cụm. Prometheus trên lab không có PVC (retention 24h, mất khi restart), Grafana không có Ingress (port-forward).
+20a. **Access log của Traefik** chỉ ghi request lỗi 5xx hoặc chậm hơn 5 giây, bỏ query string (callback OIDC mang `code`/`state`) và header; vẫn có IP thật của client, chỉ nằm trong `kubectl logs`, không lưu đi đâu khác.
 21. **Portal tải font từ Google Fonts** (CSP cho phép), chưa tự host.
 22. **Trang Audit lọc phía client** trên các trang đã tải; danh sách Workspace không phân trang (tối đa `maxWorkspacesTotal`).
 23. **Postgres local cho dev dùng mật khẩu mặc định** `tenantry` (chỉ `docker-compose.dev.yml` và Makefile); chart lab sinh mật khẩu ngẫu nhiên.
