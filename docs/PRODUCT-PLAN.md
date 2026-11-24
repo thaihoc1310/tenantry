@@ -1322,6 +1322,11 @@ status:
     - {name: acme-solar-frontend, source: portal, usage: {requests.cpu: 500m, requests.memory: 1Gi, pods: 4}}
     - {name: acme-solar-backend, source: portal, usage: {requests.cpu: 300m, requests.memory: 512Mi, pods: 2}}
     - {name: acme-solar-scratch, source: kubectl, usage: {}}
+    # unschedulablePods: 2 trên entry có Pod không xếp được (bỏ qua khi 0)
+  scheduling:                      # chỉ có khi có Pod không xếp được; nil khi 0. Không đổi phase/conditions: Workspace vẫn Ready
+    unschedulablePods: 2           # Pod có PodScheduled=False reason Unschedulable, mọi Namespace của Tenant
+    message: "0/4 nodes are available: 2 Insufficient cpu, ..."   # lời scheduler trên Pod chờ lâu nhất
+    since: "2026-11-24T03:10:00Z"  # lastTransitionTime của PodScheduled trên Pod đó
   routes:
     - {name: web, namespace: acme-solar-frontend, ready: true, message: ""}   # message: lý do khi ready=false, portal hiện nguyên văn
 ```

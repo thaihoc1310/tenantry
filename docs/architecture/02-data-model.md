@@ -350,6 +350,9 @@ erDiagram
     bigint desired_generation "= annotation tenantry.io/spec-version của CR"
     boolean cordoned "desired, M7"
     jsonb usage_snapshot "M7, worker chép từ status.usage"
+    int unschedulable_pods "worker chép từ status.scheduling, 0 khi nil"
+    text unschedulable_message
+    timestamptz unschedulable_since "nullable"
     bigint observed_generation
     jsonb conditions
     timestamptz deleted_at
@@ -388,6 +391,7 @@ erDiagram
     text source "portal|kubectl"
     text state
     jsonb usage_snapshot
+    int unschedulable_pods "từ status.namespaces[].unschedulablePods"
   }
   workspace_routes {
     text id PK "rte-…"

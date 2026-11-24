@@ -112,6 +112,8 @@ Cách tính: `Ready` ⇔ mọi Condition áp dụng đều `True` **và** `statu
 
 `status.phase` ∈ `Provisioning` | `Ready` | `Updating` | `Degraded` | `Failed` | `Deleting`; controller suy ra từ Condition (IMPLEMENTATION-PLAN mục 4.1). Không có phase `Blocked`: delete kẹt là Condition `Deleting=False` reason `BlockedByFinalizer`, worker map thành Operation `Blocked`. Worker chỉ tin status có `observedGeneration == generation`.
 
+`status.scheduling` (Pod của tenant không xếp được, ADR-0017) **không** tham gia vào phase hay Condition: Workspace có Pod `Unschedulable` vẫn `Ready`, vì nền tảng đã làm xong phần của mình, chỉ workload đang chờ chỗ trên node. Worker chép nó cùng lượt với phần status còn lại (cùng quy tắc `observedGeneration`) vào `workspaces.unschedulable_*` và `workspace_namespaces.unschedulable_pods`; portal hiện cảnh báo riêng, không đổi badge state.
+
 **Điểm cần review**
 
 - `Cordoned` map sang `Tenant.spec.cordoned`: xác nhận trên Capsule 0.15.x, kể cả việc cordon có chặn ghi của chính controller hay không (lab bản đầu, Capsule 0.13.10: có chặn); kiểm ở M6 (`IMPLEMENTATION-PLAN.md` M6).

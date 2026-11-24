@@ -42,6 +42,7 @@ Không chọn: reservation dùng requests; limits cao hơn nghĩa là tổng lim
 ## Hệ quả
 
 - Shared có thể có Pod `Pending` khi nhiều Workspace cùng dùng hết quota; đây là hành vi chấp nhận của shared tier, portal hiện `allocated / (ratio × reservable)` để cảnh báo (§6.2).
+  - Người dùng của Workspace cũng phải thấy điều này trên portal: operator đếm Pod `Unschedulable` của Workspace vào `status.scheduling` (số Pod, lời scheduler, từ lúc nào) và `status.namespaces[].unschedulablePods`; worker chép về DB, API trả `Workspace.scheduling`, portal hiện cảnh báo trên trang Workspace, badge trong danh sách và cột ở tab Namespaces. Workspace vẫn `Ready`: nền tảng không hỏng, chỉ workload đang chờ chỗ. Áp dụng cả Dedicated (node của Organization không đủ chỗ). Thêm 2026-11-24 sau phép đo `TestSharedPending` (known-limitations 9a).
 - Admin phải tự chọn ratio. Tài liệu muốn hiện mức dùng thực (Prometheus) cạnh ceiling để Admin chỉnh ([05 mục 4](../architecture/05-network-and-scheduling.md)); dashboard Grafana hiện có `tenantry_shared_pool_allocatable` và số node Ready, chưa có mức dùng thực so với allocation (chưa kiểm).
 - Bớt node, hạ ratio hoặc tăng systemReserve mà làm trần xuống dưới tổng allocation đều bị từ chối.
 - Dedicated là Guaranteed: workload cần burst phải xin requests cao hơn ([known-limitations](../report/known-limitations.md) mục 7). Resize xuống chỉ nhả reservation khi cụm đã áp xong (cùng mục 7).
