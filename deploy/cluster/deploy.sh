@@ -28,10 +28,12 @@ image() { # name dockerfile context [source dir...]: build if needed, load, prin
       missing="${missing} ${node}"
   done
   if [[ -n "${missing}" ]]; then
-    docker build -q -f "${dockerfile}" -t "${name}:${tag}" -t "${name}:dev" "${context}" >/dev/null
+    # set -e does not reach inside $(image ...): a failed build or load
+    # must fail the call, or the charts get a tag no node has.
+    docker build -q -f "${dockerfile}" -t "${name}:${tag}" -t "${name}:dev" "${context}" >/dev/null || return 1
     for node in ${missing}; do
       echo "loading ${name}:${tag} into ${node}" >&2
-      docker save "${name}:${tag}" | ssh -o BatchMode=yes "${node}" sudo -n ctr -n k8s.io images import - >/dev/null
+      docker save "${name}:${tag}" | ssh -o BatchMode=yes "${node}" sudo -n ctr -n k8s.io images import - >/dev/null || return 1
     done
   fi
   echo "${tag}"
