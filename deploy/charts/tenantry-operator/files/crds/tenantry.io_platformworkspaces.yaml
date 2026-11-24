@@ -303,6 +303,12 @@ spec:
                       - portal
                       - kubectl
                       type: string
+                    unschedulablePods:
+                      description: |-
+                        UnschedulablePods counts the Namespace's Pods with PodScheduled=False,
+                        reason Unschedulable.
+                      format: int32
+                      type: integer
                     usage:
                       additionalProperties:
                         anyOf:
@@ -360,6 +366,28 @@ spec:
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
+              scheduling:
+                description: Scheduling is set while some Pods of the Workspace cannot
+                  be placed; nil otherwise.
+                properties:
+                  message:
+                    description: Message is the scheduler's message on the Pod unschedulable
+                      the longest.
+                    type: string
+                  since:
+                    description: Since is when that Pod became unschedulable (its
+                      PodScheduled lastTransitionTime).
+                    format: date-time
+                    type: string
+                  unschedulablePods:
+                    description: |-
+                      UnschedulablePods counts the Workspace's Pods with PodScheduled=False,
+                      reason Unschedulable, in every Namespace of the Tenant.
+                    format: int32
+                    type: integer
+                required:
+                - unschedulablePods
+                type: object
               usage:
                 additionalProperties:
                   anyOf:

@@ -183,6 +183,21 @@ type PlatformWorkspaceStatus struct {
 	// +listMapKey=name
 	// +optional
 	Routes []RouteStatus `json:"routes,omitempty"`
+	// Scheduling is set while some Pods of the Workspace cannot be placed; nil otherwise.
+	// +optional
+	Scheduling *SchedulingStatus `json:"scheduling,omitempty"`
+}
+
+type SchedulingStatus struct {
+	// UnschedulablePods counts the Workspace's Pods with PodScheduled=False,
+	// reason Unschedulable, in every Namespace of the Tenant.
+	UnschedulablePods int32 `json:"unschedulablePods"`
+	// Message is the scheduler's message on the Pod unschedulable the longest.
+	// +optional
+	Message string `json:"message,omitempty"`
+	// Since is when that Pod became unschedulable (its PodScheduled lastTransitionTime).
+	// +optional
+	Since *metav1.Time `json:"since,omitempty"`
 }
 
 type NamespaceStatus struct {
@@ -190,6 +205,10 @@ type NamespaceStatus struct {
 	Source NamespaceSource `json:"source"`
 	// +optional
 	Usage ResourceList `json:"usage,omitempty"`
+	// UnschedulablePods counts the Namespace's Pods with PodScheduled=False,
+	// reason Unschedulable.
+	// +optional
+	UnschedulablePods int32 `json:"unschedulablePods,omitempty"`
 }
 
 type RouteStatus struct {
