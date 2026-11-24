@@ -20,12 +20,14 @@ Mỗi mục ghi: hành vi, vì sao, ảnh hưởng tới người dùng, và cá
 7. **Dedicated là Guaranteed**: limits = requests, LimitRange `maxLimitRequestRatio: 1`. Resize xuống thì reservation cũ được giữ tới khi cluster áp xong.
 8. **Mỗi Workspace một Calico IPPool cố định kích thước**: không đổi được prefix sau khi tạo. Xóa Workspace thì block vào quarantine 10 phút, giữ luôn slug/`k8s_name`; xóa Organization bị chặn tới khi quarantine cuối cùng hết (`ORGANIZATION_NOT_EMPTY` ghi giờ).
 9. **`:validate` của wizard** chạy create trong transaction rồi rollback: giữ lock của org/grant/pool vài ms, và block "nếu tạo bây giờ" có thể khác lúc tạo thật.
-9a. **Shared: Pod có thể Pending dù phần đã cấp còn dưới trần, và portal không cho thấy.** Trần cấp phát Shared là `ratio × reservable` (ADR-0017, giữ chỗ mềm). Lab: `shared-general` ratio 3.0, reservable 2 × (3 − 0,5) = 5 CPU, nên trần 15 CPU trên 6 CPU allocatable.
+9a. **Shared: Pod có thể Pending dù phần đã cấp còn dưới trần.** Trần cấp phát Shared là `ratio × reservable` (ADR-0017, giữ chỗ mềm). Lab: `shared-general` ratio 3.0, reservable 2 × (3 − 0,5) = 5 CPU, nên trần 15 CPU trên 6 CPU allocatable.
     - **Đo trên lab (`TestSharedPending`, 2026-11-23):** hai Workspace cộng lại 8 CPU, mỗi cái 4 Pod 1 CPU, cho 4 Running và 4 `Pending` (`Insufficient cpu`).
     - **Kẹt sớm hơn tổng allocatable:** scheduler xét chỗ trống trên từng node. Hai node còn 0,765 và 0,97 CPU, cộng lại 1,7 CPU, mà không xếp được Pod 1 CPU nào.
-    - **Portal không thấy Pending:** Workspace vẫn `Ready`, mọi Condition `True`; usage `requestsCpu` 4/4 vì ResourceQuota tính cả Pod Pending.
-    - **Ai thấy được:** người dùng thấy Pending qua kubectl hoặc Headlamp (event `FailedScheduling`); Platform Admin thấy qua panel 21 và 22 của Grafana ([observability](observability.md) mục "Pool đầy trên lab").
-    - **Hướng sửa:** operator đếm Pod `Unschedulable` của Workspace vào status, portal cảnh báo trên trang Workspace; Admin hạ ratio của pool nếu Pending lặp lại.
+    - **Đây là hành vi của shared tier, không phải lỗi.** Admin hạ ratio của pool nếu Pending lặp lại; panel 21 và 22 của Grafana cho thấy pool đầy ([observability](observability.md) mục "Pool đầy trên lab").
+    - **Đã sửa ngày 2026-11-24: portal trước đó không cho thấy Pending.** Khi ấy Workspace vẫn `Ready` và usage `requestsCpu` 4/4 (ResourceQuota tính cả Pod Pending), nên người dùng không biết Pod của mình không chạy.
+      - Giờ operator rev 18 đếm Pod `Unschedulable` vào `status.scheduling`, worker chép về DB (migration 0018), API trả `Workspace.scheduling`.
+      - Portal hiện cảnh báo trên trang Workspace (số Pod, từ lúc nào, lời của scheduler, gợi ý theo Shared/Dedicated), badge trong danh sách và cột ở tab Namespaces. Workspace vẫn `Ready`.
+      - Kiểm trên lab: `web/e2e/scheduling.spec.ts` PASS ([e2e-portal](e2e-portal.md)).
 
 ## Capsule 0.15.2
 
