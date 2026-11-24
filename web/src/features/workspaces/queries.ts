@@ -28,7 +28,9 @@ export function useWorkspaceBySlug(org: MaybeRefOrGetter<string>, slug: MaybeRef
     queryKey: computed(() => ['workspace', id.value]),
     queryFn: () => unwrap(api.GET('/workspaces/{workspaceId}', { params: { path: { workspaceId: id.value! } } })),
     enabled: computed(() => !!id.value),
-    refetchInterval: (q) => (busy(q.state.data) ? 2000 : false),
+    // Slowly when settled too: Pods that cannot be scheduled come and go
+    // without an operation (scheduling).
+    refetchInterval: (q) => (busy(q.state.data) ? 2000 : 15_000),
   })
   const missing = computed(() => list.isSuccess.value && !id.value)
   return { list, one, id, missing }
@@ -207,7 +209,7 @@ export function useWorkspaceNamespaces(id: MaybeRefOrGetter<string | undefined>)
         )
       ).items,
     enabled: computed(() => !!toValue(id)),
-    refetchInterval: (q) => (q.state.data?.some((n) => n.state !== 'Active') ? 2000 : false),
+    refetchInterval: (q) => (q.state.data?.some((n) => n.state !== 'Active') ? 2000 : 15_000), // unschedulablePods
   })
 }
 

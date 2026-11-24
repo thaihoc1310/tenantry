@@ -2026,6 +2026,8 @@ export interface components {
             usage: {
                 [key: string]: string;
             };
+            /** @description Its Pods the scheduler cannot place (PodScheduled False, reason Unschedulable), as the controller last reported. */
+            unschedulablePods: number;
             /** Format: date-time */
             createdAt: string;
         };
@@ -2113,10 +2115,27 @@ export interface components {
             myRoles?: components["schemas"]["WorkspaceRole"][];
             /** @description As the controller last reported them; empty until it has. */
             conditions: components["schemas"]["WorkspaceCondition"][];
+            /**
+             * @description Present while some of the Workspace's Pods cannot be placed on a
+             *     node; the state does not change for it (the Workspace stays
+             *     Ready). Shared: the pool's nodes are full. Dedicated: the
+             *     organization's node has no room.
+             */
+            scheduling?: components["schemas"]["WorkspaceScheduling"];
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
+        };
+        WorkspaceScheduling: {
+            unschedulablePods: number;
+            /** @description The scheduler's message on the Pod waiting the longest, e.g. `0/6 nodes are available: 3 Insufficient cpu.` */
+            message: string;
+            /**
+             * Format: date-time
+             * @description When that Pod became unschedulable
+             */
+            since?: string;
         };
         WorkspaceList: {
             items: components["schemas"]["Workspace"][];

@@ -11,7 +11,7 @@ import { ApiError } from '@/api/client'
 import { cores, cpu, gib, memory } from '@/api/units'
 import AppShell from '@/app/AppShell.vue'
 import { showFailure } from '@/app/failure'
-import { when } from '@/app/format'
+import { plural, when } from '@/app/format'
 import ConditionTimeline from '@/components/ConditionTimeline.vue'
 import AccessRolesTab from './AccessRolesTab.vue'
 import { computePlace } from './compute'
@@ -28,6 +28,7 @@ import NumField from '@/components/NumField.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import QuotaMeter from '@/components/QuotaMeter.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import { schedulingHint } from '@/i18n/scheduling'
 import TPanel from '@/components/TPanel.vue'
 import { useOrgDedicatedNodes, useOrganization } from '@/features/organizations/queries'
 import {
@@ -272,6 +273,22 @@ const usable = computed(() => ['Ready', 'Degraded'].includes(ws.value?.state ?? 
           <div style="margin-top: 6px">
             This usually clears by itself within a minute. After 10 minutes the change fails and can be retried.
           </div>
+        </el-alert>
+        <el-alert
+          v-if="ws.scheduling"
+          type="warning"
+          :closable="false"
+          show-icon
+          :title="`${plural(ws.scheduling.unschedulablePods, 'Pod')} cannot be scheduled`"
+          data-test="scheduling"
+        >
+          <div>
+            Waiting<template v-if="ws.scheduling.since"> since {{ when(ws.scheduling.since) }}</template
+            >. The scheduler says:
+          </div>
+          <div class="t-errcode" style="margin: 6px 0">{{ ws.scheduling.message }}</div>
+          <div>{{ schedulingHint[ws.compute.mode].en }}</div>
+          <div class="muted small" lang="vi" style="margin-top: 4px">{{ schedulingHint[ws.compute.mode].vi }}</div>
         </el-alert>
         <el-alert
           v-if="ws.state === 'Degraded' && current?.state === 'Failed'"

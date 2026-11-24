@@ -114,6 +114,14 @@ async function remove() {
             ><span class="num">{{ row.usage['pods'] ?? 0 }}</span></template
           ></el-table-column
         >
+        <el-table-column label="Unschedulable" width="130" align="right"
+          ><template #default="{ row }"
+            ><el-tag v-if="row.unschedulablePods" type="warning" size="small" effect="plain" round>{{
+              row.unschedulablePods
+            }}</el-tag
+            ><span v-else class="num muted">0</span></template
+          ></el-table-column
+        >
         <el-table-column label="CPU req." width="110" align="right"
           ><template #default="{ row }"
             ><span class="num">{{ row.usage['requests.cpu'] ?? 0 }}</span></template

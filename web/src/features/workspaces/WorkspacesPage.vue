@@ -67,9 +67,18 @@ const dedicatedNodes = useOrgDedicatedNodes(
               <div class="mono muted small">{{ row.k8sName }}</div></template
             ></el-table-column
           >
-          <el-table-column label="State" width="150"
-            ><template #default="{ row }"><StatusTag :value="row.state" /></template
-          ></el-table-column>
+          <el-table-column label="State" width="230"
+            ><template #default="{ row }"
+              ><StatusTag :value="row.state" /><el-tooltip
+                v-if="row.scheduling"
+                :content="row.scheduling.message"
+                placement="top"
+                ><el-tag type="warning" size="small" effect="plain" round style="margin-left: 6px"
+                  >{{ row.scheduling.unschedulablePods }} unschedulable</el-tag
+                ></el-tooltip
+              ></template
+            ></el-table-column
+          >
           <el-table-column label="Compute" width="200"
             ><template #default="{ row }"
               >{{ row.compute.mode }} <span class="muted">on</span>
