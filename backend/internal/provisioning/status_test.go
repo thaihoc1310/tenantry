@@ -132,8 +132,10 @@ func (e *env) sync() {
 func (e *env) workspace(id string) store.Workspace {
 	e.t.Helper()
 	var w store.Workspace
-	if err := e.db.QueryRow(context.Background(), `SELECT state, desired_generation, observed_generation, conditions FROM workspaces WHERE id = $1`, id).
-		Scan(&w.State, &w.DesiredGeneration, &w.ObservedGeneration, &w.Conditions); err != nil {
+	if err := e.db.QueryRow(context.Background(), `SELECT state, desired_generation, observed_generation, conditions,
+		unschedulable_pods, unschedulable_message, unschedulable_since FROM workspaces WHERE id = $1`, id).
+		Scan(&w.State, &w.DesiredGeneration, &w.ObservedGeneration, &w.Conditions,
+			&w.UnschedulablePods, &w.UnschedulableMessage, &w.UnschedulableSince); err != nil {
 		e.t.Fatal(err)
 	}
 	return w
@@ -531,6 +533,52 @@ func TestRoutesFollowTheStatus(t *testing.T) {
 	e.sync()
 	if st, _ := state(api.Route.ID); st != "Deleted" {
 		t.Fatalf("route of a vanished namespace: %s", st)
+	}
+}
+
+// status.scheduling reaches the Workspace and its Namespaces, and goes when
+// the Pods are placed; the Workspace stays Ready throughout.
+func TestSchedulingFollowsTheStatus(t *testing.T) {
+	e := newEnv(t)
+	c := e.create("solar")
+	ns := v1.NamespaceStatus{Name: "acme-solar-frontend", Source: v1.SourcePortal}
+	e.report("acme-solar", v1.PhaseReady, readyConds, ns)
+	e.sync()
+	since := metav1.NewTime(time.Date(2026, 11, 24, 3, 0, 0, 0, time.UTC))
+	status := func(sc *v1.SchedulingStatus, pods int32) {
+		t.Helper()
+		cr := e.cluster.get(k8s.Workspaces, "acme-solar")
+		n := ns
+		n.UnschedulablePods = pods
+		e.cluster.setStatus(k8s.Workspaces, "acme-solar", &v1.PlatformWorkspaceStatus{
+			Phase: v1.PhaseReady, ObservedGeneration: cr.GetGeneration(), Conditions: readyConds,
+			Namespaces: []v1.NamespaceStatus{n}, Scheduling: sc,
+		})
+		e.sync()
+	}
+	nsPods := func() (n int32) {
+		t.Helper()
+		if err := e.db.QueryRow(context.Background(), `SELECT unschedulable_pods FROM workspace_namespaces WHERE name = 'acme-solar-frontend'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	status(&v1.SchedulingStatus{UnschedulablePods: 2, Message: "0/6 nodes are available: 6 Insufficient cpu.", Since: &since}, 2)
+	w := e.workspace(c.Workspace.ID)
+	if w.State != "Ready" || w.UnschedulablePods != 2 || w.UnschedulableMessage != "0/6 nodes are available: 6 Insufficient cpu." ||
+		w.UnschedulableSince == nil || !w.UnschedulableSince.Equal(since.Time) || nsPods() != 2 {
+		t.Fatalf("unschedulable: %+v, namespace %d", w, nsPods())
+	}
+	// The scheduler rewords its message on a retry: copied too.
+	status(&v1.SchedulingStatus{UnschedulablePods: 2, Message: "0/6 nodes are available: 5 Insufficient cpu.", Since: &since}, 2)
+	if w := e.workspace(c.Workspace.ID); w.UnschedulableMessage != "0/6 nodes are available: 5 Insufficient cpu." {
+		t.Fatalf("reworded: %q", w.UnschedulableMessage)
+	}
+	status(nil, 0)
+	w = e.workspace(c.Workspace.ID)
+	if w.State != "Ready" || w.UnschedulablePods != 0 || w.UnschedulableMessage != "" || w.UnschedulableSince != nil || nsPods() != 0 {
+		t.Fatalf("placed: %+v, namespace %d", w, nsPods())
 	}
 }
 

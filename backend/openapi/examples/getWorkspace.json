@@ -37,6 +37,11 @@
           "lastTransitionTime": "2026-11-22T10:00:20Z"
         }
       ],
+      "scheduling": {
+        "unschedulablePods": 1,
+        "message": "0/6 nodes are available: 3 Insufficient cpu, 3 node(s) didn't match Pod's node affinity/selector. preemption: 0/6 nodes are available: 6 Preemption is not helpful for scheduling.",
+        "since": "2026-11-24T03:12:40Z"
+      },
       "createdAt": "2026-11-22T10:00:00Z",
       "updatedAt": "2026-11-22T10:00:00Z"
     },

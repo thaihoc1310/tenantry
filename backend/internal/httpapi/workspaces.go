@@ -177,6 +177,11 @@ func toWorkspaceRow(ws store.Workspace) (oapi.Workspace, error) {
 	if w.Conditions == nil {
 		w.Conditions = []oapi.WorkspaceCondition{}
 	}
+	if ws.UnschedulablePods > 0 {
+		w.Scheduling = &oapi.WorkspaceScheduling{
+			UnschedulablePods: int(ws.UnschedulablePods), Message: ws.UnschedulableMessage, Since: ws.UnschedulableSince,
+		}
+	}
 	return w, nil
 }
 
@@ -264,7 +269,7 @@ func (s server) DeleteWorkspaceNamespace(ctx context.Context, req oapi.DeleteWor
 func toNamespace(n store.WorkspaceNamespace) (oapi.WorkspaceNamespace, error) {
 	v := oapi.WorkspaceNamespace{
 		Name: n.Name, Source: oapi.WorkspaceNamespaceSource(n.Source), State: oapi.WorkspaceNamespaceState(n.State),
-		Usage: map[string]string{}, CreatedAt: n.CreatedAt,
+		Usage: map[string]string{}, UnschedulablePods: int(n.UnschedulablePods), CreatedAt: n.CreatedAt,
 	}
 	if err := json.Unmarshal(n.UsageSnapshot, &v.Usage); err != nil {
 		return v, fmt.Errorf("namespace %s usage: %w", n.Name, err)

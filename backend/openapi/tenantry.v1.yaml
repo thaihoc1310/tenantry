@@ -2893,7 +2893,7 @@ components:
 
     WorkspaceNamespace:
       type: object
-      required: [name, source, state, usage, createdAt]
+      required: [name, source, state, usage, unschedulablePods, createdAt]
       properties:
         name: { type: string, description: "The full name, `<org>-<workspace>-<suffix>`" }
         source: { type: string, enum: [portal, kubectl] }
@@ -2905,6 +2905,10 @@ components:
           type: object
           description: What its Pods request, from its ResourceQuota (e.g. `requests.cpu`); empty until reported.
           additionalProperties: { type: string }
+        unschedulablePods:
+          type: integer
+          minimum: 0
+          description: Its Pods the scheduler cannot place (PodScheduled False, reason Unschedulable), as the controller last reported.
         createdAt: { type: string, format: date-time }
 
     WorkspaceNamespaceList:
@@ -3019,8 +3023,23 @@ components:
           type: array
           description: As the controller last reported them; empty until it has.
           items: { $ref: "#/components/schemas/WorkspaceCondition" }
+        scheduling:
+          description: |
+            Present while some of the Workspace's Pods cannot be placed on a
+            node; the state does not change for it (the Workspace stays
+            Ready). Shared: the pool's nodes are full. Dedicated: the
+            organization's node has no room.
+          allOf: [{ $ref: "#/components/schemas/WorkspaceScheduling" }]
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+
+    WorkspaceScheduling:
+      type: object
+      required: [unschedulablePods, message]
+      properties:
+        unschedulablePods: { type: integer, minimum: 1 }
+        message: { type: string, description: "The scheduler's message on the Pod waiting the longest, e.g. `0/6 nodes are available: 3 Insufficient cpu.`" }
+        since: { type: string, format: date-time, description: When that Pod became unschedulable }
 
     WorkspaceList:
       type: object

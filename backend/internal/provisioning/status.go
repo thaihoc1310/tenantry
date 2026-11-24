@@ -144,6 +144,17 @@ func (s *Syncer) syncWorkspace(ctx context.Context, cr v1.PlatformWorkspace) err
 		if err := q.RecordWorkspaceUsage(ctx, store.RecordWorkspaceUsageParams{ID: ws.ID, UsageSnapshot: usage}); err != nil {
 			return err
 		}
+		// Pods the scheduler cannot place: a warning on the portal, never a state.
+		sched := store.RecordWorkspaceSchedulingParams{ID: ws.ID}
+		if sc := cr.Status.Scheduling; sc != nil && sc.UnschedulablePods > 0 {
+			sched.UnschedulablePods, sched.UnschedulableMessage = sc.UnschedulablePods, sc.Message
+			if sc.Since != nil {
+				sched.UnschedulableSince = &sc.Since.Time
+			}
+		}
+		if err := q.RecordWorkspaceScheduling(ctx, sched); err != nil {
+			return err
+		}
 
 		conditions, err := json.Marshal(nonNil(cr.Status.Conditions))
 		if err != nil {
@@ -264,8 +275,8 @@ func nextState(state string, phase v1.WorkspacePhase, current bool) string {
 // exist become Active, ones deleted from the portal or created with kubectl
 // and gone become Deleted, and ones created with kubectl appear. A portal
 // Namespace missing from the status stays Active: it is declared, so the
-// controller creates it again (only the portal deletes it). Usage is copied
-// for every one.
+// controller creates it again (only the portal deletes it). Usage and the
+// count of Pods the scheduler cannot place are copied for every one.
 func (s *Syncer) syncNamespaces(ctx context.Context, q *store.Queries, ws store.Workspace, cr v1.PlatformWorkspace) error {
 	observed := map[string]v1.NamespaceStatus{}
 	for _, n := range cr.Status.Namespaces {
@@ -289,10 +300,12 @@ func (s *Syncer) syncNamespaces(ctx context.Context, q *store.Queries, ws store.
 		if err != nil {
 			return err
 		}
-		if state == row.State && string(usage) == string(row.UsageSnapshot) {
+		if state == row.State && string(usage) == string(row.UsageSnapshot) && obs.UnschedulablePods == row.UnschedulablePods {
 			continue
 		}
-		if err := q.RecordNamespace(ctx, store.RecordNamespaceParams{ID: row.ID, State: state, UsageSnapshot: usage}); err != nil {
+		if err := q.RecordNamespace(ctx, store.RecordNamespaceParams{
+			ID: row.ID, State: state, UsageSnapshot: usage, UnschedulablePods: obs.UnschedulablePods,
+		}); err != nil {
 			return err
 		}
 		// A Namespace gone takes its Routes with it (04-state-machines §9.3).
@@ -312,7 +325,7 @@ func (s *Syncer) syncNamespaces(ctx context.Context, q *store.Queries, ws store.
 		}
 		if err := q.CreateObservedNamespace(ctx, store.CreateObservedNamespaceParams{
 			ID: id.New(id.Namespace), WorkspaceID: ws.ID, ClusterID: ws.ClusterID, Name: name,
-			Source: string(obs.Source), UsageSnapshot: usage,
+			Source: string(obs.Source), UsageSnapshot: usage, UnschedulablePods: obs.UnschedulablePods,
 		}); err != nil {
 			return err
 		}

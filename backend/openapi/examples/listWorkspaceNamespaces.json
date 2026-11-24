@@ -11,6 +11,7 @@
             "requests.memory": "1Gi",
             "pods": "4"
           },
+          "unschedulablePods": 0,
           "createdAt": "2026-11-22T10:00:00Z"
         },
         {
@@ -18,6 +19,7 @@
           "source": "kubectl",
           "state": "Active",
           "usage": {},
+          "unschedulablePods": 0,
           "createdAt": "2026-11-22T10:30:00Z"
         }
       ]

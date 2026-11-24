@@ -1581,3 +1581,60 @@ func TestWorkspaceRoutes(t *testing.T) {
 		t.Fatalf("routes left after their namespace: %d", n)
 	}
 }
+
+// Pods the scheduler cannot place show on the Workspace, in its list and
+// per Namespace; absent when there are none (status.scheduling).
+func TestWorkspaceScheduling(t *testing.T) {
+	h, db, _, owner, admins, devs := workspaceOrg(t)
+	ctx := context.Background()
+	rec := createWorkspace(h, owner, "zeta", workspaceBody("solar", admins, devs, ""))
+	var created oapi.WorkspaceAccepted
+	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &created) != nil {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	wsID := created.Workspace.Id
+	get := func(path string) string {
+		t.Helper()
+		rec := asAdmin(h, owner, http.MethodGet, path, "", "")
+		if rec.Code != 200 {
+			t.Fatalf("%s: %d %s", path, rec.Code, rec.Body)
+		}
+		return rec.Body.String()
+	}
+	if b := get("/api/v1/workspaces/" + wsID); strings.Contains(b, `"scheduling"`) {
+		t.Fatalf("scheduling with none: %s", b)
+	}
+	if b := get("/api/v1/workspaces/" + wsID + "/namespaces"); !strings.Contains(b, `"unschedulablePods":0`) {
+		t.Fatalf("namespaces with none: %s", b)
+	}
+
+	if _, err := db.Exec(ctx, `UPDATE workspaces SET unschedulable_pods = 2, unschedulable_message = '0/6 nodes are available: 6 Insufficient cpu.',
+		unschedulable_since = '2026-11-24T03:00:00Z' WHERE id = $1`, wsID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE workspace_namespaces SET unschedulable_pods = 2 WHERE workspace_id = $1`, wsID); err != nil {
+		t.Fatal(err)
+	}
+	since := time.Date(2026, 11, 24, 3, 0, 0, 0, time.UTC)
+	check := func(what string, w oapi.Workspace) {
+		t.Helper()
+		sc := w.Scheduling
+		if sc == nil || sc.UnschedulablePods != 2 || sc.Message != "0/6 nodes are available: 6 Insufficient cpu." ||
+			sc.Since == nil || !sc.Since.Equal(since) || w.State != "Provisioning" {
+			t.Fatalf("%s: %+v", what, w)
+		}
+	}
+	var one oapi.Workspace
+	if err := json.Unmarshal([]byte(get("/api/v1/workspaces/"+wsID)), &one); err != nil {
+		t.Fatal(err)
+	}
+	check("get", one)
+	var list oapi.WorkspaceList
+	if err := json.Unmarshal([]byte(get("/api/v1/organizations/zeta/workspaces")), &list); err != nil || len(list.Items) != 1 {
+		t.Fatalf("list: %v %+v", err, list)
+	}
+	check("list", list.Items[0])
+	if b := get("/api/v1/workspaces/" + wsID + "/namespaces"); !strings.Contains(b, `"unschedulablePods":2`) {
+		t.Fatalf("namespaces: %s", b)
+	}
+}

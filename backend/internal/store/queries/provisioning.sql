@@ -11,13 +11,24 @@ RETURNING *;
 -- name: RecordWorkspaceUsage :exec
 UPDATE workspaces SET usage_snapshot = @usage_snapshot WHERE id = @id AND usage_snapshot IS DISTINCT FROM @usage_snapshot;
 
+-- name: RecordWorkspaceScheduling :exec
+-- Pods the scheduler cannot place, written only when the report changed.
+UPDATE workspaces
+SET unschedulable_pods = @unschedulable_pods, unschedulable_message = @unschedulable_message,
+    unschedulable_since = sqlc.narg(unschedulable_since)::timestamptz
+WHERE id = @id
+  AND (unschedulable_pods, unschedulable_message, unschedulable_since)
+      IS DISTINCT FROM (@unschedulable_pods::int, @unschedulable_message::text, sqlc.narg(unschedulable_since)::timestamptz);
+
 -- name: RecordNamespace :exec
-UPDATE workspace_namespaces SET state = @state, usage_snapshot = @usage_snapshot, updated_at = now() WHERE id = @id;
+UPDATE workspace_namespaces
+SET state = @state, usage_snapshot = @usage_snapshot, unschedulable_pods = @unschedulable_pods, updated_at = now()
+WHERE id = @id;
 
 -- name: CreateObservedNamespace :exec
 -- A Namespace the controller found that the portal did not ask for (kubectl, Headlamp).
-INSERT INTO workspace_namespaces (id, workspace_id, cluster_id, name, source, state, usage_snapshot)
-VALUES (@id, @workspace_id, @cluster_id, @name, @source, 'Active', @usage_snapshot);
+INSERT INTO workspace_namespaces (id, workspace_id, cluster_id, name, source, state, usage_snapshot, unschedulable_pods)
+VALUES (@id, @workspace_id, @cluster_id, @name, @source, 'Active', @usage_snapshot, @unschedulable_pods);
 
 -- name: TimedOutOperations :many
 -- Operations on this cluster delivered (Running) longer ago than the

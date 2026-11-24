@@ -42,6 +42,7 @@
             "requests.cpu": "500m",
             "pods": "4"
           },
+          "unschedulablePods": 0,
           "createdAt": "2026-11-22T10:00:00Z"
         }
       ]

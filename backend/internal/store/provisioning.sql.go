@@ -7,20 +7,22 @@ package store
 
 import (
 	"context"
+	"time"
 )
 
 const createObservedNamespace = `-- name: CreateObservedNamespace :exec
-INSERT INTO workspace_namespaces (id, workspace_id, cluster_id, name, source, state, usage_snapshot)
-VALUES ($1, $2, $3, $4, $5, 'Active', $6)
+INSERT INTO workspace_namespaces (id, workspace_id, cluster_id, name, source, state, usage_snapshot, unschedulable_pods)
+VALUES ($1, $2, $3, $4, $5, 'Active', $6, $7)
 `
 
 type CreateObservedNamespaceParams struct {
-	ID            string
-	WorkspaceID   string
-	ClusterID     string
-	Name          string
-	Source        string
-	UsageSnapshot []byte
+	ID                string
+	WorkspaceID       string
+	ClusterID         string
+	Name              string
+	Source            string
+	UsageSnapshot     []byte
+	UnschedulablePods int32
 }
 
 // A Namespace the controller found that the portal did not ask for (kubectl, Headlamp).
@@ -32,6 +34,7 @@ func (q *Queries) CreateObservedNamespace(ctx context.Context, arg CreateObserve
 		arg.Name,
 		arg.Source,
 		arg.UsageSnapshot,
+		arg.UnschedulablePods,
 	)
 	return err
 }
@@ -55,17 +58,25 @@ func (q *Queries) ForgetNodesNotIn(ctx context.Context, arg ForgetNodesNotInPara
 }
 
 const recordNamespace = `-- name: RecordNamespace :exec
-UPDATE workspace_namespaces SET state = $1, usage_snapshot = $2, updated_at = now() WHERE id = $3
+UPDATE workspace_namespaces
+SET state = $1, usage_snapshot = $2, unschedulable_pods = $3, updated_at = now()
+WHERE id = $4
 `
 
 type RecordNamespaceParams struct {
-	State         string
-	UsageSnapshot []byte
-	ID            string
+	State             string
+	UsageSnapshot     []byte
+	UnschedulablePods int32
+	ID                string
 }
 
 func (q *Queries) RecordNamespace(ctx context.Context, arg RecordNamespaceParams) error {
-	_, err := q.db.Exec(ctx, recordNamespace, arg.State, arg.UsageSnapshot, arg.ID)
+	_, err := q.db.Exec(ctx, recordNamespace,
+		arg.State,
+		arg.UsageSnapshot,
+		arg.UnschedulablePods,
+		arg.ID,
+	)
 	return err
 }
 
@@ -156,12 +167,39 @@ func (q *Queries) RecordPoolSnapshot(ctx context.Context, arg RecordPoolSnapshot
 	return err
 }
 
+const recordWorkspaceScheduling = `-- name: RecordWorkspaceScheduling :exec
+UPDATE workspaces
+SET unschedulable_pods = $1, unschedulable_message = $2,
+    unschedulable_since = $3::timestamptz
+WHERE id = $4
+  AND (unschedulable_pods, unschedulable_message, unschedulable_since)
+      IS DISTINCT FROM ($1::int, $2::text, $3::timestamptz)
+`
+
+type RecordWorkspaceSchedulingParams struct {
+	UnschedulablePods    int32
+	UnschedulableMessage string
+	UnschedulableSince   *time.Time
+	ID                   string
+}
+
+// Pods the scheduler cannot place, written only when the report changed.
+func (q *Queries) RecordWorkspaceScheduling(ctx context.Context, arg RecordWorkspaceSchedulingParams) error {
+	_, err := q.db.Exec(ctx, recordWorkspaceScheduling,
+		arg.UnschedulablePods,
+		arg.UnschedulableMessage,
+		arg.UnschedulableSince,
+		arg.ID,
+	)
+	return err
+}
+
 const recordWorkspaceStatus = `-- name: RecordWorkspaceStatus :one
 
 UPDATE workspaces
 SET conditions = $1, observed_generation = $2, state = $3, updated_at = now()
 WHERE id = $4
-RETURNING id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at, usage_snapshot, cordoned
+RETURNING id, org_id, cluster_id, cluster_grant_id, slug, k8s_name, display_name, state, requests_cpu_milli, requests_memory_bytes, limits_cpu_milli, limits_memory_bytes, pods, requests_storage_bytes, namespace_quota, compute_mode, shared_pool_id, desired_generation, observed_generation, conditions, deleted_at, created_at, updated_at, usage_snapshot, cordoned, unschedulable_pods, unschedulable_message, unschedulable_since
 `
 
 type RecordWorkspaceStatusParams struct {
@@ -208,6 +246,9 @@ func (q *Queries) RecordWorkspaceStatus(ctx context.Context, arg RecordWorkspace
 		&i.UpdatedAt,
 		&i.UsageSnapshot,
 		&i.Cordoned,
+		&i.UnschedulablePods,
+		&i.UnschedulableMessage,
+		&i.UnschedulableSince,
 	)
 	return i, err
 }

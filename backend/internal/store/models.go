@@ -338,6 +338,9 @@ type Workspace struct {
 	UpdatedAt            time.Time
 	UsageSnapshot        []byte
 	Cordoned             bool
+	UnschedulablePods    int32
+	UnschedulableMessage string
+	UnschedulableSince   *time.Time
 }
 
 type WorkspaceGroupBinding struct {
@@ -350,15 +353,16 @@ type WorkspaceGroupBinding struct {
 }
 
 type WorkspaceNamespace struct {
-	ID            string
-	WorkspaceID   string
-	ClusterID     string
-	Name          string
-	Source        string
-	State         string
-	UsageSnapshot []byte
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID                string
+	WorkspaceID       string
+	ClusterID         string
+	Name              string
+	Source            string
+	State             string
+	UsageSnapshot     []byte
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	UnschedulablePods int32
 }
 
 type WorkspaceNodeReservation struct {
