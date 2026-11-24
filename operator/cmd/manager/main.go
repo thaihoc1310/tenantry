@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -77,7 +78,9 @@ func main() {
 			BindAddress: metricsAddr, SecureServing: true, FilterProvider: filters.WithAuthenticationAndAuthorization,
 		},
 		HealthProbeBindAddress: probeAddr,
-		Cache:                  cache.Options{SyncPeriod: &resync},
+		Cache: cache.Options{SyncPeriod: &resync, ByObject: map[client.Object]cache.ByObject{
+			&corev1.Pod{}: controller.PendingPodsOnly,
+		}},
 	})
 	if err != nil {
 		log.Error(err, "creating the manager")

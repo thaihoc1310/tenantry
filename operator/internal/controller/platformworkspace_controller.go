@@ -11,11 +11,14 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -136,6 +139,16 @@ func (r *PlatformWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	usage, perNamespace := subreconciler.Usage(quota)
 	ws.Status.Usage = usage
 	ws.Status.Namespaces = observe.Namespaces(ws, existing, perNamespace)
+	// 8. scheduling: Pods the pool has no room for; status only, the
+	// Workspace stays Ready.
+	scheduling, unschedulable, err := subreconciler.Scheduling(ctx, r.Client, existing)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	ws.Status.Scheduling = scheduling
+	for i := range ws.Status.Namespaces {
+		ws.Status.Namespaces[i].UnschedulablePods = unschedulable[ws.Status.Namespaces[i].Name]
+	}
 	if tenant != nil {
 		ws.Status.CapsuleTenantRef = tenant.GetName()
 	}
@@ -221,8 +234,9 @@ func (r *PlatformWorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	proxySetting := &unstructured.Unstructured{}
 	proxySetting.SetGroupVersionKind(render.ProxySettingGVK)
 	// A Service appearing or changing makes a Route of its Namespace ready
-	// or not: the Workspace is named by the Namespace's tenant label.
-	byServiceNamespace := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
+	// or not, a Pod becoming unschedulable or not changes status.scheduling:
+	// the Workspace is named by the Namespace's tenant label.
+	byNamespaceTenant := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
 		ns := &corev1.Namespace{}
 		if err := r.Get(ctx, client.ObjectKey{Name: o.GetNamespace()}, ns); err != nil {
 			return nil
@@ -266,10 +280,36 @@ func (r *PlatformWorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(ipPool).
 		Owns(proxySetting).
 		Owns(&networkingv1.Ingress{}).
-		Watches(&corev1.Service{}, byServiceNamespace).
+		Watches(&corev1.Service{}, byNamespaceTenant).
+		Watches(&corev1.Pod{}, byNamespaceTenant, builder.WithPredicates(schedulingChanged)).
 		Watches(quota, byQuotaTenant).
 		Watches(&corev1.Node{}, byNode).
 		Watches(&corev1.Namespace{}, byTenantLabel, builder.WithPredicates(hasTenantLabel)).
 		Named("platformworkspace").
 		Complete(r)
 }
+
+// schedulingChanged lets through only the Pod events that can change a
+// Workspace's status.scheduling: a Pod becoming unschedulable or no longer,
+// its message changing, or an unschedulable Pod going away. Leaving Pending
+// reaches the operator as a delete, the cache holding Pending Pods only.
+var schedulingChanged = predicate.Funcs{
+	CreateFunc: func(e event.CreateEvent) bool { return podUnschedulable(e.Object) != "" },
+	UpdateFunc: func(e event.UpdateEvent) bool {
+		return podUnschedulable(e.ObjectOld) != podUnschedulable(e.ObjectNew)
+	},
+	DeleteFunc:  func(e event.DeleteEvent) bool { return podUnschedulable(e.Object) != "" },
+	GenericFunc: func(event.GenericEvent) bool { return false },
+}
+
+func podUnschedulable(o client.Object) string {
+	if p, ok := o.(*corev1.Pod); ok {
+		return subreconciler.Unschedulable(p)
+	}
+	return ""
+}
+
+// PendingPodsOnly is the manager's cache option for Pods: the operator
+// watches only Pending ones, for status.scheduling, never every Pod of the
+// cluster. Every other Pod read goes to the API server (APIReader).
+var PendingPodsOnly = cache.ByObject{Field: fields.OneTermEqualSelector("status.phase", string(corev1.PodPending))}
