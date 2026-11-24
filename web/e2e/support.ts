@@ -166,13 +166,14 @@ export async function succeeded(page: Page, opId: string) {
 // workspaceOrganization signs up an owner, has the Platform Admin create an
 // active Organization for them with a grant on cluster-a, and waits for its
 // group admins to reach Keycloak, so it can be bound. maxWorkspaces bounds
-// both the entitlement and the grant.
+// both the entitlement and the grant; grant overrides its resources.
 export async function workspaceOrganization(
   browser: Browser,
   prefix: string,
   maxWorkspaces = 2,
   maxGroups = 5,
   maxMembers = 5,
+  grant: Record<string, string | number> = {},
 ) {
   const owner = await signUp(browser)
   const admin = await logIn(browser, 'admin', adminPassword(), '/admin/organizations')
@@ -198,6 +199,7 @@ export async function workspaceOrganization(
           limitsMemory: '8Gi',
           pods: 20,
           requestsStorage: '10Gi',
+          ...grant,
         },
         sharedPoolIds: ['shared-general'],
         networkPoolIds: ['onboarding-pod-network'],
@@ -468,6 +470,7 @@ export async function sharedWorkspace(
   ws: string,
   bindings: { groupId: string; role: string }[],
   cleanupAs: Page = page,
+  resources: Record<string, string | number> = {},
 ) {
   const res = await api(
     page,
@@ -486,6 +489,7 @@ export async function sharedWorkspace(
         pods: 5,
         requestsStorage: '1Gi',
         namespaceQuota: 1,
+        ...resources,
       },
       namespaces: ['app'],
       bindings,
