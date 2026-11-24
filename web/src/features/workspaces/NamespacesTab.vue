@@ -96,15 +96,15 @@ async function remove() {
     />
     <div v-else class="t-tablewrap">
       <el-table :data="rows" style="width: 100%">
-        <el-table-column label="Namespace" min-width="220"
+        <el-table-column label="Namespace" min-width="180"
           ><template #default="{ row }"
             ><span class="mono">{{ row.name }}</span></template
           ></el-table-column
         >
-        <el-table-column label="State" width="110"
+        <el-table-column label="State" width="100"
           ><template #default="{ row }"><StatusTag :value="row.state" /></template
         ></el-table-column>
-        <el-table-column label="Created with" width="110"
+        <el-table-column label="Created with" width="100"
           ><template #default="{ row }">{{
             row.source === 'kubectl' ? 'kubectl' : 'Portal'
           }}</template></el-table-column
@@ -127,7 +127,7 @@ async function remove() {
             ><span class="num">{{ row.usage['requests.cpu'] ?? 0 }}</span></template
           ></el-table-column
         >
-        <el-table-column label="Memory req." width="110" align="right"
+        <el-table-column label="Memory req." width="100" align="right"
           ><template #default="{ row }"
             ><span class="num">{{ row.usage['requests.memory'] ?? 0 }}</span></template
           ></el-table-column
@@ -137,7 +137,7 @@ async function remove() {
             ><span class="num">{{ storage(row) }} Gi</span></template
           ></el-table-column
         >
-        <el-table-column width="90" align="right"
+        <el-table-column width="80" align="right" fixed="right"
           ><template #default="{ row }"
             ><el-button
               link
