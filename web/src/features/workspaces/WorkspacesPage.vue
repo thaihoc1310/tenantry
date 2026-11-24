@@ -58,7 +58,7 @@ const dedicatedNodes = useOrgDedicatedNodes(
     </TPanel>
     <TPanel v-else flush>
       <div class="t-tablewrap">
-        <el-table :data="list.data.value" style="width: 100%">
+        <el-table scrollbar-always-on :data="list.data.value" style="width: 100%">
           <el-table-column label="Workspace" min-width="200"
             ><template #default="{ row }"
               ><RouterLink :to="`/orgs/${orgSlug}/workspaces/${row.slug}`"

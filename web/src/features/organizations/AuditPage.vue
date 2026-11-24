@@ -70,7 +70,7 @@ const rows = computed(() =>
       </div>
       <el-skeleton v-if="events.isPending.value" :rows="5" animated style="padding: 16px" />
       <div v-else class="t-tablewrap">
-        <el-table :data="rows" style="width: 100%" empty-text="No change matches these filters.">
+        <el-table scrollbar-always-on :data="rows" style="width: 100%" empty-text="No change matches these filters.">
           <el-table-column label="When" width="180"
             ><template #default="{ row }"
               ><span class="num">{{ when(row.at) }}</span></template

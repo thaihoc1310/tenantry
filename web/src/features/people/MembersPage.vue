@@ -116,7 +116,12 @@ async function revokeInvitation(id: string, email: string) {
       <TPanel flush>
         <ErrorState v-if="members.isError.value" :error="members.error.value" @retry="members.refetch()" />
         <div v-else class="t-tablewrap">
-          <el-table v-loading="members.isPending.value" :data="members.data.value ?? []" style="width: 100%">
+          <el-table
+            scrollbar-always-on
+            v-loading="members.isPending.value"
+            :data="members.data.value ?? []"
+            style="width: 100%"
+          >
             <el-table-column label="Member" min-width="220">
               <template #default="{ row }">
                 <strong>{{ row.displayName }}</strong>
@@ -156,7 +161,7 @@ async function revokeInvitation(id: string, email: string) {
                 ><span class="num">{{ when(row.joinedAt) }}</span></template
               >
             </el-table-column>
-            <el-table-column width="110" align="right">
+            <el-table-column width="110" align="right" fixed="right">
               <template #default="{ row }">
                 <el-tooltip
                   v-if="row.role === 'OrgOwner'"
@@ -183,6 +188,7 @@ async function revokeInvitation(id: string, email: string) {
         <ErrorState v-if="invitations.isError.value" :error="invitations.error.value" @retry="invitations.refetch()" />
         <div v-else class="t-tablewrap">
           <el-table
+            scrollbar-always-on
             v-loading="invitations.isPending.value"
             :data="invitations.data.value ?? []"
             style="width: 100%"
@@ -210,7 +216,7 @@ async function revokeInvitation(id: string, email: string) {
                 }}</span>
               </template>
             </el-table-column>
-            <el-table-column width="110" align="right">
+            <el-table-column width="110" align="right" fixed="right">
               <template #default="{ row }">
                 <el-button link type="danger" @click="revokeInvitation(row.id, row.email)">Revoke</el-button>
               </template>

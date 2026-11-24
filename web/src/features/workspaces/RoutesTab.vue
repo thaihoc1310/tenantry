@@ -94,7 +94,7 @@ async function remove() {
       description="A Route puts one Service on the internet over HTTPS, with a certificate handled for you."
     />
     <div v-else class="t-tablewrap">
-      <el-table :data="rows" style="width: 100%">
+      <el-table scrollbar-always-on :data="rows" style="width: 100%">
         <el-table-column label="Address" min-width="320"
           ><template #default="{ row }"
             ><a v-if="row.state === 'Active'" :href="row.url" target="_blank" rel="noopener" class="mono">{{
@@ -113,7 +113,7 @@ async function remove() {
             >:{{ row.port }} <span class="muted">in</span> <span class="mono">{{ row.namespace }}</span></template
           ></el-table-column
         >
-        <el-table-column width="100" align="right"
+        <el-table-column width="100" align="right" fixed="right"
           ><template #default="{ row }"
             ><el-button
               link

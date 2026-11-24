@@ -238,6 +238,7 @@ function pick(id: string) {
         <ErrorState v-if="pools.isError.value" :error="pools.error.value" @retry="pools.refetch()" />
         <div v-else class="t-tablewrap">
           <el-table
+            scrollbar-always-on
             v-loading="pools.isPending.value"
             :data="pools.data.value ?? []"
             style="width: 100%"
@@ -274,7 +275,7 @@ function pick(id: string) {
                 ></template
               >
             </el-table-column>
-            <el-table-column width="130" align="right">
+            <el-table-column width="130" align="right" fixed="right">
               <template #default="{ row }"
                 ><el-button link type="primary" @click="openPool(row)">Change…</el-button></template
               >
@@ -290,6 +291,7 @@ function pick(id: string) {
         <ErrorState v-if="nodes.isError.value" :error="nodes.error.value" @retry="nodes.refetch()" />
         <div v-else class="t-tablewrap">
           <el-table
+            scrollbar-always-on
             v-loading="nodes.isPending.value"
             :data="dedicated"
             style="width: 100%"
@@ -313,7 +315,7 @@ function pick(id: string) {
                 ></template
               >
             </el-table-column>
-            <el-table-column width="140" align="right">
+            <el-table-column width="140" align="right" fixed="right">
               <template #default="{ row }"
                 ><el-button link type="primary" @click="router.push(`/admin/organizations/${row.dedicatedTo.id}`)"
                   >Capacity</el-button
@@ -326,7 +328,12 @@ function pick(id: string) {
 
       <TPanel title="All nodes" flush>
         <div class="t-tablewrap">
-          <el-table :data="nodes.data.value ?? []" style="width: 100%" empty-text="No node reported yet.">
+          <el-table
+            scrollbar-always-on
+            :data="nodes.data.value ?? []"
+            style="width: 100%"
+            empty-text="No node reported yet."
+          >
             <el-table-column label="Node" width="170"
               ><template #default="{ row }"
                 ><code>{{ row.name }}</code></template
@@ -362,6 +369,7 @@ function pick(id: string) {
         <ErrorState v-if="nets.isError.value" :error="nets.error.value" @retry="nets.refetch()" />
         <div v-else class="t-tablewrap">
           <el-table
+            scrollbar-always-on
             v-loading="nets.isPending.value"
             :data="nets.data.value ?? []"
             style="width: 100%"
@@ -389,7 +397,7 @@ function pick(id: string) {
                 }}</span></template
               >
             </el-table-column>
-            <el-table-column width="110" align="right">
+            <el-table-column width="110" align="right" fixed="right">
               <template #default="{ row }"
                 ><el-button link type="primary" @click="openNet(row)">Change…</el-button></template
               >

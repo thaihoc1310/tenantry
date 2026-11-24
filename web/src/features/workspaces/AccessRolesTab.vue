@@ -88,7 +88,7 @@ async function add() {
     </template>
     <el-skeleton v-if="bindings.isPending.value" :rows="3" animated style="padding: 16px" />
     <div v-else class="t-tablewrap">
-      <el-table :data="bindings.data.value ?? []" style="width: 100%">
+      <el-table scrollbar-always-on :data="bindings.data.value ?? []" style="width: 100%">
         <el-table-column label="Group" min-width="170"
           ><template #default="{ row }"
             ><RouterLink v-if="manages" :to="`/orgs/${orgSlug}/groups`"
@@ -125,7 +125,7 @@ async function add() {
               ><StatusTag v-if="groupOf(row.groupId)" :value="groupOf(row.groupId)!.syncStatus" /></template
           ></el-table-column>
         </template>
-        <el-table-column width="110" align="right">
+        <el-table-column width="110" align="right" fixed="right">
           <template #default="{ row }">
             <el-tooltip
               v-if="lastOwner(row)"

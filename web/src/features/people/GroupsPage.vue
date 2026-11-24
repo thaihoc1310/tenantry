@@ -154,6 +154,7 @@ async function deleteGroup(g: Group) {
         <ErrorState v-if="groups.isError.value" :error="groups.error.value" @retry="groups.refetch()" />
         <div v-else class="t-tablewrap">
           <el-table
+            scrollbar-always-on
             v-loading="groups.isPending.value"
             :data="groups.data.value ?? []"
             style="width: 100%"
@@ -181,7 +182,7 @@ async function deleteGroup(g: Group) {
                 ></el-tooltip>
               </template>
             </el-table-column>
-            <el-table-column width="220" align="right">
+            <el-table-column width="220" align="right" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openGroupId = row.id">Members</el-button>
                 <el-button link @click="renameGroup(row)">Rename</el-button>

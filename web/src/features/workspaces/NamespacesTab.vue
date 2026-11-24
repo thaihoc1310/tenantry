@@ -95,7 +95,7 @@ async function remove() {
       description="Owners create namespaces here or with kubectl; Pods run in them."
     />
     <div v-else class="t-tablewrap">
-      <el-table :data="rows" style="width: 100%">
+      <el-table scrollbar-always-on :data="rows" style="width: 100%">
         <el-table-column label="Namespace" min-width="180"
           ><template #default="{ row }"
             ><span class="mono">{{ row.name }}</span></template

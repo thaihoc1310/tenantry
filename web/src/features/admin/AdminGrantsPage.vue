@@ -40,6 +40,7 @@ const open = (row: (typeof rows.value)[number]) =>
       <ErrorState v-if="grants.isError.value" :error="grants.error.value" @retry="grants.refetch()" />
       <div v-else class="t-tablewrap">
         <el-table
+          scrollbar-always-on
           v-loading="grants.isPending.value"
           :data="rows"
           style="width: 100%"
@@ -88,7 +89,7 @@ const open = (row: (typeof rows.value)[number]) =>
               ><span v-if="!row.clusterGrant.sharedPoolIds.length" class="muted">Dedicated nodes only</span></template
             >
           </el-table-column>
-          <el-table-column width="90" align="right">
+          <el-table-column width="90" align="right" fixed="right">
             <template #default="{ row }"
               ><el-button link type="primary" @click.stop="open(row)">Edit</el-button></template
             >

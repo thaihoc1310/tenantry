@@ -53,7 +53,7 @@ const nets = useOrgNetworkPools(
 
   <TPanel title="Dedicated nodes" note="only your Organization runs Pods here" flush>
     <div v-if="nodes.data.value?.length" class="t-tablewrap">
-      <el-table :data="nodes.data.value" style="width: 100%">
+      <el-table scrollbar-always-on :data="nodes.data.value" style="width: 100%">
         <el-table-column label="Node" width="160"
           ><template #default="{ row }"
             ><code>{{ row.name }}</code></template

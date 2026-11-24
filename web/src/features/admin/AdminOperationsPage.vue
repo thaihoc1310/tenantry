@@ -52,6 +52,7 @@ async function doRetry(id: string) {
       <ErrorState v-if="list.isError.value" :error="list.error.value" @retry="list.refetch()" />
       <div v-else class="t-tablewrap">
         <el-table
+          scrollbar-always-on
           v-loading="list.isPending.value"
           :data="rows"
           style="width: 100%"
@@ -83,7 +84,7 @@ async function doRetry(id: string) {
               ><span class="num">{{ when(row.createdAt) }}</span></template
             ></el-table-column
           >
-          <el-table-column width="110" align="right">
+          <el-table-column width="110" align="right" fixed="right">
             <template #default="{ row }"
               ><el-button
                 v-if="row.state === 'Failed' || row.state === 'Blocked'"

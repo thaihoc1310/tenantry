@@ -160,7 +160,7 @@ const wizard = computed(() => `/orgs/${props.orgSlug}/workspaces/new`)
               ><RouterLink :to="`/orgs/${orgSlug}/workspaces`" class="small">All Workspaces</RouterLink></template
             >
             <div class="t-tablewrap">
-              <el-table :data="workspaces.data.value ?? []" style="width: 100%">
+              <el-table scrollbar-always-on :data="workspaces.data.value ?? []" style="width: 100%">
                 <el-table-column label="Workspace" min-width="150"
                   ><template #default="{ row }"
                     ><RouterLink :to="`/orgs/${orgSlug}/workspaces/${row.slug}`"

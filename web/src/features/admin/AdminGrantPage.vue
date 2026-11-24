@@ -200,7 +200,7 @@ async function remove() {
       </TPanel>
 
       <el-dialog v-model="confirming" :title="`Save these changes to ${o.displayName}'s grant?`" width="560px">
-        <el-table :data="changes" style="width: 100%">
+        <el-table scrollbar-always-on :data="changes" style="width: 100%">
           <el-table-column label="Field" min-width="180"
             ><template #default="{ row }">{{ row[0] }}</template></el-table-column
           >

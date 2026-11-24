@@ -76,6 +76,7 @@ async function toggle(u: AdminUser) {
       <ErrorState v-if="users.isError.value" :error="users.error.value" @retry="users.refetch()" />
       <div v-else class="t-tablewrap">
         <el-table
+          scrollbar-always-on
           v-loading="users.isPending.value"
           :data="users.data.value?.items ?? []"
           style="width: 100%"
@@ -106,7 +107,7 @@ async function toggle(u: AdminUser) {
               ><span class="num">{{ when(row.createdAt) }}</span></template
             ></el-table-column
           >
-          <el-table-column width="120" align="right">
+          <el-table-column width="120" align="right" fixed="right">
             <template #default="{ row }">
               <el-tooltip v-if="row.id === me.data.value?.id" content="You cannot disable your own account."
                 ><span><el-button link disabled>Disable</el-button></span></el-tooltip

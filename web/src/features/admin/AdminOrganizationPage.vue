@@ -170,7 +170,7 @@ async function remove() {
             >
           </template>
           <div class="t-tablewrap">
-            <el-table :data="grantRows" style="width: 100%" empty-text="No grant.">
+            <el-table scrollbar-always-on :data="grantRows" style="width: 100%" empty-text="No grant.">
               <el-table-column label="Cluster" min-width="140">
                 <template #default="{ row }"
                   ><code>{{ row.g.clusterId }}</code>
@@ -211,7 +211,7 @@ async function remove() {
                   ></template
                 >
               </el-table-column>
-              <el-table-column width="90" align="right">
+              <el-table-column width="90" align="right" fixed="right">
                 <template #default="{ row }"
                   ><el-button link type="primary" @click="router.push(`/admin/grants/${orgId}/${row.g.clusterId}`)"
                     >Edit</el-button

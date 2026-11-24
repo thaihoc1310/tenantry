@@ -373,7 +373,12 @@ const usable = computed(() => ['Ready', 'Degraded'].includes(ws.value?.state ?? 
         </TPanel>
         <TPanel title="By namespace" flush>
           <div class="t-tablewrap">
-            <el-table :data="usage.data.value?.namespaces ?? []" style="width: 100%" empty-text="No Namespace yet.">
+            <el-table
+              scrollbar-always-on
+              :data="usage.data.value?.namespaces ?? []"
+              style="width: 100%"
+              empty-text="No Namespace yet."
+            >
               <el-table-column label="Namespace" min-width="220"
                 ><template #default="{ row }"
                   ><span class="mono">{{ row.name }}</span></template

@@ -56,7 +56,7 @@ const creating = ref(false)
 
       <template v-else-if="tab[0] === 'pending'">
         <div v-if="list.items.value.length" class="t-tablewrap">
-          <el-table :data="list.items.value" style="width: 100%">
+          <el-table scrollbar-always-on :data="list.items.value" style="width: 100%">
             <el-table-column label="Organization" min-width="160">
               <template #default="{ row }"
                 ><strong>{{ row.displayName }}</strong>
@@ -77,7 +77,7 @@ const creating = ref(false)
                 ><span class="num">{{ when(row.createdAt) }}</span></template
               >
             </el-table-column>
-            <el-table-column width="110" align="right">
+            <el-table-column width="110" align="right" fixed="right">
               <template #default="{ row }"
                 ><el-button type="primary" size="small" @click="router.push(`/admin/organizations/${row.id}/review`)"
                   >Review</el-button
@@ -96,7 +96,7 @@ const creating = ref(false)
 
       <template v-else-if="tab[0] === 'active'">
         <div v-if="list.items.value.length" class="t-tablewrap">
-          <el-table :data="list.items.value" style="width: 100%">
+          <el-table scrollbar-always-on :data="list.items.value" style="width: 100%">
             <el-table-column label="Organization" min-width="160">
               <template #default="{ row }"
                 ><strong>{{ row.displayName }}</strong>
@@ -114,7 +114,7 @@ const creating = ref(false)
             <el-table-column label="Status" width="120">
               <template #default="{ row }"><StatusTag :value="row.status" /></template>
             </el-table-column>
-            <el-table-column width="120" align="right">
+            <el-table-column width="120" align="right" fixed="right">
               <template #default="{ row }"
                 ><el-button link type="primary" @click="router.push(`/admin/organizations/${row.id}`)"
                   >Open</el-button
@@ -128,7 +128,7 @@ const creating = ref(false)
 
       <template v-else>
         <div v-if="list.items.value.length" class="t-tablewrap">
-          <el-table :data="list.items.value" style="width: 100%">
+          <el-table scrollbar-always-on :data="list.items.value" style="width: 100%">
             <el-table-column label="Organization" min-width="150">
               <template #default="{ row }"
                 ><strong>{{ row.displayName }}</strong>

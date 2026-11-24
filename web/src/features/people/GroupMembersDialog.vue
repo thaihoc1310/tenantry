@@ -65,7 +65,12 @@ async function remove(userId: string, name: string) {
       </div>
 
       <div class="t-tablewrap">
-        <el-table :data="group.members" style="width: 100%" empty-text="Nobody is in this group yet.">
+        <el-table
+          scrollbar-always-on
+          :data="group.members"
+          style="width: 100%"
+          empty-text="Nobody is in this group yet."
+        >
           <el-table-column label="Member" min-width="220">
             <template #default="{ row }">
               <strong>{{ row.displayName }}</strong>
@@ -81,7 +86,7 @@ async function remove(userId: string, name: string) {
               ></el-tooltip>
             </template>
           </el-table-column>
-          <el-table-column width="100" align="right">
+          <el-table-column width="100" align="right" fixed="right">
             <template #default="{ row }">
               <el-button
                 link
