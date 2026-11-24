@@ -3,7 +3,8 @@
 call the script makes, and a dry k6 run against it. No lab, no secrets.
 
   test/load/mock.py    # exit 0 when k6 runs clean against a sound stand-in
-                       # and stops with 99 against one that answers 500
+                       # and stops with 99 against one that answers 500;
+                       # the probe passes, then fails on a 3.2 s DELETE
 """
 import json
 import os
@@ -11,11 +12,13 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 IMAGE = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "k6-image")).read().strip()
 seen = {}
 broken = False
+slow = False
 
 
 class API(BaseHTTPRequestHandler):
@@ -37,6 +40,16 @@ class API(BaseHTTPRequestHandler):
         key = f"{self.command} {self.path.split('/')[3] if self.path.count('/') > 3 else self.path}"
         seen[key] = seen.get(key, 0) + 1
         op = {"id": "op-1", "type": "workspace.update", "state": "Running"}
+        if "invitations" in self.path:
+            if self.command == "DELETE":
+                time.sleep(3.2 if slow else 0)
+                self.send_response(204)
+                self.end_headers()
+                return
+            if self.command == "POST":
+                ok = self.headers.get("Idempotency-Key") and body.get("role") == "OrgMember"
+                return self.answer(201, {"id": "inv-1"}) if ok else self.answer(400, {"code": "VALIDATION_FAILED"})
+            return self.answer(200, {"items": []})
         if self.command == "GET":
             return self.answer(200, {**op, "state": "Succeeded"} if "/operations/" in self.path else {"items": []})
         if self.command == "PUT":
@@ -53,7 +66,7 @@ class API(BaseHTTPRequestHandler):
         pass
 
 
-def k6(port):
+def k6(port, mode="dry"):
     fixture = {"portal": f"http://127.0.0.1:{port}", "org": "o", "toggleGroupId": "g",
                "users": [{"cookie": "s=1", "csrf": "c"}], "workspaces": [{"id": "w", "operationId": "op-0"}]}
     with tempfile.TemporaryDirectory() as data:
@@ -63,23 +76,30 @@ def k6(port):
         here = os.path.dirname(os.path.abspath(__file__))
         return subprocess.run(["docker", "run", "--rm", "--network", "host", "--user", f"{os.getuid()}:{os.getgid()}",
                                "-v", f"{data}:/data:ro",
-                               "-v", f"{here}:/scripts:ro", "-e", "MODE=dry", IMAGE, "run", "--quiet",
+                               "-v", f"{here}:/scripts:ro", "-e", f"MODE={mode}", IMAGE, "run", "--quiet",
                                "/scripts/api.js"], capture_output=True, text=True).returncode
 
 
 def main():
-    global broken
+    global broken, slow
     server = ThreadingHTTPServer(("127.0.0.1", 0), API)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     sound = k6(server.server_port)
+    probe = k6(server.server_port, "probe")
+    slow = True
+    slowProbe = k6(server.server_port, "probe")
+    slow = False
     print("calls:", json.dumps(seen, sort_keys=True))
     broken = True
     failing = k6(server.server_port)
     server.shutdown()
     # Reads, the toggle and the operation polls were all reached, and the
-    # error threshold fails the run (k6 exit 99).
-    ok = sound == 0 and all(seen.get(k) for k in ("GET /api/v1/me", "GET operations", "PUT workspaces")) and failing == 99
-    print("PASS" if ok else f"FAIL (k6 exit {sound} against the sound stand-in, {failing} against the failing one)")
+    # error threshold fails the run (k6 exit 99). The probe made, listed
+    # and revoked its invitations, and a DELETE over 3 s fails it.
+    reached = ("GET /api/v1/me", "GET operations", "PUT workspaces", "POST organizations", "DELETE invitations")
+    ok = sound == 0 and all(seen.get(k) for k in reached) and failing == 99 and probe == 0 and slowProbe == 99
+    print("PASS" if ok else f"FAIL (k6 exit {sound} against the sound stand-in, {failing} against the failing one, "
+          f"probe {probe}, probe with a slow DELETE {slowProbe})")
     return 0 if ok else 1
 
 

@@ -12,6 +12,9 @@
 //
 // MODE=full: 10 -> 25 -> 50 -> 100 VUs, 1 min ramp + 3 min hold each.
 // MODE=dry: 1 VU for 30 s, to check the whole chain before a real run.
+// MODE=probe: before either, 10 rounds of an invitation created, listed and
+// revoked (database only), 3 s apart, through the same network path. It
+// fails (exit 99) on any failed request (an EOF is one) or a DELETE over 3 s.
 //
 // k6 stops the run itself (exit 99) when the p95 of all requests passes 5 s
 // or more than 5 % of the requests are errors. An error is a network
@@ -45,6 +48,11 @@ const thresholds = {
 
 // A threshold that always holds, per endpoint, so the summary carries each
 // endpoint's own durations (k6 reports a submetric only when one names it).
+const probeNames = [
+  "POST /organizations/{org}/invitations",
+  "GET /organizations/{org}/invitations",
+  "DELETE /invitations/{id}",
+];
 for (const name of [
   "GET /me",
   "GET /organizations/{org}/workspaces",
@@ -58,38 +66,61 @@ for (const name of [
   thresholds[`http_req_duration{name:${name}}`] = ["max>=0"];
 }
 
+const probeThresholds = {
+  http_req_failed: ["rate==0"],
+  ...Object.fromEntries(
+    probeNames.map((n) => [`http_req_duration{name:${n}}`, ["max>=0"]]),
+  ),
+};
+probeThresholds["http_req_duration{name:DELETE /invitations/{id}}"] = [
+  "max<3000",
+];
+
 export const options =
-  MODE === "full"
+  MODE === "probe"
     ? {
         scenarios: {
-          ramp: {
-            executor: "ramping-vus",
-            startVUs: 0,
-            stages: [10, 25, 50, 100].flatMap((n) => [
-              { duration: "1m", target: n },
-              { duration: "3m", target: n },
-            ]),
-            gracefulRampDown: "30s",
-            gracefulStop: "2m",
+          probe: {
+            executor: "per-vu-iterations",
+            vus: 1,
+            iterations: 10,
+            maxDuration: "3m",
           },
         },
-        thresholds,
-        summaryTrendStats: [
-          "avg",
-          "min",
-          "med",
-          "p(90)",
-          "p(95)",
-          "p(99)",
-          "max",
-        ],
-      }
-    : {
-        vus: 1,
-        duration: "30s",
-        thresholds,
+        thresholds: probeThresholds,
         summaryTrendStats: ["avg", "med", "p(95)", "max"],
-      };
+      }
+    : MODE === "full"
+      ? {
+          scenarios: {
+            ramp: {
+              executor: "ramping-vus",
+              startVUs: 0,
+              stages: [10, 25, 50, 100].flatMap((n) => [
+                { duration: "1m", target: n },
+                { duration: "3m", target: n },
+              ]),
+              gracefulRampDown: "30s",
+              gracefulStop: "2m",
+            },
+          },
+          thresholds,
+          summaryTrendStats: [
+            "avg",
+            "min",
+            "med",
+            "p(90)",
+            "p(95)",
+            "p(99)",
+            "max",
+          ],
+        }
+      : {
+          vus: 1,
+          duration: "30s",
+          thresholds,
+          summaryTrendStats: ["avg", "med", "p(95)", "max"],
+        };
 
 // Each VU is one of the members, round robin, so the write limit is shared out.
 function who() {
@@ -227,7 +258,22 @@ function namespacePair() {
   }
 }
 
+function probe() {
+  const [post, list, del] = probeNames;
+  const made = call(
+    "POST",
+    `/organizations/${fixture.org}/invitations`,
+    post,
+    { email: `load-probe-${__ITER}@example.com`, role: "OrgMember" },
+    { "Idempotency-Key": crypto.randomUUID() },
+  );
+  call("GET", `/organizations/${fixture.org}/invitations`, list);
+  if (made.body) call("DELETE", `/invitations/${made.body.id}`, del);
+  sleep(3);
+}
+
 export default function () {
+  if (MODE === "probe") return probe();
   const r = Math.random();
   if (r < 0.7) {
     read();
