@@ -22,7 +22,7 @@ import (
 // each), within the Workspace's quota, shows in status.scheduling and in its
 // Namespace's count while the Workspace stays Ready; deleted, it leaves
 // both. It records how long the operator took each way, and what the
-// portal's Workspace shows (the backend side may not be deployed yet).
+// portal shows and when.
 func TestSchedulingStatus(t *testing.T) {
 	adm := adminPortal(t)
 	owner, slug, _, adminsID, adminsMachine := optestOrg(t, adm, sharedGrant("4", 1))
@@ -78,9 +78,21 @@ func TestSchedulingStatus(t *testing.T) {
 	if ws.Status.Phase != v1.PhaseReady {
 		t.Errorf("phase %s with a Pod unschedulable, want Ready", ws.Status.Phase)
 	}
+	// The portal's view: the worker copies the CR's status into the database.
 	var view json.RawMessage
-	owner.api(t, http.MethodGet, "/workspaces/"+id, nil, &view)
-	t.Logf("PORTAL Workspace while the Pod waits: %s", view)
+	portalScheduling := func() *struct{ UnschedulablePods int } {
+		var got struct {
+			Scheduling *struct{ UnschedulablePods int } `json:"scheduling"`
+		}
+		owner.api(t, http.MethodGet, "/workspaces/"+id, nil, &view)
+		_ = json.Unmarshal(view, &got)
+		return got.Scheduling
+	}
+	waitFor(t, "the portal showing the Pod", 3*time.Minute, func() (bool, error) {
+		s := portalScheduling()
+		return s != nil && s.UnschedulablePods == 1, nil
+	})
+	t.Logf("PORTAL shows it %s after the Pod was created: %s", time.Since(created).Round(time.Second), view)
 
 	if err := tenant.Delete(ctx, pod.DeepCopy()); err != nil {
 		t.Fatalf("delete the Pod: %v", err)
@@ -90,6 +102,10 @@ func TestSchedulingStatus(t *testing.T) {
 		return cr().Status.Scheduling == nil, nil
 	})
 	t.Logf("SCHEDULING gone %s after the delete", time.Since(deleted).Round(time.Second))
+	waitFor(t, "the portal no longer showing it", 3*time.Minute, func() (bool, error) {
+		return portalScheduling() == nil, nil
+	})
+	t.Logf("PORTAL clear %s after the delete: %s", time.Since(deleted).Round(time.Second), view)
 	ws = cr()
 	if got := nsCount(ws); got != 0 {
 		t.Errorf("%s still counts %d", ns, got)
@@ -97,6 +113,4 @@ func TestSchedulingStatus(t *testing.T) {
 	if ws.Status.Phase != v1.PhaseReady {
 		t.Errorf("phase %s after the delete, want Ready", ws.Status.Phase)
 	}
-	owner.api(t, http.MethodGet, "/workspaces/"+id, nil, &view)
-	t.Logf("PORTAL Workspace after the delete: %s", view)
 }
