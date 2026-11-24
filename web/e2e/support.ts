@@ -79,14 +79,27 @@ export async function signUp(browser: Browser) {
 }
 
 // logIn opens a new browser context and logs in at Keycloak.
+// A login whose redirects stall past the action timeout is tried once more,
+// in a new context, and says so: from home over wg0 a request sometimes never
+// arrives (docs/report/eof-path.md); the API answers every callback that does
+// reach it within a fraction of a second.
 export async function logIn(browser: Browser, username: string, password: string, path = '/'): Promise<Page> {
-  const page = await (await browser.newContext()).newPage()
-  await page.goto(path)
-  await page.fill('#username', username)
-  await fillSecret(page, '#password', password)
-  await page.click('#kc-login')
-  await page.waitForURL((u) => !u.pathname.startsWith('/realms/'))
-  return page
+  for (let attempt = 1; ; attempt++) {
+    const context = await browser.newContext()
+    const page = await context.newPage()
+    try {
+      await page.goto(path)
+      await page.fill('#username', username)
+      await fillSecret(page, '#password', password)
+      await page.click('#kc-login')
+      await page.waitForURL((u) => !u.pathname.startsWith('/realms/'))
+      return page
+    } catch (e) {
+      await context.close()
+      if (attempt > 1 || !(e instanceof Error && e.name === 'TimeoutError')) throw e
+      console.log(`login of ${username} timed out; trying once more`)
+    }
+  }
 }
 
 // requestOrganization fills the request form; it returns the slug.
@@ -134,14 +147,29 @@ export async function api(page: Page, method: string, path: string, body?: unkno
 }
 
 // kubectl runs against the lab with the admin's kubeconfig context;
-// kubectlIn feeds it input (a manifest for -f -).
+// kubectlIn feeds it input (a manifest for -f -). A call cut off before the
+// answer ("unexpected EOF" and the like: from home over wg0 it may never have
+// reached the API server, docs/report/eof-path.md) is tried again up to 3
+// times, as verify.sh's kdelete does; a delete then adds --ignore-not-found,
+// in case the first one got through. Any other error fails at once.
 export const kubectl = (...args: string[]) => kubectlIn('', ...args)
-export const kubectlIn = (input: string, ...args: string[]) =>
-  execFileSync('kubectl', ['--context', process.env.E2E_KUBE_CONTEXT ?? 'hocbt@kubernetes', ...args], {
-    input,
-    encoding: 'utf8',
-    stdio: ['pipe', 'pipe', 'pipe'],
-  })
+export function kubectlIn(input: string, ...args: string[]): string {
+  const cut = /unexpected EOF|connection reset by peer|http2: client connection lost/i
+  for (let retry = 0; ; retry++) {
+    try {
+      return execFileSync('kubectl', ['--context', process.env.E2E_KUBE_CONTEXT ?? 'hocbt@kubernetes', ...args], {
+        input,
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+    } catch (e) {
+      const why = cut.exec(String((e as { stderr?: string }).stderr ?? ''))?.[0]
+      if (!why || retry >= 3) throw e
+      console.log(`kubectl ${args.slice(0, 2).join(' ')} cut off (${why}); retry ${retry + 1} of 3`)
+      if (args[0] === 'delete' && !args.includes('--ignore-not-found')) args = [...args, '--ignore-not-found']
+    }
+  }
+}
 
 // until polls f until it returns a value, for up to timeout ms.
 export async function until<T>(what: string, f: () => Promise<T | undefined>, timeout = 180_000): Promise<T> {

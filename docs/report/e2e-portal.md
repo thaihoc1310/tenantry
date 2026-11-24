@@ -236,10 +236,69 @@ What it checks:
 The Workspace stays **Ready** throughout: the spec checks its state at every poll of the API, from
 before the Pod is applied until after the Pod is deleted.
 
-This run did not time the appearance and the disappearance on their own. Both fit within the
-27.4 s of the whole test, which also includes creating the organization and the Workspace. The
-spec now times both (`timed`: from applying the Pod to `scheduling` on the API, and from deleting
-the Pod to `scheduling` gone), so the next run records them.
+The first run did not time the appearance and the disappearance on their own. Both fit within the
+27.4 s of the whole test, which also includes creating the organization and the Workspace.
+
+### How long a person waits (UI time)
+
+The spec was changed to open the Workspace page before the Pod exists, and to keep it open.
+- **UI time** runs from when `kubectl apply` returns, or from when `kubectl delete --wait`
+  returns, until the warning shows on that open page, or leaves it. It includes:
+  - the controller;
+  - the worker's sync;
+  - the page's refresh every 15 s.
+- **API time** is the same span read from `GET /workspaces/{id}` every 2 s, alongside.
+
+Both series ran `--repeat-each=3` on the same images, over `wg0` from home.
+
+**First series, 11:56–12:00 +07:00: one PASS, two failures outside the feature.**
+
+| Run | API: scheduling appears | UI: warning appears | API: scheduling gone | UI: warning gone | Result |
+|---|---:|---:|---:|---:|---|
+| 1 | 2.2 s | 14.1 s | 2.2 s | 10.4 s | PASS |
+| 2 | 2.2 s | 14.1 s | 0.1 s | 14.9 s | every check of the feature passed; the cleanup failed |
+| 3 | 2.2 s | 14.1 s | – | – | FAIL: `kubectl delete pod` ended in `unexpected EOF` |
+
+Why runs 2 and 3 failed. Neither is the feature, and neither is data shared between the
+repeats: each run makes its own organization, Workspace and Pod.
+- **Run 2:**
+  - The cleanup logs in as the Platform Admin to delete the organization. Sign In was clicked at
+    the end of the form, and the redirects did not finish within the 30 s action timeout.
+  - The API's log shows that login's `/auth/login` at 04:57:59 UTC, and no `/auth/callback` before
+    the next test's login at 04:58:38.
+  - Every callback that did reach the API was answered in 15–154 ms. The request was lost on the
+    way, before the API.
+  - The trace records no network (on purpose, so no typed password is kept), so the stalled hop
+    is not known.
+- **Run 3:** the `kubectl delete` went through the home WireGuard path and ended in
+  `unexpected EOF`. This is the fault described in `eof-path.md`. Its Workspace was removed by the
+  cleanup.
+
+The fix is in the suite, not in the product:
+- `kubectlIn` tries a call cut off before the answer again, up to 3 times, as `verify.sh`'s
+  `kdelete` does. A delete then adds `--ignore-not-found`.
+- `logIn` tries a login whose redirects time out once more, in a new browser context.
+- Both print that they retried. The retry was checked against a stand-in `kubectl` that fails twice
+  with `unexpected EOF`.
+
+**Second series, 14:50–14:53 +07:00, with that fix: three PASS, no retry needed.**
+
+| Run | API: scheduling appears | UI: warning appears | API: scheduling gone | UI: warning gone | Result |
+|---|---:|---:|---:|---:|---|
+| 1 | 2.4 s | 14.6 s | 2.3 s | 14.4 s | PASS (53.7 s) |
+| 2 | 2.2 s | 14.6 s | 2.2 s | 14.9 s | PASS (49.6 s) |
+| 3 | 2.2 s | 14.1 s | 2.2 s | 15.4 s | PASS (47.4 s) |
+
+What the numbers mean:
+- **The API side is about 2 s each way**, which matches B's measure at the API.
+- **The rest of the UI time is the page's refresh every 15 s.** In this spec the page is loaded
+  shortly before the Pod is applied, so the warning shows at the next refresh, 14–15 s later.
+  - A person who has the page open at some other moment waits between about 2 s and about 17 s:
+    the API's 2 s plus up to one 15 s refresh.
+  - Opening the page, or coming back to the tab, shows the current state at once.
+- **The Workspace stayed Ready at every API read in all six runs.**
+
+The six test organizations of both series (`e2esch…`) were left for `make demo-purge-test-data`, after their address blocks left quarantine.
 
 `workspace.spec.ts` and `lifecycle.spec.ts` ran again on the same images and passed (42.1 s and
 55.8 s). Since this feature, the Workspace page and its Namespaces refresh every 15 s, not only

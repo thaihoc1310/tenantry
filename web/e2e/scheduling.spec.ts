@@ -55,16 +55,25 @@ test('a Pod the scheduler cannot place shows on the portal, and the Workspace st
     return r.body
   }
 
+  // The Workspace page is open before the Pod exists: what a person watching
+  // it sees, the API's sync and the page's 15 s refresh included (UI time).
+  // The API is read every 2 s alongside.
+  await page.goto(`/orgs/${slug}/workspaces/big`)
+  await expect(page.locator('code', { hasText: `${slug}-big` })).toBeVisible() // loaded
+  const banner = page.locator('[data-test="scheduling"]')
+  await expect(banner).toHaveCount(0)
   kubectlIn(greedy(ws.ns), 'apply', '-f', '-')
-  const sc = await timed('Pod applied to status.scheduling on the API', () =>
-    until('status.scheduling on the Workspace', async () => (await workspace()).scheduling),
-  )
+  const [sc] = await Promise.all([
+    timed('API: Pod applied to scheduling on the Workspace', () =>
+      until('status.scheduling on the Workspace', async () => (await workspace()).scheduling),
+    ),
+    timed('UI: Pod applied to the warning on the open Workspace page', () =>
+      expect(banner).toBeVisible({ timeout: 120_000 }),
+    ),
+  ])
   expect(sc.unschedulablePods).toBe(1)
   expect(sc.message).toMatch(/Insufficient cpu/)
   expect(sc.since).toBeTruthy()
-
-  await page.goto(`/orgs/${slug}/workspaces/big`)
-  const banner = page.locator('[data-test="scheduling"]')
   await expect(banner).toContainText('1 Pod cannot be scheduled')
   await expect(banner).toContainText('Insufficient cpu')
   await expect(banner).toContainText('The shared pool has no node with room')
@@ -79,13 +88,20 @@ test('a Pod the scheduler cannot place shows on the portal, and the Workspace st
   await page.goto(`/orgs/${slug}/workspaces`)
   await expect(page.getByText('1 unschedulable')).toBeVisible()
 
-  kubectl('-n', ws.ns, 'delete', 'pod', 'greedy', '--wait=true')
-  await timed('Pod deleted to status.scheduling gone from the API', () =>
-    until('status.scheduling cleared', async () => ((await workspace()).scheduling ? undefined : true)),
-  )
+  // Back on the open Workspace page, the Pod goes (timed from when kubectl
+  // has seen it gone).
   await page.goto(`/orgs/${slug}/workspaces/big`)
-  await expect(page.locator('code', { hasText: `${slug}-big` })).toBeVisible() // loaded
-  await expect(banner).toHaveCount(0)
+  await expect(banner).toBeVisible()
+  kubectl('-n', ws.ns, 'delete', 'pod', 'greedy', '--wait=true')
+  await Promise.all([
+    timed('API: Pod deleted to scheduling gone from the Workspace', () =>
+      until('status.scheduling cleared', async () => ((await workspace()).scheduling ? undefined : true)),
+    ),
+    timed('UI: Pod deleted to the warning gone from the open Workspace page', () =>
+      expect(banner).toHaveCount(0, { timeout: 120_000 }),
+    ),
+  ])
+  await workspace() // Ready still
   await page.goto(`/orgs/${slug}/workspaces`)
   await expect(page.getByText('unschedulable')).toHaveCount(0)
 })
