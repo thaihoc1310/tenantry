@@ -205,6 +205,72 @@ Headlamp keeps the token it holds after a portal logout, until that token expire
 token lifespan is 5 minutes. Only then does it ask to sign in, and signing in needs a password. This
 is the limit ADR-0022 states ("chậm nhất 5 phút"), now measured on the lab.
 
+## Pods the scheduler cannot place (status.scheduling)
+
+`scheduling.spec.ts` was added on 2026-11-24 with the feature that closes known limitation 9a. It is
+part of `make e2e`.
+
+| | |
+|---|---|
+| Date | 2026-11-24, 11:27–11:28 +07:00 |
+| Repo | `6aa71cb` for the spec, `8ad0800` for the images (deploy fix only, see below) |
+| Images | backend `src-6103476ea3f6` (migration 0018), web `src-3411de693f79`; operator rev 18 `src-b6deff7cbbf3` |
+| Network | home, through the WireGuard tunnel (`wg0`) |
+| Result | PASS, 27.4 s for the whole test, setup included |
+
+What it checks:
+1. The organization's grant and its Shared Workspace `big` allow 5 cores. A Pod asks for 4 cores
+   and 64 Mi, within the quota. The shared pool's workers have 3 allocatable cores each, so the
+   scheduler cannot place it.
+2. The API's Workspace gets `scheduling` with `unschedulablePods: 1`, the scheduler's message (it
+   contains "Insufficient cpu") and `since`.
+3. The Workspace page shows the warning: "1 Pod cannot be scheduled", the time, the message as code,
+   and the Shared hint in English and Vietnamese. The message on the lab was "0/4 nodes are
+   available: 2 Insufficient cpu, 2 node(s) had untolerated taint(s). … preemption: 0/4 nodes are
+   available: 4 Preemption is not helpful for scheduling."
+4. The Namespaces tab shows 1 in the Unschedulable column, and the API's Namespace reports
+   `unschedulablePods: 1`. The Workspace list shows the badge "1 unschedulable".
+5. After the Pod is deleted, `scheduling` leaves the API, and the warning and the badge leave the
+   pages.
+
+The Workspace stays **Ready** throughout: the spec checks its state at every poll of the API, from
+before the Pod is applied until after the Pod is deleted.
+
+This run did not time the appearance and the disappearance on their own. Both fit within the
+27.4 s of the whole test, which also includes creating the organization and the Workspace. The
+spec now times both (`timed`: from applying the Pod to `scheduling` on the API, and from deleting
+the Pod to `scheduling` gone), so the next run records them.
+
+`workspace.spec.ts` and `lifecycle.spec.ts` ran again on the same images and passed (42.1 s and
+55.8 s). Since this feature, the Workspace page and its Namespaces refresh every 15 s, not only
+while a change is under way.
+
+## Deploy of 2026-11-24: the web image had stopped building
+
+The first `make deploy` of `6aa71cb` (11:19 +07:00) failed half way, without stopping. Two faults,
+both from track A:
+
+1. **The web image had not built since `126fbe9`** (2026-11-23, 23:59).
+   - That commit made `web/playwright.config.ts` import `./e2e/trace`. The image's build runs
+     `vue-tsc`, which checks `playwright.config.ts` too, and `web/.dockerignore` leaves out `e2e/`.
+     So `npm run build` failed with TS2307 inside Docker, and only there: a local build sees `e2e/`.
+   - No `make deploy` ran between that commit and this one, so nothing noticed.
+2. **`deploy/cluster/deploy.sh` went on after the failed build.**
+   - The image is built inside `web_tag="$(image …)"`. `set -e` does not reach into a command
+     substitution, so the function went on: it tried to load an image that did not exist, then
+     printed the tag, and the call returned 0.
+   - Helm then upgraded the charts with a tag no node had. The backend Pods rolled out. The new
+     web Pod stayed in ImagePullBackOff and the Helm upgrade of the web chart timed out.
+   - The old web Pod kept serving, so the portal stayed up.
+
+The fix, `8ad0800`:
+- `web/.dockerignore` also leaves out `playwright.config.ts`, a test-only file.
+- `image()` ends with `return 1` when `docker build` or the load into a node fails, so the
+  assignment fails and `set -e` stops the deploy. This was checked with the same construct in a
+  shell.
+- The second `make deploy` built both images and rolled every Pod out. Migration 0018 was applied
+  (goose version 18).
+
 ## Platform Admin password rotated
 
 On 2026-11-23, after the evening run, the Platform Admin password (`PLATFORM_ADMIN_PASSWORD` in the

@@ -4,7 +4,16 @@
 // list shows a badge and the Namespaces tab a count, and the Workspace stays
 // Ready throughout. Deleting the Pod clears them.
 import { expect, test } from '@playwright/test'
-import { api, cleanupAfterAll, kubectl, kubectlIn, sharedWorkspace, until, workspaceOrganization } from './support'
+import {
+  api,
+  cleanupAfterAll,
+  kubectl,
+  kubectlIn,
+  sharedWorkspace,
+  timed,
+  until,
+  workspaceOrganization,
+} from './support'
 
 cleanupAfterAll()
 
@@ -47,7 +56,9 @@ test('a Pod the scheduler cannot place shows on the portal, and the Workspace st
   }
 
   kubectlIn(greedy(ws.ns), 'apply', '-f', '-')
-  const sc = await until('status.scheduling on the Workspace', async () => (await workspace()).scheduling)
+  const sc = await timed('Pod applied to status.scheduling on the API', () =>
+    until('status.scheduling on the Workspace', async () => (await workspace()).scheduling),
+  )
   expect(sc.unschedulablePods).toBe(1)
   expect(sc.message).toMatch(/Insufficient cpu/)
   expect(sc.since).toBeTruthy()
@@ -69,7 +80,9 @@ test('a Pod the scheduler cannot place shows on the portal, and the Workspace st
   await expect(page.getByText('1 unschedulable')).toBeVisible()
 
   kubectl('-n', ws.ns, 'delete', 'pod', 'greedy', '--wait=true')
-  await until('status.scheduling cleared', async () => ((await workspace()).scheduling ? undefined : true))
+  await timed('Pod deleted to status.scheduling gone from the API', () =>
+    until('status.scheduling cleared', async () => ((await workspace()).scheduling ? undefined : true)),
+  )
   await page.goto(`/orgs/${slug}/workspaces/big`)
   await expect(page.locator('code', { hasText: `${slug}-big` })).toBeVisible() // loaded
   await expect(banner).toHaveCount(0)
