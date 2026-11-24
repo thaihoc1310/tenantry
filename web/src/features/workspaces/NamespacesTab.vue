@@ -96,25 +96,25 @@ async function remove() {
     />
     <div v-else class="t-tablewrap">
       <el-table :data="rows" style="width: 100%">
-        <el-table-column label="Namespace" min-width="230"
+        <el-table-column label="Namespace" min-width="220"
           ><template #default="{ row }"
             ><span class="mono">{{ row.name }}</span></template
           ></el-table-column
         >
-        <el-table-column label="State" width="130"
+        <el-table-column label="State" width="110"
           ><template #default="{ row }"><StatusTag :value="row.state" /></template
         ></el-table-column>
-        <el-table-column label="Created with" width="130"
+        <el-table-column label="Created with" width="110"
           ><template #default="{ row }">{{
             row.source === 'kubectl' ? 'kubectl' : 'Portal'
           }}</template></el-table-column
         >
-        <el-table-column label="Pods" width="90" align="right"
+        <el-table-column label="Pods" width="70" align="right"
           ><template #default="{ row }"
             ><span class="num">{{ row.usage['pods'] ?? 0 }}</span></template
           ></el-table-column
         >
-        <el-table-column label="Unschedulable" width="130" align="right"
+        <el-table-column label="Unschedulable" width="120" align="right"
           ><template #default="{ row }"
             ><el-tag v-if="row.unschedulablePods" type="warning" size="small" effect="plain" round>{{
               row.unschedulablePods
@@ -122,22 +122,22 @@ async function remove() {
             ><span v-else class="num muted">0</span></template
           ></el-table-column
         >
-        <el-table-column label="CPU req." width="110" align="right"
+        <el-table-column label="CPU req." width="90" align="right"
           ><template #default="{ row }"
             ><span class="num">{{ row.usage['requests.cpu'] ?? 0 }}</span></template
           ></el-table-column
         >
-        <el-table-column label="Memory req." width="130" align="right"
+        <el-table-column label="Memory req." width="110" align="right"
           ><template #default="{ row }"
             ><span class="num">{{ row.usage['requests.memory'] ?? 0 }}</span></template
           ></el-table-column
         >
-        <el-table-column label="Storage" width="110" align="right"
+        <el-table-column label="Storage" width="90" align="right"
           ><template #default="{ row }"
             ><span class="num">{{ storage(row) }} Gi</span></template
           ></el-table-column
         >
-        <el-table-column width="100" align="right"
+        <el-table-column width="90" align="right"
           ><template #default="{ row }"
             ><el-button
               link
