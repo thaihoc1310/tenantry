@@ -72,7 +72,7 @@ async function doRetry(id: string) {
           <el-table-column label="State" width="130"
             ><template #default="{ row }"><StatusTag :value="row.state" /></template
           ></el-table-column>
-          <el-table-column label="Why" min-width="260">
+          <el-table-column label="Why" min-width="220">
             <template #default="{ row }"
               ><span v-if="row.errorMessage"
                 >{{ row.errorMessage }} <span class="t-errcode">{{ row.errorCode }}</span></span
