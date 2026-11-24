@@ -92,6 +92,18 @@ Sau mỗi bước trên portal (tạo Workspace, thêm Namespace, tạo Route), 
 - Dashboard trong lúc giữ pool đầy (150 s, hai lần scrape):
   - panel 21: CPU request của Pod đang chạy là 4,265, allocatable 6; allocated to Workspaces 8 (19:21–19:23Z, về 0 khi test xoá Workspace), allocation ceiling 15;
   - panel 22: `optestzxzmgg-over` có 4 Pod không xếp được.
-- Portal: cả hai Workspace `state: Ready`, mọi condition `True`; usage của mỗi cái là `requestsCpu` 4/4, `pods` 4/10. ResourceQuota tính cả Pod Pending, nên `over` trông như đang dùng hết quota, và portal không có dấu hiệu nào cho thấy Pod của nó không chạy. Người dùng chỉ thấy Pending qua kubectl hoặc Headlamp; admin thấy qua panel 21 và 22.
+- Portal: cả hai Workspace `state: Ready`, mọi condition `True`; usage của mỗi cái là `requestsCpu` 4/4, `pods` 4/10. ResourceQuota tính cả Pod Pending, nên `over` trông như đang dùng hết quota, và portal không có dấu hiệu nào cho thấy Pod của nó không chạy. Người dùng chỉ thấy Pending qua kubectl hoặc Headlamp; admin thấy qua panel 21 và 22. Đó là lúc chạy (operator revision 16); từ revision 18 portal có hiện, xem mục dưới.
 - Dọn: scale về 0, xoá Workspace, xoá Organization sau quarantine (`deletableAfter` 19:32:36Z). Sau đó không còn Pod optest trên wk2, wk3; `demo-preflight` 15/15 PASS.
+
+### Portal cho thấy Pod không xếp được (operator revision 18)
+
+Từ revision 18 (3617cdf), operator ghi `status.scheduling` khi có Pod của Workspace mà scheduler báo `PodScheduled=False`, reason `Unschedulable`. Trường này gồm số Pod, message và `since` của Pod kẹt lâu nhất, kèm số Pod như vậy của từng Namespace. Workspace vẫn `Ready`. Operator chỉ cache Pod `Pending` (field selector `status.phase=Pending`), không cache mọi Pod. Backend chép trường này sang API (backend src-6103476ea3f6, web src-3411de693f79).
+
+`TestSchedulingStatus` (`operator/test/isolation/scheduling_test.go`), chạy ngày 2026-11-24 04:43Z, độc quyền lab:
+
+- Dựng: một Workspace Shared quota 4 CPU, một Pod xin 4 CPU. Mỗi node của `shared-general` chỉ có 3 CPU, nên Pod không bao giờ xếp được.
+- Operator: `status.scheduling` có 1 Pod ngay ở lần đọc đầu sau khi tạo Pod (test đọc 2 s một lần, nên dưới 2 s). Message: `0/4 nodes are available: 2 Insufficient cpu, 2 node(s) had untolerated taint(s). no new claims to deallocate, preemption: 0/4 nodes are available: 4 Preemption is not helpful for scheduling.` Namespace đếm 1, phase `Ready`.
+- Portal: `GET /workspaces/{id}` có `scheduling` 2 s sau khi tạo Pod, `state` vẫn `Ready`.
+- Xoá Pod: operator bỏ `status.scheduling` ở lần đọc đầu (dưới 2 s), Namespace về 0; portal hết `scheduling` 2 s sau lần xoá. Workspace vẫn `Ready`.
+- Dọn: xoá Workspace, xoá Organization sau quarantine, không còn Pod optest trên wk2, wk3; `demo-preflight` 15/15 PASS. Phía đầu cuối (UI), `web/e2e/scheduling.spec.ts` của track A PASS trên cùng bản deploy.
 
